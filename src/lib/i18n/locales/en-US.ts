@@ -63,6 +63,7 @@ const enUS = {
     quote: 'Quote',
     saving: 'Saving...',
     saveError: 'Could not save',
+    linkOpenError: 'Could not open the link in your browser. Please try again.',
     saved: 'Saved',
     modeEdit: 'Editor',
     modeSplit: 'Split',

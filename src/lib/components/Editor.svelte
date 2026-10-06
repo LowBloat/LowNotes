@@ -8,6 +8,8 @@
   import { Compartment, EditorState } from '@codemirror/state';
   import * as Y from 'yjs';
   import { createLocalCollaboration } from '$lib/editor-collaboration';
+  import { openEditorLinks } from '$lib/editor-links';
+  import { openUrl } from '@tauri-apps/plugin-opener';
   import { createImagePaste, type ImagePasteStatus } from '$lib/image-paste';
   import { renderMermaidSvg } from '$lib/mermaid-renderer';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
@@ -71,6 +73,7 @@
   let editorContainer: HTMLDivElement | null = $state(null);
   let previewContainer: HTMLDivElement | null = $state(null);
   let saveStatus = $state<'saved' | 'error'>('saved');
+  let linkOpenFailed = $state(false);
   let currentContent = $state('');
   let contentRevision = $state(0);
   let wordCount = $derived(
@@ -268,6 +271,7 @@
         ], { scope: markdownLanguage })),
         collaboration.extension,
         imagePaste.extension,
+        openEditorLinks(async (url) => { linkOpenFailed = false; await openUrl(url); }, () => { linkOpenFailed = true; }),
         editorTheme.of(codeMirrorTheme()),
         editorWrapping.of(lineWrapping ? EditorView.lineWrapping : []),
       ],
@@ -626,6 +630,12 @@
   </header>
 
   <!-- Editor & Preview Body -->
+  {#if linkOpenFailed}
+    <div role="alert" class="flex items-center gap-2 border-b border-[var(--border)] bg-[var(--bg-card)] px-4 py-2 text-xs text-[var(--danger)]">
+      {$t('editor.linkOpenError')}
+      <button class="ml-auto underline text-[var(--text-muted)]" onclick={() => { linkOpenFailed = false; }}>{$t('ai.close')}</button>
+    </div>
+  {/if}
   {#if imageUploads.length}
     <div class="border-b border-[var(--border)] bg-[var(--bg-card)] px-4 py-2 text-xs space-y-2">
       {#each imageUploads as upload (upload.id)}

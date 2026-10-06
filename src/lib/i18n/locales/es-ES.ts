@@ -65,6 +65,7 @@ const esES: Dictionary = {
     quote: 'Cita',
     saving: 'Guardando...',
     saveError: 'No se pudo guardar',
+    linkOpenError: 'No se pudo abrir el enlace en tu navegador. Inténtalo de nuevo.',
     saved: 'Guardado',
     modeEdit: 'Editor',
     modeSplit: 'Dividido',

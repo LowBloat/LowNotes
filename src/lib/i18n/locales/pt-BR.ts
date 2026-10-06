@@ -65,6 +65,7 @@ const ptBR: Dictionary = {
     quote: 'Citação',
     saving: 'Salvando...',
     saveError: 'Não foi possível salvar',
+    linkOpenError: 'Não foi possível abrir o link no navegador. Tente novamente.',
     saved: 'Salvo',
     modeEdit: 'Editor',
     modeSplit: 'Dividido',
