@@ -11,6 +11,7 @@ import sub from 'markdown-it-sub';
 import sup from 'markdown-it-sup';
 import taskLists from 'markdown-it-task-lists';
 import { interactiveTasks, type TaskPreviewOptions } from './markdown-tasks';
+import { previewSourceMap } from './markdown-source-map';
 
 export const markdown = new MarkdownIt({
   html: false,
@@ -79,7 +80,9 @@ markdown.renderer.rules.image = (tokens, index, options, env, renderer) => {
   return renderImage ? renderImage(tokens, index, options, env, renderer) : renderer.renderToken(tokens, index, options);
 };
 
-export function renderMarkdown(source: string, resolveImage?: (src: string) => string, options: TaskPreviewOptions = {}): string {
+markdown.use(previewSourceMap);
+
+export function renderMarkdown(source: string, resolveImage?: (src: string) => string, options: TaskPreviewOptions & { sourceMap?: boolean | 'editor' } = {}): string {
   return markdown.render(source, { resolveImage, ...options, taskSource: source });
 }
 

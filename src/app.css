@@ -67,6 +67,10 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 :focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
 .app-topbar { height: var(--app-toolbar-height); min-height: var(--app-toolbar-height); }
 
+/* Shared note finder highlights in source and rendered text. */
+.cm-editor .note-search-match, .prose mark.note-search-match { background: var(--accent-glow); color: inherit; border-radius: 2px; }
+.cm-editor .note-search-current, .prose mark.note-search-current { background: var(--selection); outline: 1px solid var(--accent-light); outline-offset: 1px; }
+
 /* One workbench for application and assistant preferences. */
 .settings-page { flex: 1; min-width: 0; height: 100%; overflow: auto; background: var(--bg-main); }
 .settings-topbar { height: var(--app-toolbar-height); padding: 0 30px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); background: var(--bg-sidebar); }

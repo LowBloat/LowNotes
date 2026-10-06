@@ -6,6 +6,9 @@
   import { defaultHighlightStyle, HighlightStyle, syntaxHighlighting } from '@codemirror/language';
   import { tags } from '@lezer/highlight';
   import { Compartment, EditorState } from '@codemirror/state';
+  import { search, SearchQuery, setSearchQuery, replaceNext, replaceAll } from '@codemirror/search';
+  import { clearPreviewSearch, combineSearchMatches, highlightPreviewSearch, noteSearchHighlights, previewSearchMatches, previewSourceTarget, searchMatches, setNoteSearchHighlights, type NoteSearchMatch } from '$lib/note-search';
+  import NoteFindPanel from './NoteFindPanel.svelte';
   import * as Y from 'yjs';
   import { createLocalCollaboration } from '$lib/editor-collaboration';
   import { openEditorLinks } from '$lib/editor-links';
@@ -71,7 +74,27 @@
   }>();
 
   let editorContainer: HTMLDivElement | null = $state(null);
+  let editorRoot: HTMLDivElement | null = $state(null);
   let previewContainer: HTMLDivElement | null = $state(null);
+  let findPanel: NoteFindPanel | undefined = $state();
+  let findOpen = $state(false);
+  let findText = $state('');
+  let findReplacement = $state('');
+  let findCase = $state(false);
+  let findRegex = $state(false);
+  let findWord = $state(false);
+  let findReplacing = $state(false);
+  let findResults = $state<NoteSearchMatch[]>([]);
+  let findCurrent = $state(0);
+  let findAnchor = 0;
+  let findSignature = '';
+  let findMode: ViewMode | undefined;
+  let findWasOpen = false;
+  let findNeedsScroll = false;
+  let findReturnFocus: HTMLElement | null = null;
+  let findRefresh = 0;
+  let previewRenderRevision = $state(0);
+  const findInvalid = $derived(findRegex && !!findText && !new SearchQuery({ search: findText, regexp: true }).valid);
   let saveStatus = $state<'saved' | 'error'>('saved');
   let linkOpenFailed = $state(false);
   let currentContent = $state('');
@@ -100,6 +123,107 @@
   let mermaidDebounce: ReturnType<typeof setTimeout> | null = null;
   const editorTheme = new Compartment();
   const editorWrapping = new Compartment();
+
+  function findQuery() {
+    return new SearchQuery({ search: findText, replace: findReplacement, caseSensitive: findCase, regexp: findRegex, wholeWord: findWord });
+  }
+
+  async function openFind(replacing = false) {
+    if (!findOpen) {
+      findReturnFocus = document.activeElement instanceof HTMLElement && editorRoot?.contains(document.activeElement)
+        ? document.activeElement : null;
+      const selection = viewMode === 'preview' ? window.getSelection()?.toString() : editorView?.state.sliceDoc(editorView.state.selection.main.from, editorView.state.selection.main.to);
+      if (selection && selection.length <= 200 && !selection.includes('\n')) findText = selection;
+    }
+    if (replacing) findReplacing = true;
+    findOpen = true;
+    await tick();
+    findPanel?.focus();
+  }
+
+  function closeFind() {
+    findOpen = false;
+    if (viewMode === 'preview') previewContainer?.querySelector<HTMLElement>('article')?.focus({ preventScroll: true });
+    else if (findReturnFocus?.isConnected) findReturnFocus.focus({ preventScroll: true });
+    else editorView?.focus();
+  }
+
+  function handleFindShortcut(event: KeyboardEvent) {
+    if (event.isComposing || !editorRoot) return;
+    const modified = (event.ctrlKey || event.metaKey) && !event.altKey;
+    const key = event.key.toLowerCase();
+    if (modified && (key === 'f' || key === 'h')) {
+      event.preventDefault(); event.stopImmediatePropagation();
+      void openFind(key === 'h');
+    } else if ((modified && key === 'g') || event.key === 'F3') {
+      event.preventDefault(); event.stopImmediatePropagation();
+      if (findOpen) navigateFind(event.shiftKey ? -1 : 1);
+      else void openFind().then(() => navigateFind(event.shiftKey ? -1 : 1));
+    } else if (event.key === 'Escape' && findOpen && (editorRoot.contains(event.target as Node) || event.target === document.body)) {
+      event.preventDefault(); event.stopImmediatePropagation(); closeFind();
+    }
+  }
+
+  function showFindResult(scroll: boolean) {
+    if (!editorView) return;
+    const current = findResults[findCurrent];
+    const effects = [setNoteSearchHighlights.of({ matches: findResults, active: findCurrent })];
+    if (scroll && current && viewMode !== 'preview') {
+      editorView.dispatch({ effects: [...effects, EditorView.scrollIntoView(current.from, { y: 'center', yMargin: 100 })], selection: { anchor: current.from, head: current.to }, userEvent: 'select.search' });
+    } else editorView.dispatch({ effects });
+    if (!previewContainer) return;
+    for (const mark of previewContainer.querySelectorAll<HTMLElement>('mark[data-note-search]')) {
+      mark.classList.toggle('note-search-current', Number(mark.dataset.noteSearch) === current?.previewIndex);
+    }
+    if (!scroll || !current || viewMode === 'edit') return;
+    const target = current.previewIndex >= 0
+      ? previewContainer.querySelector<HTMLElement>(`mark[data-note-search="${current.previewIndex}"]`) : previewSourceTarget(previewContainer, current.from);
+    if (target) {
+      const rect = target.getBoundingClientRect(), container = previewContainer.getBoundingClientRect();
+      previewContainer.scrollTop += rect.top - container.top - previewContainer.clientHeight / 2 + rect.height / 2;
+    }
+  }
+
+  function navigateFind(direction: number) {
+    if (!findResults.length) return;
+    findCurrent = (findCurrent + direction + findResults.length) % findResults.length;
+    findAnchor = findResults[findCurrent].from;
+    showFindResult(true);
+  }
+
+  function refreshFind() {
+    if (!editorView) return;
+    if (previewContainer) clearPreviewSearch(previewContainer);
+    const query = findOpen ? findQuery() : new SearchQuery({ search: '' });
+    editorView.dispatch({ effects: setSearchQuery.of(query) });
+    const source = searchMatches(editorView.state.doc, query);
+    const preview = previewContainer && viewMode !== 'edit' ? previewSearchMatches(previewContainer, editorView.state.doc.length, query) : [];
+    findResults = combineSearchMatches(editorView.state, source, preview, viewMode);
+    const signature = JSON.stringify([findText, findCase, findRegex, findWord]);
+    const navigate = signature !== findSignature || viewMode !== findMode || findOpen !== findWasOpen || findNeedsScroll;
+    if (signature !== findSignature) { findAnchor = 0; findSignature = signature; }
+    findMode = viewMode;
+    findWasOpen = findOpen;
+    findNeedsScroll = false;
+    const next = findResults.findIndex(match => match.from >= findAnchor);
+    findCurrent = next >= 0 ? next : 0;
+    if (previewContainer) highlightPreviewSearch(preview, findResults[findCurrent]?.previewIndex ?? -1);
+    showFindResult(findOpen && query.valid && navigate);
+  }
+
+  function replaceFind(all: boolean) {
+    if (!editorView || viewMode === 'preview' || !findQuery().valid) return;
+    const current = findResults[findCurrent];
+    if (all && !findResults.some(match => match.sourceIndex >= 0)) return;
+    if (!all && (!current || current.sourceIndex < 0)) return;
+    editorView.dispatch({ effects: setSearchQuery.of(findQuery()), ...(!all && current ? { selection: { anchor: current.from, head: current.to } } : {}) });
+    undoManager?.stopCapturing();
+    if (all) replaceAll(editorView);
+    else replaceNext(editorView);
+    undoManager?.stopCapturing();
+    findAnchor = editorView.state.selection.main.from;
+    findNeedsScroll = true;
+  }
 
   function codeMirrorTheme() {
     return EditorView.theme({
@@ -263,6 +387,9 @@
       doc: yText.toString(),
       extensions: [
         basicSetup,
+        search(),
+        noteSearchHighlights,
+        EditorView.updateListener.of(update => { if (update.docChanged) findAnchor = update.changes.mapPos(findAnchor); }),
         markdown(),
         // Keep the standard syntax colors, then give Markdown links a palette-aware class.
         syntaxHighlighting(defaultHighlightStyle),
@@ -396,6 +523,7 @@
   }
 
   onMount(async () => {
+    window.addEventListener('keydown', handleFindShortcut, true);
     const stopCrdt = await listen<{ note_path: string; update: number[] }>(
       'p2p:crdt-update',
       (event) => {
@@ -443,6 +571,8 @@
   });
 
   onDestroy(() => {
+    window.removeEventListener('keydown', handleFindShortcut, true);
+    findRefresh++;
     imagePaste?.destroy();
     disposed = true;
     if (editorView) editorView.destroy();
@@ -465,6 +595,12 @@
   });
 
   $effect(() => {
+    currentContent; contentRevision; viewMode; previewContainer; findOpen; findText; findCase; findRegex; findWord; imageRevision; theme; previewRenderRevision;
+    const revision = ++findRefresh;
+    void tick().then(() => { if (!disposed && revision === findRefresh) refreshFind(); });
+  });
+
+  $effect(() => {
     const wrap = lineWrapping;
     if (editorView) {
       editorView.dispatch({ effects: editorWrapping.reconfigure(wrap ? EditorView.lineWrapping : []) });
@@ -477,13 +613,13 @@
       const activeTheme = theme;
       if (mermaidDebounce) clearTimeout(mermaidDebounce);
       mermaidDebounce = setTimeout(() => {
-        renderMermaidBlocks(activeTheme);
+        void renderMermaidBlocks(activeTheme).then(() => { if (!disposed) previewRenderRevision++; });
       }, 60);
     }
   });
 </script>
 
-<div class="flex flex-col min-w-0 min-h-0 h-full w-full bg-[var(--bg-main)]">
+<div bind:this={editorRoot} class="flex flex-col min-w-0 min-h-0 h-full w-full bg-[var(--bg-main)]">
   <!-- Top Editor Toolbar -->
   <header class="app-topbar flex items-center gap-3 overflow-x-auto whitespace-nowrap px-4 border-b border-[var(--border)] bg-[var(--bg-sidebar)] select-none">
     <div class="flex shrink-0 items-center gap-1">
@@ -658,6 +794,12 @@
     </div>
   {/if}
   <main class="flex-1 flex min-w-0 min-h-0 overflow-hidden relative">
+    {#if findOpen}
+      <NoteFindPanel bind:this={findPanel} bind:query={findText} bind:replacement={findReplacement} bind:caseSensitive={findCase} bind:regexp={findRegex} bind:wholeWord={findWord} bind:replacing={findReplacing}
+        mode={viewMode} count={findResults.length} current={findCurrent} invalid={findInvalid}
+        canReplace={findResults[findCurrent]?.sourceIndex >= 0} canReplaceAll={findResults.some(match => match.sourceIndex >= 0)}
+        onNavigate={navigateFind} onClose={closeFind} onReplace={replaceFind} />
+    {/if}
     <!-- CodeMirror Container -->
     <div
       bind:this={editorContainer}
@@ -675,8 +817,8 @@
         onkeydown={handleTaskUndo}
         class="min-w-0 h-full overflow-y-auto px-8 py-6 select-text {viewMode === 'preview' ? 'w-full max-w-4xl mx-auto' : 'w-1/2'}"
       >
-        <article class="prose max-w-none text-[var(--text-main)]">
-          {@html renderMarkdown(currentContent, (src) => localImageUrl(src, vaultId, imageRevision), { interactiveTasks: true, taskRevision: contentRevision })}
+        <article tabindex="-1" class="prose max-w-none text-[var(--text-main)]">
+          {@html renderMarkdown(currentContent, (src) => localImageUrl(src, vaultId, imageRevision), { interactiveTasks: true, taskRevision: contentRevision, sourceMap: 'editor' })}
         </article>
       </div>
     {/if}
