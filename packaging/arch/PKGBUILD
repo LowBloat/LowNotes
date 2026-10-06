@@ -1,6 +1,6 @@
 # Maintainer: LowBloat <contato@fabioharaujo.com.br>
 pkgname=lownotes-bin
-pkgver=0.3.1
+pkgver=0.3.2
 pkgrel=1
 pkgdesc="Local-first Markdown notes with serverless P2P sync and real-time collaboration"
 arch=('x86_64')
