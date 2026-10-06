@@ -4,7 +4,7 @@
   import { EditorView, basicSetup } from 'codemirror';
   import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
   import { defaultHighlightStyle, HighlightStyle, syntaxHighlighting } from '@codemirror/language';
-  import { tags } from '@lezer/highlight';
+  import { styleTags, tags } from '@lezer/highlight';
   import { Compartment, EditorState } from '@codemirror/state';
   import { search, SearchQuery, setSearchQuery, replaceNext, replaceAll } from '@codemirror/search';
   import { clearPreviewSearch, combineSearchMatches, highlightPreviewSearch, noteSearchHighlights, previewSearchMatches, previewSourceTarget, searchMatches, setNoteSearchHighlights, type NoteSearchMatch } from '$lib/note-search';
@@ -390,11 +390,12 @@
         search(),
         noteSearchHighlights,
         EditorView.updateListener.of(update => { if (update.docChanged) findAnchor = update.changes.mapPos(findAnchor); }),
-        markdown(),
-        // Keep the standard syntax colors, then give Markdown links a palette-aware class.
+        markdown({ extensions: [{ props: [styleTags({ 'FencedCode/CodeInfo': tags.special(tags.labelName) })] }] }),
+        // Keep standard syntax colors, with palette-aware Markdown links and fence info.
         syntaxHighlighting(defaultHighlightStyle),
         syntaxHighlighting(HighlightStyle.define([
           { tag: [tags.link, tags.url], class: 'cm-readable-link' },
+          { tag: tags.special(tags.labelName), class: 'cm-code-info' },
         ], { scope: markdownLanguage })),
         collaboration.extension,
         imagePaste.extension,

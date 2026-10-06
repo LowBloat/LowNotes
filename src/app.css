@@ -240,6 +240,11 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   text-underline-offset: 0.18em;
 }
 
+.cm-editor .cm-code-info {
+  color: var(--accent-light);
+  font-weight: 600;
+}
+
 .cm-cursor {
   border-left-color: var(--accent-light) !important;
   border-left-width: 2px !important;
