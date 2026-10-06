@@ -10,6 +10,7 @@ import mark from 'markdown-it-mark';
 import sub from 'markdown-it-sub';
 import sup from 'markdown-it-sup';
 import taskLists from 'markdown-it-task-lists';
+import { interactiveTasks, type TaskPreviewOptions } from './markdown-tasks';
 
 export const markdown = new MarkdownIt({
   html: false,
@@ -24,7 +25,8 @@ export const markdown = new MarkdownIt({
   .use(mark)
   .use(sub)
   .use(sup)
-  .use(taskLists, { enabled: false, label: true });
+  .use(taskLists, { enabled: false, label: true })
+  .use(interactiveTasks);
 
 for (const name of ['warning', 'info', 'tip', 'danger']) {
   markdown.use(container, name);
@@ -77,8 +79,8 @@ markdown.renderer.rules.image = (tokens, index, options, env, renderer) => {
   return renderImage ? renderImage(tokens, index, options, env, renderer) : renderer.renderToken(tokens, index, options);
 };
 
-export function renderMarkdown(source: string, resolveImage?: (src: string) => string): string {
-  return markdown.render(source, { resolveImage });
+export function renderMarkdown(source: string, resolveImage?: (src: string) => string, options: TaskPreviewOptions = {}): string {
+  return markdown.render(source, { resolveImage, ...options, taskSource: source });
 }
 
 export function renderChatMarkdown(source: string): string {

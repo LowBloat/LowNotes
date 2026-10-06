@@ -17,6 +17,7 @@
   import {
     aiChatQuery,
     aiSaveDraft,
+    aiApplyEdit,
     chatHistoryGet,
     chatHistorySave,
     linksApply,
@@ -222,6 +223,7 @@
         sources: resp.sources,
         webSources: resp.web_sources,
         drafts: connectDraftCollection(groupDraftPaths(text, resp.drafts)),
+        edits: resp.edits,
         warnings,
         vaultId: resp.vault_id,
         appliedLinks,
@@ -268,6 +270,23 @@
     for (const draft of msg.drafts || []) {
       if (disposed) break;
       await saveDraft(msg, draft);
+    }
+  }
+
+  async function applyEdit(msg: StoredChatEntry, edit: NonNullable<StoredChatEntry['edits']>[number]) {
+    if (!msg.vaultId || edit.appliedPath || edit.applying || disposed) return;
+    edit.applying = true;
+    edit.error = undefined;
+    try {
+      edit.appliedPath = await aiApplyEdit(msg.vaultId, { path: edit.path, old_text: edit.old_text, new_text: edit.new_text });
+    } catch (error) {
+      edit.error = trError(String(error));
+    } finally {
+      edit.applying = false;
+    }
+    await persistHistory();
+    if (edit.appliedPath && !disposed) {
+      try { await onNotesCreated(); } catch (error) { errorMessage = trError(String(error)); }
     }
   }
 
@@ -528,7 +547,7 @@
                   <p role="status" class="mt-2 text-xs text-[var(--accent-light)]">{trError(warning)}</p>
                 {/each}
 
-                {#if !msg.drafts?.length && !msg.isError && msg.content.trim()}
+                {#if !msg.drafts?.length && !msg.edits?.length && !msg.isError && msg.content.trim()}
                   <div class="mt-3 flex flex-wrap items-center gap-2">
                     <button onclick={() => { msg.drafts = [{ path: `${ts('ai.responseDocumentName')}.md`, content: msg.content }]; void persistHistory(); }}
                       class="px-2 py-1 rounded border border-[var(--border)] text-[11px] text-[var(--accent-light)] hover:bg-[var(--bg-hover)]">
@@ -570,6 +589,41 @@
                           <DocumentActions content={draft.content} path={draft.path} />
                         </div>
                         {#if draft.error}<p role="alert" class="text-[11px] text-red-500">{draft.error}</p>{/if}
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+
+                {#if msg.edits?.length}
+                  <div class="mt-3 flex flex-col gap-3">
+                    <span class="text-[11px] font-semibold">{$t('ai.edits', { count: msg.edits.length })}</span>
+                    {#each msg.edits as edit}
+                      <div class="rounded-lg border border-[var(--border)] bg-[var(--bg-main)] p-2.5 flex flex-col gap-2">
+                        <button onclick={() => onNavigateToSource(edit.path, 1)}
+                          class="text-left text-[11px] text-[var(--accent-light)] hover:underline break-all">{edit.path}</button>
+                        <details>
+                          <summary class="cursor-pointer text-[11px] text-[var(--text-muted)]">{$t('ai.reviewEdit')}</summary>
+                          <label class="block pt-2 text-[11px] text-[var(--text-dim)]">
+                            {$t('ai.originalText')}
+                            <textarea value={edit.old_text} readonly rows="4"
+                              class="mt-1 w-full bg-[var(--bg-card)] border border-[var(--border)] rounded p-2 font-mono text-[11px]"></textarea>
+                          </label>
+                          <label class="block pt-2 text-[11px] text-[var(--text-dim)]">
+                            {$t('ai.replacementText')}
+                            <textarea bind:value={edit.new_text} oninput={schedulePersist} onchange={() => void persistHistory()}
+                              disabled={!!edit.appliedPath || edit.applying} rows="4"
+                              class="mt-1 w-full bg-[var(--bg-card)] border border-[var(--border)] rounded p-2 font-mono text-[11px] disabled:opacity-60"></textarea>
+                          </label>
+                        </details>
+                        {#if edit.appliedPath}
+                          <span role="status" class="inline-flex items-center gap-1 text-[11px] text-[var(--success)]"><Check size={13} /> {$t('ai.editApplied')}</span>
+                        {:else}
+                          <button onclick={() => applyEdit(msg, edit)} disabled={edit.applying || edit.new_text === edit.old_text}
+                            class="self-start px-2 py-1 rounded bg-[var(--accent)] text-black text-[11px] disabled:opacity-40">
+                            {edit.applying ? $t('editor.saving') : $t('ai.applyEdit')}
+                          </button>
+                        {/if}
+                        {#if edit.error}<p role="alert" class="text-[11px] text-[var(--danger)]">{edit.error}</p>{/if}
                       </div>
                     {/each}
                   </div>

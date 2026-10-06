@@ -23,6 +23,10 @@ export function modelConversation(messages: StoredChatEntry[]): ChatMessage[] {
           preview: draft.savedPath ? undefined : draft.content.slice(0, 1200),
         })))}`
       : '';
-    return { role: message.role, content: `${message.content.slice(0, 6000)}${drafts}` };
+    const edits = message.edits?.length ? `\nNote edits from this response: ${JSON.stringify(message.edits.map((edit) => ({
+      path: edit.path, applied: !!edit.appliedPath,
+      old_text: edit.old_text.slice(0, 600), new_text: edit.new_text.slice(0, 600),
+    })))}` : '';
+    return { role: message.role, content: `${message.content.slice(0, 6000)}${drafts}${edits}` };
   });
 }

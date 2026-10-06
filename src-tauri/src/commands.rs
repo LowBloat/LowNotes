@@ -6,10 +6,10 @@ use std::{
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::{
-    assistant::{self, AssistantSkill, NoteDraft},
+    assistant::{self, AssistantSkill, NoteDraft, NoteEdit},
     chat_history::{self, ChatHistory},
     config::{AiProviderConfig, AiSettings, AppSettings, BUILTIN_PALETTE_IDS, ThemePalettesSettings, VaultConfig, WebSearchSettings, decode_pair_code},
     crdt::CrdtManager,
@@ -635,10 +635,16 @@ pub async fn ai_chat_query(
     } else {
         assistant::extract_drafts(&answer)
     };
+    let (answer, edits, edit_warnings) = if skill == AssistantSkill::Notes {
+        (answer, Vec::new(), Vec::new())
+    } else {
+        assistant::extract_edits(&answer, &sources)
+    };
+    warnings.extend(edit_warnings);
     if skill == AssistantSkill::Research && web_sources.is_empty() {
         warnings.push("ai.webNoResults".into());
     }
-    Ok(ChatResponse { answer, sources, web_sources, drafts, warnings, vault_id })
+    Ok(ChatResponse { answer, sources, web_sources, drafts, edits, warnings, vault_id })
 }
 
 #[tauri::command]
@@ -680,6 +686,23 @@ pub fn ai_save_draft(
         net.sync_now();
     }
     Ok(path)
+}
+
+#[tauri::command]
+pub fn ai_apply_edit(vault_id: String, edit: NoteEdit, state: State<'_, AppState>, app: AppHandle) -> Result<String, String> {
+    let settings = state.settings.read();
+    let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
+    if vault.id != vault_id { return Err("ai.vaultChanged".into()); }
+    let result = state.crdt.apply_note_edit(&vault.path, &edit).map_err(|e| e.to_string())?;
+    // The open editor receives the same CRDT state as the paired devices.
+    let _ = app.emit("p2p:crdt-update", crate::network::NetworkEventPayload::RemoteCrdtUpdate {
+        note_path: edit.path.clone(), update: result.state.clone(),
+    });
+    if let Some(net) = state.network.read().as_ref() {
+        net.broadcast_crdt_update(edit.path.clone(), result.state);
+        net.sync_now();
+    }
+    Ok(edit.path)
 }
 
 /// Load an image from the vault or its explicit HTTP(S) source for export.

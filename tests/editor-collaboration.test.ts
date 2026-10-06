@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { taskCheckboxChange } from '../src/lib/markdown-tasks';
 import { basicSetup, EditorView } from 'codemirror';
 import { EditorState } from '@codemirror/state';
 import { keymap } from '@codemirror/view';
@@ -48,6 +49,29 @@ function connect(a: ReturnType<typeof peer>, b: ReturnType<typeof peer>) {
     if (origin !== 'remote') Y.applyUpdate(a.doc, update, 'remote');
   });
 }
+
+test('preview task edits synchronize and undo independently from remote typing', () => {
+  const seed = new Y.Doc();
+  seed.getText('content').insert(0, '🙂\n- [ ] Repetida\n- [ ] Repetida\n');
+  const a = peer(Y.encodeStateAsUpdate(seed));
+  const b = peer(Y.encodeStateAsUpdate(seed));
+  connect(a, b);
+  try {
+    const offset = a.content().lastIndexOf('[ ]') + 1;
+    const change = taskCheckboxChange(a.content(), offset, false, true)!;
+    a.undoManager.stopCapturing();
+    a.edit(() => { a.text.delete(change.from, 1); a.text.insert(change.from, change.insert); });
+    a.undoManager.stopCapturing();
+    b.edit(() => b.text.insert(b.text.length, 'Texto remoto.'));
+    expect(a.content()).toBe('🙂\n- [ ] Repetida\n- [x] Repetida\nTexto remoto.');
+    expect(b.content()).toBe(a.content());
+    a.shortcut('Mod-z');
+    expect(a.content()).toBe('🙂\n- [ ] Repetida\n- [ ] Repetida\nTexto remoto.');
+    a.shortcut('Mod-y');
+    expect(b.content()).toBe(a.content());
+    expect(a.content()).toContain('- [x] Repetida');
+  } finally { a.destroy(); b.destroy(); seed.destroy(); }
+});
 
 test('Ctrl+Z never undoes initial content or remote-only typing', () => {
   const seed = new Y.Doc();

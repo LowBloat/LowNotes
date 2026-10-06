@@ -23,6 +23,7 @@ import type {
   WebSearchSettings,
   ImageUploadProvider,
   ImageUploadSettings,
+  NoteEdit,
 } from './types';
 
 export async function uploadClipboardImage(bytes: Uint8Array, provider: ImageUploadProvider, vaultId = ''): Promise<string> {
@@ -201,6 +202,10 @@ export async function aiChatQuery(
 
 export async function aiSaveDraft(vaultId: string, draft: NoteDraft): Promise<string> {
   return await invoke('ai_save_draft', { vaultId, draft });
+}
+
+export async function aiApplyEdit(vaultId: string, edit: NoteEdit): Promise<string> {
+  return await invoke('ai_apply_edit', { vaultId, edit });
 }
 
 export async function chatHistoryGet(vaultId: string): Promise<ChatHistory> {

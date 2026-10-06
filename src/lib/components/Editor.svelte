@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Bold, Code, Heading1, Heading2, Italic, List, ListTodo, LoaderCircle, MessageSquare, Network, Quote, Strikethrough } from 'lucide-svelte';
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { EditorView, basicSetup } from 'codemirror';
   import { markdown } from '@codemirror/lang-markdown';
   import { Compartment, EditorState } from '@codemirror/state';
@@ -11,6 +11,7 @@
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { crdtApplyClientUpdate, readNote, broadcastAwareness, uploadClipboardImage, localImageUrl } from '../api';
   import { renderMarkdown } from '../markdown';
+  import { taskCheckboxChange } from '$lib/markdown-tasks';
   import DocumentActions from './DocumentActions.svelte';
   import type { AppTheme, ViewMode, ImageUploadProvider } from '../types';
   import { t, ts, trError } from '$lib/i18n';
@@ -69,6 +70,7 @@
   let previewContainer: HTMLDivElement | null = $state(null);
   let saveStatus = $state<'saved' | 'error'>('saved');
   let currentContent = $state('');
+  let contentRevision = $state(0);
   let wordCount = $derived(
     currentContent.trim() ? currentContent.trim().split(/\s+/).length : 0
   );
@@ -198,6 +200,7 @@
     }
 
     currentContent = yText.toString();
+    contentRevision++;
 
     if (awareness) {
       awareness.destroy();
@@ -231,6 +234,7 @@
     yDoc.on('update', (update: Uint8Array, origin: any) => {
       const text = yText.toString();
       currentContent = text;
+      contentRevision++;
       onContentChange?.(notePath, text);
 
       if (origin !== 'remote') {
@@ -313,6 +317,40 @@
       e.preventDefault();
       onOpenWikilink?.(wikilink ?? href);
     }
+  }
+
+  async function handleTaskChange(event: Event) {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement) || !input.matches('input[data-task-offset]') || !editorView) return;
+    const wasChecked = input.dataset.taskChecked === 'true';
+    const offset = Number(input.dataset.taskOffset);
+    const change = input.dataset.taskRevision === String(contentRevision)
+      ? taskCheckboxChange(editorView.state.doc.toString(), offset, wasChecked, input.checked) : null;
+    if (!change) { input.checked = wasChecked; return; }
+    const restoreFocus = document.activeElement === input;
+    undoManager?.stopCapturing();
+    editorView.dispatch({ changes: change, userEvent: 'input.task' });
+    undoManager?.stopCapturing();
+    await restoreTaskFocus(offset, restoreFocus);
+  }
+
+  async function restoreTaskFocus(offset: number, restoreFocus: boolean) {
+    await tick();
+    if (restoreFocus && (!document.activeElement || document.activeElement === document.body)) {
+      previewContainer?.querySelector<HTMLInputElement>(`input[data-task-offset="${offset}"]`)?.focus({ preventScroll: true });
+    }
+  }
+
+  async function handleTaskUndo(event: KeyboardEvent) {
+    if (!(event.target instanceof HTMLInputElement) || !event.target.matches('input[data-task-offset]')
+      || !undoManager || !(event.ctrlKey || event.metaKey) || event.altKey) return;
+    const key = event.key.toLowerCase();
+    if (key !== 'z' && key !== 'y') return;
+    event.preventDefault();
+    const offset = Number(event.target.dataset.taskOffset);
+    if (key === 'y' || event.shiftKey) undoManager.redo();
+    else undoManager.undo();
+    await restoreTaskFocus(offset, true);
   }
 
   function refreshRemoteUsers() {
@@ -616,10 +654,12 @@
         bind:this={previewContainer}
         role="presentation"
         onclick={handlePreviewClick}
+        onchange={handleTaskChange}
+        onkeydown={handleTaskUndo}
         class="min-w-0 h-full overflow-y-auto px-8 py-6 select-text {viewMode === 'preview' ? 'w-full max-w-4xl mx-auto' : 'w-1/2'}"
       >
         <article class="prose max-w-none text-[var(--text-main)]">
-          {@html renderMarkdown(currentContent, (src) => localImageUrl(src, vaultId, imageRevision))}
+          {@html renderMarkdown(currentContent, (src) => localImageUrl(src, vaultId, imageRevision), { interactiveTasks: true, taskRevision: contentRevision })}
         </article>
       </div>
     {/if}
@@ -802,5 +842,12 @@
   :global(.prose .task-list-item input) {
     margin-right: 0.4rem;
     accent-color: var(--accent);
+  }
+  :global(.prose .task-list-item input:not(:disabled)), :global(.prose .task-list-item label:has(input:not(:disabled))) {
+    cursor: pointer;
+  }
+  :global(.prose .task-list-item input:focus-visible) {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
   }
 </style>

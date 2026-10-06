@@ -25,6 +25,15 @@ pub struct ChatDraft {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ChatEdit {
+    #[serde(flatten)]
+    pub edit: crate::assistant::NoteEdit,
+    #[serde(default)]
+    pub applied_path: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ChatEntry {
     pub role: String,
     pub content: String,
@@ -35,6 +44,8 @@ pub struct ChatEntry {
     pub web_sources: Vec<WebSource>,
     #[serde(default)]
     pub drafts: Vec<ChatDraft>,
+    #[serde(default)]
+    pub edits: Vec<ChatEdit>,
     #[serde(default)]
     pub warnings: Vec<String>,
     #[serde(default)]
@@ -133,6 +144,8 @@ fn validate(history: &ChatHistory) -> anyhow::Result<Vec<u8>> {
             if !matches!(entry.role.as_str(), "user" | "assistant")
                 || entry.content.len() > 1024 * 1024
                 || entry.drafts.len() > 20
+                || entry.edits.len() > 20
+                || entry.edits.iter().any(|edit| edit.edit.old_text.len() > 256 * 1024 || edit.edit.new_text.len() > 256 * 1024)
                 || entry
                     .drafts
                     .iter()
@@ -216,6 +229,10 @@ mod tests {
                     saved_path: Some("Python/Plano.md".into()),
                 }],
                 warnings: vec![],
+                edits: vec![ChatEdit {
+                    edit: crate::assistant::NoteEdit { path: "Python/Plano.md".into(), old_text: "- [ ] Estudar".into(), new_text: "- [x] Estudar".into() },
+                    applied_path: Some("Python/Plano.md".into()),
+                }],
                 vault_id: None,
                 applied_links: None,
                 is_error: false,
@@ -225,6 +242,8 @@ mod tests {
         save_at(&path, &history).unwrap();
         let value = serde_json::to_value(&history).unwrap();
         assert_eq!(value["activeConversationId"], "chat-1");
+        assert_eq!(value["conversations"][0]["messages"][0]["edits"][0]["old_text"], "- [ ] Estudar");
+        assert_eq!(read_at(&path).unwrap().conversations[0].messages[0].edits[0].applied_path.as_deref(), Some("Python/Plano.md"));
         assert_eq!(
             read_at(&path).unwrap().conversations[0].messages[0].content,
             "Olá"

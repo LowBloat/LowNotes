@@ -168,6 +168,38 @@ impl CrdtManager {
         self.apply_update_inner(vault_path, path, bytes, false)
     }
 
+    pub fn apply_note_edit(&self, vault_path: &Path, edit: &crate::assistant::NoteEdit) -> anyhow::Result<AppliedUpdate> {
+        crate::assistant::validate_edit(edit)?;
+        // A proposal may only edit an existing note, never recreate a deleted one.
+        vault::read_note(vault_path, &edit.path)?;
+        let mut docs = self.docs.lock();
+        let target = vault::safe_join(vault_path, &edit.path)?;
+        let doc = Self::ensure_doc(&mut docs, vault_path, &edit.path)?;
+        let before = Self::encode_state(doc);
+        let current = doc.get_or_insert_text("content").get_string(&doc.transact());
+        let (from, to, insert) = crate::assistant::edit_range(&current, edit)?;
+        // Native Yrs documents use byte offsets. The unchanged edges are trimmed at UTF-8 boundaries.
+        let candidate = Doc::new();
+        candidate.transact_mut().apply_update(Update::decode_v1(&before)?)?;
+        let text = candidate.get_or_insert_text("content");
+        let mut txn = candidate.transact_mut();
+        if to > from { text.remove_range(&mut txn, from as u32, (to - from) as u32); }
+        if !insert.is_empty() { text.insert(&mut txn, from as u32, &insert); }
+        drop(txn);
+        let state = Self::encode_state(&candidate);
+        let content = text.get_string(&candidate.transact());
+        Self::write_state(vault_path, &edit.path, &state)?;
+        if let Err(error) = vault::save_note(vault_path, &edit.path, &content) {
+            let _ = Self::write_state(vault_path, &edit.path, &before);
+            return Err(error);
+        }
+        docs.insert(target, candidate);
+        if let Err(error) = links::reconcile_wikilinks(vault_path, &edit.path, &content) {
+            eprintln!("reconcile_wikilinks failed for {}: {error}", edit.path);
+        }
+        Ok(AppliedUpdate { state, changed: true, conflict_path: None })
+    }
+
     fn apply_update_inner(
         &self,
         vault_path: &Path,
@@ -319,6 +351,41 @@ impl CrdtManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn assistant_task_edit_persists_and_merges_with_concurrent_unicode_text() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let original = "# 🙂 Plano\n\n- [ ] Prática **diária**\n\n![foto](lownotes-image:existing.webp)\n";
+        vault::save_note(a.path(), "Plan.md", original).unwrap();
+        vault::save_note(b.path(), "Plan.md", original).unwrap();
+        let manager_a = CrdtManager::new();
+        let manager_b = CrdtManager::new();
+        let initial = manager_a.get_or_create_doc(a.path(), "Plan.md").unwrap();
+        let remote = Doc::with_client_id(123456);
+        remote.transact_mut().apply_update(Update::decode_v1(&initial).unwrap()).unwrap();
+        remote.get_or_insert_text("content").insert(&mut remote.transact_mut(), 0, "Texto remoto 🙂\n");
+        let edit = crate::assistant::NoteEdit { path: "Plan.md".into(), old_text: original.into(), new_text: original.replace("[ ]", "[x]") };
+        let applied = manager_a.apply_note_edit(a.path(), &edit).unwrap();
+        assert_eq!(vault::read_note(a.path(), "Plan.md").unwrap(), original.replace("[ ]", "[x]"));
+        let remote_state = CrdtManager::encode_state(&remote);
+        manager_b.apply_update(b.path(), "Plan.md", &remote_state).unwrap();
+        manager_b.apply_update(b.path(), "Plan.md", &applied.state).unwrap();
+        manager_a.apply_update(a.path(), "Plan.md", &remote_state).unwrap();
+        let expected = format!("Texto remoto 🙂\n{}", original.replace("[ ]", "[x]"));
+        assert_eq!(vault::read_note(a.path(), "Plan.md").unwrap(), expected);
+        assert_eq!(vault::read_note(b.path(), "Plan.md").unwrap(), expected);
+        assert_eq!(CrdtManager::new().get_or_create_doc(a.path(), "Plan.md").unwrap(), manager_a.get_or_create_doc(a.path(), "Plan.md").unwrap());
+        let before_retry = vault::read_note(a.path(), "Plan.md").unwrap();
+        assert!(manager_a.apply_note_edit(a.path(), &edit).is_err());
+        assert_eq!(vault::read_note(a.path(), "Plan.md").unwrap(), before_retry);
+        vault::save_note(a.path(), "Duplicates.md", "- [ ] Same\n- [ ] Same\n").unwrap();
+        let ambiguous = crate::assistant::NoteEdit { path: "Duplicates.md".into(), old_text: "- [ ] Same".into(), new_text: "- [x] Same".into() };
+        assert_eq!(manager_a.apply_note_edit(a.path(), &ambiguous).err().unwrap().to_string(), "ai.editAmbiguous");
+        let missing = crate::assistant::NoteEdit { path: "Missing.md".into(), ..ambiguous };
+        assert!(manager_a.apply_note_edit(a.path(), &missing).is_err());
+        assert!(!a.path().join("Missing.md").exists());
+    }
 
     fn temp_vault(tag: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!("lownotes-crdt-{}-{tag}", std::process::id()));

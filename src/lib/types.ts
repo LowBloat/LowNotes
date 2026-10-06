@@ -158,6 +158,12 @@ export interface StoredChatDraft extends NoteDraft {
   error?: string;
 }
 
+export interface StoredChatEdit extends NoteEdit {
+  appliedPath?: string;
+  applying?: boolean;
+  error?: string;
+}
+
 export interface StoredChatEntry {
   role: 'user' | 'assistant';
   content: string;
@@ -165,6 +171,7 @@ export interface StoredChatEntry {
   sources?: RagChunk[];
   webSources?: WebSource[];
   drafts?: StoredChatDraft[];
+  edits?: StoredChatEdit[];
   warnings?: string[];
   vaultId?: string;
   appliedLinks?: number;
@@ -192,6 +199,7 @@ export interface ChatResponse {
   sources: RagChunk[];
   web_sources: WebSource[];
   drafts: NoteDraft[];
+  edits: NoteEdit[];
   warnings: string[];
   vault_id: string;
 }
@@ -201,6 +209,12 @@ export type AssistantSkill = 'auto' | 'notes' | 'write' | 'research';
 export interface NoteDraft {
   path: string;
   content: string;
+}
+
+export interface NoteEdit {
+  path: string;
+  old_text: string;
+  new_text: string;
 }
 
 export interface WebSource {

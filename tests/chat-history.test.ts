@@ -2,6 +2,14 @@ import { describe, expect, test } from 'bun:test';
 import { activeConversation, emptyChatHistory, modelConversation, titleFromPrompt } from '../src/lib/chat-history';
 
 describe('histórico do chat', () => {
+  test('contexto distingue alterações propostas das aplicadas', () => {
+    const entry = { role: 'assistant' as const, content: 'Alteração pronta.', timestamp: '09:00', edits: [
+      { path: 'Plano.md', old_text: '- [ ] Estudar', new_text: '- [x] Estudar', appliedPath: undefined as string | undefined },
+    ] };
+    expect(modelConversation([entry])[0].content).toContain('"applied":false');
+    entry.edits[0].appliedPath = 'Plano.md';
+    expect(modelConversation([entry])[0].content).toContain('"applied":true');
+  });
   test('nova conversa e títulos são independentes de mensagens antigas', () => {
     const history = emptyChatHistory();
     expect(activeConversation(history)).toBeNull();

@@ -1,5 +1,34 @@
 import { expect, test } from 'bun:test';
-import { renderMarkdown } from '../src/lib/markdown';
+import { renderMarkdown, renderChatMarkdown } from '../src/lib/markdown';
+import { taskCheckboxChange } from '../src/lib/markdown-tasks';
+
+test('interactive tasks map nested, ordered, quoted and duplicate items to original source positions', () => {
+  const source = '# 🙂 Tarefas\r\n\r\n- [ ] Repetida\r\n  - [X] Filha\r\n- [ ] Repetida\r\n\r\n> 1. [x] Citada\r\n>    - [ ] Outra\r\n\r\n-\r\n  [ ] Próxima linha\r\n\r\n```md\n- [ ] Código\n```\n\nTexto [ ] comum\n\n- \\[ ] Escapada';
+  const html = renderMarkdown(source, undefined, { interactiveTasks: true, taskRevision: 8 });
+  const inputs = [...html.matchAll(/<input[^>]*data-task-offset="(\d+)"[^>]*>/g)];
+  const offsets = inputs.map((input) => Number(input[1]));
+  const expected = [...source.matchAll(/\[([ xX])\] (?:Repetida|Filha|Citada|Outra|Próxima linha)/g)].map((match) => match.index! + 1);
+  expect(offsets).toEqual(expected);
+  for (const input of inputs) {
+    expect(input[0]).not.toContain('disabled');
+    expect(input[0]).toContain('data-task-revision="8"');
+  }
+  expect(renderMarkdown(source)).toContain('disabled=""');
+  expect(renderMarkdown(source)).not.toContain('data-task-offset');
+  expect(renderChatMarkdown(source)).not.toContain('data-task-offset');
+});
+
+test('task edits only replace the checkbox character and reject stale or malformed positions', () => {
+  const source = '🙂\r\n  - [X] Tarefa com **formato**\r\n';
+  const offset = source.indexOf('[X]') + 1;
+  const change = taskCheckboxChange(source, offset, true, false)!;
+  expect(source.slice(0, change.from) + change.insert + source.slice(change.to)).toBe(source.replace('[X]', '[ ]'));
+  expect(taskCheckboxChange(source, offset, false, true)).toBeNull();
+  expect(taskCheckboxChange(source, offset, true, true)).toBeNull();
+  for (const position of [-1, NaN, 1.5, source.length, offset + 1]) {
+    expect(taskCheckboxChange(source, position, true, false)).toBeNull();
+  }
+});
 
 test('local image references resolve for preview without rewriting Markdown or external links', () => {
   const reference = `lownotes-image:${'a'.repeat(64)}.webp`;

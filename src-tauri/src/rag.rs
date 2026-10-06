@@ -35,6 +35,7 @@ pub struct ChatResponse {
     pub sources: Vec<RagChunk>,
     pub web_sources: Vec<crate::assistant::WebSource>,
     pub drafts: Vec<crate::assistant::NoteDraft>,
+    pub edits: Vec<crate::assistant::NoteEdit>,
     pub warnings: Vec<String>,
     pub vault_id: String,
 }

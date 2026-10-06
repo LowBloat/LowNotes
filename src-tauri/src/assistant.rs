@@ -26,7 +26,7 @@ pub fn system_prompt(skill: AssistantSkill) -> String {
         prompt.push_str(include_str!("../skills/write-notes.md"));
     }
     if skill == AssistantSkill::Write {
-        prompt.push_str("\nThe user selected Create documents. Turn their request into one or more complete drafts.\n");
+        prompt.push_str("\nThe user selected Create and edit notes. Produce complete drafts for new documents or exact-excerpt edits for existing notes, as requested.\n");
     }
     if skill == AssistantSkill::Research {
         prompt.push_str(include_str!("../skills/research.md"));
@@ -87,11 +87,45 @@ pub struct NoteDraft {
     pub content: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteEdit {
+    pub path: String,
+    pub old_text: String,
+    pub new_text: String,
+}
+
+pub fn validate_edit(edit: &NoteEdit) -> anyhow::Result<()> {
+    validate_note_path(&edit.path)?;
+    if edit.old_text.is_empty() || edit.old_text == edit.new_text
+        || edit.old_text.len() > MAX_DRAFT_BYTES || edit.new_text.len() > MAX_DRAFT_BYTES {
+        bail!("ai.invalidEdit");
+    }
+    Ok(())
+}
+
+/// Require a unique exact match and trim the unchanged edges, preserving concurrent text elsewhere.
+pub fn edit_range(content: &str, edit: &NoteEdit) -> anyhow::Result<(usize, usize, String)> {
+    validate_edit(edit)?;
+    let start = content.find(&edit.old_text).context("ai.editChanged")?;
+    if content[start + edit.old_text.chars().next().unwrap().len_utf8()..].contains(&edit.old_text) {
+        bail!("ai.editAmbiguous");
+    }
+    let prefix: usize = edit.old_text.chars().zip(edit.new_text.chars())
+        .take_while(|(a, b)| a == b).map(|(a, _)| a.len_utf8()).sum();
+    let suffix: usize = edit.old_text[prefix..].chars().rev().zip(edit.new_text[prefix..].chars().rev())
+        .take_while(|(a, b)| a == b).map(|(a, _)| a.len_utf8()).sum();
+    Ok((start + prefix, start + edit.old_text.len() - suffix,
+        edit.new_text[prefix..edit.new_text.len() - suffix].to_string()))
+}
+
 pub fn validate_draft(draft: &NoteDraft) -> anyhow::Result<()> {
     if draft.content.trim().is_empty() || draft.content.len() > MAX_DRAFT_BYTES {
         bail!("ai.invalidDraft");
     }
-    let path = &draft.path;
+    validate_note_path(&draft.path)
+}
+
+fn validate_note_path(path: &str) -> anyhow::Result<()> {
     if path.is_empty() || path.len() > 240 || path.contains('\\') || !path.ends_with(".md") {
         bail!("ai.invalidDraftPath");
     }
@@ -135,11 +169,27 @@ pub fn extract_drafts(answer: &str) -> (String, Vec<NoteDraft>, Vec<String>) {
 }
 
 fn parse_drafts(answer: &str) -> anyhow::Result<Option<(usize, usize, Vec<NoteDraft>)>> {
+    let Some((start, json_start, json_end, end)) = action_block(answer, "```lownotes-notes")? else {
+        return Ok(None);
+    };
+    #[derive(Deserialize)]
+    struct Payload { notes: Vec<NoteDraft> }
+    let payload: Payload = serde_json::from_str(&answer[json_start..json_end])?;
+    if payload.notes.is_empty() || payload.notes.len() > 10 { bail!("invalid draft count"); }
+    let mut paths = HashSet::new();
+    for draft in &payload.notes {
+        validate_draft(draft)?;
+        if !paths.insert(draft.path.to_lowercase()) { bail!("duplicate draft path"); }
+    }
+    Ok(Some((start, end, payload.notes)))
+}
+
+fn action_block(answer: &str, fence: &str) -> anyhow::Result<Option<(usize, usize, usize, usize)>> {
     let mut offset = 0;
     let mut block = None;
     let mut start = None;
     for line in answer.split_inclusive('\n') {
-        if line.trim() == "```lownotes-notes" {
+        if line.trim() == fence {
             if start.is_some() || block.is_some() {
                 bail!("multiple draft blocks");
             }
@@ -160,22 +210,31 @@ fn parse_drafts(answer: &str) -> anyhow::Result<Option<(usize, usize, Vec<NoteDr
     if json_end - json_start > MAX_RESPONSE_BYTES {
         bail!("drafts too large");
     }
-    #[derive(Deserialize)]
-    struct Payload {
-        notes: Vec<NoteDraft>,
-    }
-    let payload: Payload = serde_json::from_str(&answer[json_start..json_end])?;
-    if payload.notes.is_empty() || payload.notes.len() > 10 {
-        bail!("invalid draft count");
-    }
-    let mut paths = HashSet::new();
-    for draft in &payload.notes {
-        validate_draft(draft)?;
-        if !paths.insert(draft.path.to_lowercase()) {
-            bail!("duplicate draft path");
+    Ok(Some((start, json_start, json_end, end)))
+}
+
+pub fn extract_edits(answer: &str, sources: &[crate::rag::RagChunk]) -> (String, Vec<NoteEdit>, Vec<String>) {
+    let parsed = (|| -> anyhow::Result<_> {
+        let Some((start, json_start, json_end, end)) = action_block(answer, "```lownotes-edits")? else {
+            return Ok(None);
+        };
+        #[derive(Deserialize)]
+        struct Payload { edits: Vec<NoteEdit> }
+        let payload: Payload = serde_json::from_str(&answer[json_start..json_end])?;
+        if payload.edits.is_empty() || payload.edits.len() > 20 { bail!("invalid edit count"); }
+        for edit in &payload.edits {
+            validate_edit(edit)?;
+            if !sources.iter().any(|source| source.note_path == edit.path && source.content.contains(&edit.old_text)) {
+                bail!("edit outside supplied note context");
+            }
         }
+        Ok(Some((start, end, payload.edits)))
+    })();
+    match parsed {
+        Ok(Some((start, end, edits))) => (format!("{}{}", &answer[..start], &answer[end..]).trim().into(), edits, vec![]),
+        Ok(None) => (answer.into(), vec![], vec![]),
+        Err(_) => (answer.into(), vec![], vec!["ai.invalidEditResponse".into()]),
     }
-    Ok(Some((start, end, payload.notes)))
 }
 
 /// Only creates new Markdown files. Existing notes are never overwritten, including on retries.
@@ -226,6 +285,47 @@ pub struct WebSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn edits_require_original_note_context_and_preserve_invalid_responses() {
+        let source = crate::rag::RagChunk {
+            note_path: "Plan.md".into(), note_title: "Plan".into(), section_title: "Tasks".into(),
+            line_number: 1, content: "# Plan\n- [ ] Practice".into(), score: 1.0,
+        };
+        let edit = NoteEdit { path: "Plan.md".into(), old_text: "- [ ] Practice".into(), new_text: "- [x] Practice".into() };
+        let response = format!("Ready to apply.\n```lownotes-edits\n{}\n```", serde_json::json!({"edits":[edit]}));
+        let (answer, edits, warnings) = extract_edits(&response, std::slice::from_ref(&source));
+        assert_eq!(answer, "Ready to apply.");
+        assert_eq!(edits.len(), 1);
+        assert!(warnings.is_empty());
+        let (answer, edits, warnings) = extract_edits(&response, &[]);
+        assert_eq!(answer, response);
+        assert!(edits.is_empty());
+        assert_eq!(warnings, ["ai.invalidEditResponse"]);
+        for invalid in ["```lownotes-edits\n{bad}\n```".to_string(), response.replace("Plan.md", "../Plan.md"),
+            response.replace("Practice", "Invented"), format!("{response}\n{response}"), "```lownotes-edits\n{".into()] {
+            assert_eq!(extract_edits(&invalid, std::slice::from_ref(&source)).0, invalid);
+            assert!(extract_edits(&invalid, std::slice::from_ref(&source)).1.is_empty());
+            assert_eq!(extract_edits(&invalid, std::slice::from_ref(&source)).2, ["ai.invalidEditResponse"]);
+        }
+    }
+
+    #[test]
+    fn exact_edits_trim_unchanged_unicode_edges_and_reject_ambiguous_or_changed_text() {
+        let edit = NoteEdit { path: "Plan.md".into(), old_text: "🙂 - [ ] Prática\n".into(), new_text: "🙂 - [x] Prática\n".into() };
+        let source = format!("Introdução\n{}Fim", edit.old_text);
+        let (from, to, insert) = edit_range(&source, &edit).unwrap();
+        assert_eq!(&source[from..to], " ");
+        assert_eq!(insert, "x");
+        assert_eq!(edit_range(&source.replace("Prática", "Exercício"), &edit).unwrap_err().to_string(), "ai.editChanged");
+        assert_eq!(edit_range(&format!("{source}{source}"), &edit).unwrap_err().to_string(), "ai.editAmbiguous");
+        let overlap = NoteEdit { path: "Plan.md".into(), old_text: "aa".into(), new_text: "b".into() };
+        assert_eq!(edit_range("aaa", &overlap).unwrap_err().to_string(), "ai.editAmbiguous");
+        let deletion = NoteEdit { new_text: String::new(), ..edit };
+        let (from, to, insert) = edit_range(&source, &deletion).unwrap();
+        assert!(insert.is_empty());
+        assert_eq!(format!("{}{}", &source[..from], &source[to..]), "Introdução\nFim");
+    }
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     async fn mock_http(body: String, status: &str) -> (String, tokio::task::JoinHandle<String>) {

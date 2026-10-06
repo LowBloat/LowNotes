@@ -182,6 +182,7 @@ pub fn run() {
             commands::search_vault_rag,
             commands::ai_chat_query,
             commands::ai_save_draft,
+            commands::ai_apply_edit,
             commands::export_document,
             commands::load_export_image,
             commands::mark_welcome_seen,
