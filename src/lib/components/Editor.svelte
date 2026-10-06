@@ -2,7 +2,9 @@
   import { Bold, Code, Heading1, Heading2, Italic, List, ListTodo, LoaderCircle, MessageSquare, Network, Quote, Strikethrough } from 'lucide-svelte';
   import { onMount, onDestroy, tick } from 'svelte';
   import { EditorView, basicSetup } from 'codemirror';
-  import { markdown } from '@codemirror/lang-markdown';
+  import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
+  import { defaultHighlightStyle, HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+  import { tags } from '@lezer/highlight';
   import { Compartment, EditorState } from '@codemirror/state';
   import * as Y from 'yjs';
   import { createLocalCollaboration } from '$lib/editor-collaboration';
@@ -259,6 +261,11 @@
       extensions: [
         basicSetup,
         markdown(),
+        // Keep the standard syntax colors, then give Markdown links a palette-aware class.
+        syntaxHighlighting(defaultHighlightStyle),
+        syntaxHighlighting(HighlightStyle.define([
+          { tag: [tags.link, tags.url], class: 'cm-readable-link' },
+        ], { scope: markdownLanguage })),
         collaboration.extension,
         imagePaste.extension,
         editorTheme.of(codeMirrorTheme()),

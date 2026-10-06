@@ -230,6 +230,12 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   padding-right: 32px !important;
 }
 
+.cm-editor .cm-readable-link {
+  color: var(--accent-light);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
 .cm-cursor {
   border-left-color: var(--accent-light) !important;
   border-left-width: 2px !important;
