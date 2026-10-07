@@ -13,6 +13,9 @@ pub mod export_images;
 pub mod updates;
 pub mod image_upload;
 pub mod local_images;
+pub mod storage;
+pub mod note_transaction;
+pub mod credentials;
 
 use std::sync::Arc;
 use parking_lot::{Mutex, RwLock};
@@ -147,6 +150,8 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            commands::take_recovery_notices,
+            commands::retry_credentials,
             image_upload::upload_clipboard_image,
             image_upload::save_image_upload_settings,
             updates::get_update_policy,

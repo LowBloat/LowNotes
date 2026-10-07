@@ -43,6 +43,22 @@ pub struct NoteReadResponse {
 }
 
 #[tauri::command]
+pub fn take_recovery_notices() -> Vec<crate::storage::RecoveryNotice> {
+    crate::storage::take_notices()
+}
+
+#[tauri::command]
+pub fn retry_credentials(state: State<'_, AppState>, app: AppHandle) -> Result<AppSettings, String> {
+    let mut settings = state.settings.write();
+    crate::credentials::retry(&mut settings).map_err(|error| error.to_string())?;
+    let vault = settings.active_vault().cloned();
+    let result = settings.clone();
+    drop(settings);
+    if let Some(vault) = vault { restart_network_service(&state, &vault, app)?; }
+    Ok(result)
+}
+
+#[tauri::command]
 pub fn get_app_state(state: State<'_, AppState>) -> Result<InitialStateResponse, String> {
     let settings = state.settings.read().clone();
     let active_vault = settings.active_vault().cloned();
@@ -911,6 +927,10 @@ fn restart_network_service(
     app: AppHandle,
 ) -> Result<(), String> {
     let mut vault_clone = vault.clone();
+    if vault_clone.credentials_locked {
+        *state.network.write() = None;
+        return Ok(());
+    }
     if vault_clone.ensure_keys() {
         let mut s = state.settings.write();
         if let Some(v) = s.vaults.iter_mut().find(|v| v.id == vault_clone.id) {

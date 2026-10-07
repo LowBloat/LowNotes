@@ -11,3 +11,5 @@ vite.config.ts.timestamp-*
 src-tauri/target
 src-tauri/gen
 __pycache__/
+playwright-report/
+test-results/

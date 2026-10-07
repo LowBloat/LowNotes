@@ -1,6 +1,17 @@
 import type { Dictionary } from '../types';
 
 const esES: Dictionary = {
+  storage: {
+    recovered: 'Se recuperó un archivo local desde su copia de seguridad. Se conservó la copia dañada.',
+    failed: 'No se pudo recuperar un archivo local. Se conservó el original; restaura una copia válida antes de modificarlo.',
+  },
+  credentials: {
+    migrationIncomplete: 'Las credenciales se guardaron, pero no se pudo limpiar una copia local de la configuración anterior. Vuelve a intentarlo para completar la migración.',
+    unavailable: 'El almacén de credenciales del sistema no está disponible. Tus credenciales se conservaron. Desbloquea el almacén o inicia su servicio y vuelve a intentarlo. Los dispositivos emparejados conservan la misma identidad.',
+    retry: 'Volver a acceder a las credenciales',
+    openSettings: 'Abrir configuración',
+    protected: 'Las claves de los proveedores y la identidad de los dispositivos se guardan en el almacén de credenciales del sistema.',
+  },
   app: {
     welcomeTitle: 'Bienvenido a LowNotes',
     welcomeSubtitle:

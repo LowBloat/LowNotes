@@ -1,4 +1,15 @@
 const enUS = {
+  storage: {
+    recovered: 'A local file was recovered from its backup. The damaged copy was preserved.',
+    failed: 'A local file could not be recovered. The original was preserved; restore a valid copy before changing it.',
+  },
+  credentials: {
+    migrationIncomplete: 'Credentials were saved, but an old local settings backup could not be cleaned up. Try again to finish the migration.',
+    unavailable: 'The system credential store is unavailable. Your credentials were preserved. Unlock the store or start its service, then try again. Paired devices keep the same identity.',
+    retry: 'Try credential store again',
+    openSettings: 'Open settings',
+    protected: 'Provider keys and device identity are stored in the system credential store.',
+  },
   app: {
     welcomeTitle: 'Welcome to LowNotes',
     welcomeSubtitle:

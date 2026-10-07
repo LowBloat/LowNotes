@@ -100,21 +100,22 @@ pub fn path_for_vault(vault_id: &str) -> anyhow::Result<PathBuf> {
 }
 
 fn read_at(path: &Path) -> anyhow::Result<ChatHistory> {
-    if !path.exists() && !path.with_extension("bak").exists() {
-        return Ok(ChatHistory::default());
-    }
-    for candidate in [path.to_path_buf(), path.with_extension("bak")] {
-        if let Ok(bytes) = fs::read(&candidate) {
-            if bytes.len() <= MAX_FILE_BYTES {
-                if let Ok(history) = serde_json::from_slice::<ChatHistory>(&bytes) {
-                    if history.version == VERSION && validate(&history).is_ok() {
-                        return Ok(history);
-                    }
-                }
+    let valid = |bytes: &[u8]| bytes.len() <= MAX_FILE_BYTES && serde_json::from_slice::<ChatHistory>(bytes)
+        .is_ok_and(|history| validate(&history).is_ok());
+    // Migrate the legacy .bak filename before asking the shared recovery layer to restore it.
+    if !fs::read(path).is_ok_and(|bytes| valid(&bytes)) {
+        let legacy = path.with_extension("bak");
+        let backup = crate::storage::backup_path(path);
+        if let Ok(bytes) = fs::read(&legacy) {
+            let newer = fs::metadata(&legacy).and_then(|meta| meta.modified()).ok()
+                > fs::metadata(&backup).and_then(|meta| meta.modified()).ok();
+            if valid(&bytes) && (newer || !backup.exists()) {
+                crate::storage::write_validated(&backup, &bytes, valid)?;
             }
         }
     }
-    bail!("ai.historyCorrupt")
+    let bytes = crate::storage::read_validated(path, valid).map_err(|_| anyhow::anyhow!("ai.historyCorrupt"))?;
+    match bytes { Some(bytes) => Ok(serde_json::from_slice(&bytes)?), None => Ok(ChatHistory::default()) }
 }
 
 pub fn load(vault_id: &str) -> anyhow::Result<ChatHistory> {
@@ -164,31 +165,9 @@ fn validate(history: &ChatHistory) -> anyhow::Result<Vec<u8>> {
 
 fn save_at(path: &Path, history: &ChatHistory) -> anyhow::Result<()> {
     let bytes = validate(history)?;
-    let dir = path.parent().context("errors.configDir")?;
-    fs::create_dir_all(dir)?;
-    let pending = path.with_extension("tmp");
-    let backup = path.with_extension("bak");
-    fs::write(&pending, bytes)?;
-    if path.exists() {
-        if fs::read(path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<ChatHistory>(&bytes).ok())
-            .is_some_and(|saved| saved.version == VERSION)
-        {
-            fs::copy(path, &backup)?;
-        }
-        fs::remove_file(path)?;
-    }
-    if let Err(error) = fs::rename(&pending, path) {
-        if backup.exists() {
-            let _ = fs::copy(&backup, path);
-        }
-        return Err(error.into());
-    }
-    if backup.exists() {
-        fs::remove_file(backup)?;
-    }
-    Ok(())
+    crate::storage::write_validated(path, &bytes, |data| {
+        serde_json::from_slice::<ChatHistory>(data).is_ok_and(|history| validate(&history).is_ok())
+    })
 }
 
 pub fn save(vault_id: &str, history: &ChatHistory) -> anyhow::Result<()> {

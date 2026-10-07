@@ -10,6 +10,8 @@
     "prepare": "svelte-kit sync || echo ''",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "bun test",
+    "test:e2e": "playwright test",
+    "check:e2e": "tsc --project tsconfig.e2e.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "tauri"
   },
@@ -44,6 +46,7 @@
     "yjs": "^13.6.33"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@sveltejs/adapter-static": "^3.0.10",
     "@sveltejs/kit": "^2.65.1",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",

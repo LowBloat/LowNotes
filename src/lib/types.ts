@@ -86,6 +86,7 @@ export interface ImageUploadSettings {
 }
 
 export interface AppSettings {
+  credential_error?: string;
   device_name: string;
   theme: AppTheme;
   theme_palettes: ThemePalettesSettings;

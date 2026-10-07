@@ -102,7 +102,9 @@ flowchart LR
 
 **P2P does not mean no connection infrastructure.** Notes do not live on a central LowNotes server. Iroh uses direct connections when possible and may fall back to discovery/relay infrastructure to establish or forward the encrypted connection.
 
-**Optional data stays separate.** Preferences and API keys live in the app's local `settings.json`; conversation history lives in the local data directory, separated per vault. These files are not part of the vault or the P2P sync. Keys in `settings.json` are not encrypted by LowNotes.
+**Optional data stays separate.** Preferences live in the app's local `settings.json`; provider keys and the private P2P identity use the operating system's credential store (Windows Credential Manager, macOS Keychain, or Secret Service on Linux). Existing installations migrate after each stored secret is read back successfully, preserving pairing and provider settings; legacy settings backups are scrubbed after migration. If the credential store is unavailable or locked, LowNotes keeps the existing data and shows a retry action in Settings. An unavailable migrated identity never generates a replacement identity. Linux needs a running, unlocked Secret Service implementation, such as GNOME Keyring or KWallet. Conversation history lives in the local data directory, separated per vault. These files and credentials are not part of the vault or the P2P sync.
+
+**Interrupted saves can be recovered.** Local writes use atomic replacement and validated backups. A durable pending edit coordinates Markdown and its CRDT state; the next open or sync completes an interrupted save and reports the recovery. If an external editor changed the text after the interruption, its version is preserved as a conflict copy for review. Backups, pending saves and corrupt recovery copies stay outside the P2P manifest.
 
 **Defaults evolve without replacing personal choices.** Built-in palettes, AI providers and search sources are defined by the app and merged with saved settings. This way, new defaults can arrive in an update without erasing keys, models and custom entries.
 
@@ -145,9 +147,13 @@ bun run check
 bun test
 cargo test --lib --manifest-path src-tauri/Cargo.toml
 bun run build
+bunx playwright install chromium
+bun run test:e2e
 ```
 
 The frontend uses **Svelte 5, TypeScript, Tailwind CSS v4, CodeMirror 6 and Yjs**. The backend uses **Tauri v2, Rust, Yrs and Iroh**. The Markdown renderer is based on `markdown-it` with extensions and Mermaid. Multi-platform publishing is done by the [release workflow](.github/workflows/release.yml), which generates installers, signatures and the updater's `latest.json`.
+
+The [verification workflow](.github/workflows/ci.yml) runs on pushes and pull requests across Windows, Linux and macOS. Browser tests exercise the real frontend with an isolated native IPC adapter; Rust tests cover persistence, crash recovery, credentials and synchronization. Native credential-store tests use a synthetic entry that is deleted afterward; Linux CI creates an isolated Secret Service session.
 
 ## License
 

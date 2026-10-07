@@ -1,6 +1,17 @@
 import type { Dictionary } from '../types';
 
 const ptBR: Dictionary = {
+  storage: {
+    recovered: 'Um arquivo local foi recuperado do backup. A cópia danificada foi preservada.',
+    failed: 'Não foi possível recuperar um arquivo local. O original foi preservado; restaure uma cópia válida antes de alterá-lo.',
+  },
+  credentials: {
+    migrationIncomplete: 'As credenciais foram salvas, mas não foi possível limpar um backup local das configurações antigas. Tente novamente para concluir a migração.',
+    unavailable: 'O armazenamento de credenciais do sistema está indisponível. Suas credenciais foram preservadas. Desbloqueie o armazenamento ou inicie seu serviço e tente novamente. Os dispositivos pareados mantêm a mesma identidade.',
+    retry: 'Tentar acessar as credenciais novamente',
+    openSettings: 'Abrir configurações',
+    protected: 'As chaves dos provedores e a identidade dos dispositivos ficam no armazenamento de credenciais do sistema.',
+  },
   app: {
     welcomeTitle: 'Bem-vindo ao LowNotes',
     welcomeSubtitle:

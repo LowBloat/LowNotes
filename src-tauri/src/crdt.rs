@@ -56,7 +56,7 @@ impl CrdtManager {
         Ok((path, &bytes[4 + len..]))
     }
 
-    fn write_state(vault_path: &Path, path: &str, state: &[u8]) -> anyhow::Result<()> {
+    pub(crate) fn write_state(vault_path: &Path, path: &str, state: &[u8]) -> anyhow::Result<()> {
         let file = Self::state_file(vault_path, path);
         fs::create_dir_all(file.parent().context("CRDT state directory")?)?;
         let path_bytes = path.as_bytes();
@@ -64,14 +64,16 @@ impl CrdtManager {
         bytes.extend_from_slice(&(path_bytes.len() as u32).to_be_bytes());
         bytes.extend_from_slice(path_bytes);
         bytes.extend_from_slice(state);
-        fs::write(file, bytes)?;
+        let relative = Self::state_relative_path(path);
+        crate::storage::write_validated(&file, &bytes, |data| {
+            Self::decode_file(&relative, data).is_ok_and(|(_, update)| Update::decode_v1(update).is_ok())
+        })?;
         Ok(())
     }
 
     fn load_doc(vault_path: &Path, path: &str, initial_text: &str) -> anyhow::Result<Doc> {
-        let file = Self::state_file(vault_path, path);
-        if file.exists() {
-            let bytes = fs::read(&file)?;
+        let relative = Self::state_relative_path(path);
+        if let Some(bytes) = Self::read_state_file(vault_path, &relative)? {
             let (saved_path, update) = Self::decode_file(&Self::state_relative_path(path), &bytes)?;
             if saved_path != path {
                 bail!("CRDT state belongs to another note");
@@ -105,6 +107,13 @@ impl CrdtManager {
         Ok(local_doc)
     }
 
+    pub fn read_state_file(vault_path: &Path, relative: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        let file = vault::safe_join(vault_path, relative)?;
+        crate::storage::read_validated(&file, |data| {
+            Self::decode_file(relative, data).is_ok_and(|(_, update)| Update::decode_v1(update).is_ok())
+        })
+    }
+
     fn ensure_doc<'a>(
         docs: &'a mut HashMap<PathBuf, Doc>,
         vault_path: &Path,
@@ -114,6 +123,7 @@ impl CrdtManager {
             bail!("CRDT path must be a Markdown note");
         }
         let target = vault::safe_join(vault_path, path)?;
+        if crate::note_transaction::recover_note(vault_path, path)? { docs.remove(&target); }
         let state_file = Self::state_file(vault_path, path);
         let file_content = match vault::read_note(vault_path, path) {
             Ok(content) => content,
@@ -143,13 +153,23 @@ impl CrdtManager {
                     text.insert(&mut txn, 0, &file_content);
                 }
                 drop(txn);
-                Self::write_state(vault_path, path, &Self::encode_state(doc))?;
+                if let Err(error) = crate::note_transaction::commit(vault_path, path, &file_content, &Self::encode_state(doc)) {
+                    docs.remove(&target);
+                    return Err(error);
+                }
             } else {
-                // Recover Markdown after an interrupted write; history is authoritative.
-                vault::save_note(vault_path, path, &current)?;
+                // Preserve a valid divergent Markdown version even if its timestamp
+                // is older than the collaborative state (external tools can retain dates).
+                if target.exists() {
+                    let copy = Self::conflict_path(path, &file_content)?;
+                    vault::save_note(vault_path, &copy, &file_content)?;
+                    crate::storage::report_recovery(&vault::safe_join(vault_path, &copy)?, true);
+                }
+                crate::note_transaction::commit(vault_path, path, &current, &Self::encode_state(doc))?;
+                crate::storage::report_recovery(&target, true);
             }
         }
-        Ok(doc)
+        Ok(docs.get(&target).expect("document retained"))
     }
 
     pub fn get_or_create_doc(&self, vault_path: &Path, path: &str) -> anyhow::Result<Vec<u8>> {
@@ -188,11 +208,7 @@ impl CrdtManager {
         drop(txn);
         let state = Self::encode_state(&candidate);
         let content = text.get_string(&candidate.transact());
-        Self::write_state(vault_path, &edit.path, &state)?;
-        if let Err(error) = vault::save_note(vault_path, &edit.path, &content) {
-            let _ = Self::write_state(vault_path, &edit.path, &before);
-            return Err(error);
-        }
+        crate::note_transaction::commit(vault_path, &edit.path, &content, &state)?;
         docs.insert(target, candidate);
         if let Err(error) = links::reconcile_wikilinks(vault_path, &edit.path, &content) {
             eprintln!("reconcile_wikilinks failed for {}: {error}", edit.path);
@@ -212,6 +228,10 @@ impl CrdtManager {
         let target = vault::safe_join(vault_path, path)?;
         let doc = Self::ensure_doc(&mut docs, vault_path, path)?;
         let before = Self::encode_state(doc);
+        // Validate and merge in a candidate, leaving cached state unchanged on failure.
+        let mut candidate = Doc::new();
+        candidate.transact_mut().apply_update(Update::decode_v1(&before)?)?;
+        let doc = &candidate;
         let mut resolution = None;
         if detect_offline_conflict {
             let remote = Doc::new();
@@ -280,25 +300,28 @@ impl CrdtManager {
                 text.insert(&mut txn, 0, &winner);
             }
             drop(txn);
-            docs.insert(target.clone(), resolved);
+            candidate = resolved;
         }
-        let doc = docs.get(&target).expect("document was loaded");
+        let doc = &candidate;
         let state = Self::encode_state(doc);
         let changed = state != before;
         if changed {
             let text = doc
                 .get_or_insert_text("content")
                 .get_string(&doc.transact());
-            Self::write_state(vault_path, path, &state)?;
-            vault::save_note(vault_path, path, &text)?;
+            if let Err(error) = crate::note_transaction::commit(vault_path, path, &text, &state) {
+                docs.remove(&target);
+                return Err(error);
+            }
             if let Err(error) = links::reconcile_wikilinks(vault_path, path, &text) {
                 eprintln!("reconcile_wikilinks failed for {path}: {error}");
             }
+            docs.insert(target, candidate);
         }
         Ok(AppliedUpdate { state, changed, conflict_path })
     }
 
-    fn conflict_path(path: &str, content: &str) -> anyhow::Result<String> {
+    pub(crate) fn conflict_path(path: &str, content: &str) -> anyhow::Result<String> {
         let note = Path::new(path);
         let stem = note.file_stem().and_then(|s| s.to_str()).context("invalid note name")?;
         let extension = note.extension().and_then(|s| s.to_str()).context("invalid note extension")?;
@@ -351,6 +374,19 @@ impl CrdtManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn divergent_markdown_with_an_older_timestamp_is_preserved_for_review() {
+        let root = tempfile::tempdir().unwrap();
+        vault::save_note(root.path(), "note.md", "collaborative text").unwrap();
+        CrdtManager::new().get_or_create_doc(root.path(), "note.md").unwrap();
+        fs::write(root.path().join("note.md"), "external text with retained timestamp").unwrap();
+        filetime::set_file_mtime(root.path().join("note.md"), filetime::FileTime::from_unix_time(1, 0)).unwrap();
+        CrdtManager::new().get_or_create_doc(root.path(), "note.md").unwrap();
+        assert_eq!(vault::read_note(root.path(), "note.md").unwrap(), "collaborative text");
+        let copy = CrdtManager::conflict_path("note.md", "external text with retained timestamp").unwrap();
+        assert_eq!(vault::read_note(root.path(), &copy).unwrap(), "external text with retained timestamp");
+    }
 
     #[test]
     fn assistant_task_edit_persists_and_merges_with_concurrent_unicode_text() {

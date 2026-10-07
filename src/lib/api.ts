@@ -2,6 +2,7 @@ import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import type {
   AiSettings,
+  AppSettings,
   AssistantSkill,
   NoteDraft,
   AppTheme,
@@ -41,6 +42,14 @@ export async function saveImageUploadSettings(settings: ImageUploadSettings): Pr
 
 export async function getAppState(): Promise<InitialStateResponse> {
   return await invoke('get_app_state');
+}
+
+export async function takeRecoveryNotices(): Promise<Array<{ path: string; recovered: boolean }>> {
+  return await invoke('take_recovery_notices');
+}
+
+export async function retryCredentials(): Promise<AppSettings> {
+  return await invoke('retry_credentials');
 }
 
 export async function getUpdatePolicy(): Promise<UpdatePolicy> {

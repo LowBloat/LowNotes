@@ -70,19 +70,25 @@ pub fn links_path(vault: &Path) -> PathBuf {
 
 /// Load the link store. Missing or corrupted file yields an empty store (version 1).
 pub fn load_links(vault: &Path) -> LinkStore {
-    fs::read_to_string(links_path(vault))
+    crate::storage::read_validated(&links_path(vault), valid_store)
         .ok()
-        .and_then(|raw| serde_json::from_str::<LinkStore>(&raw).ok())
+        .flatten()
+        .and_then(|raw| serde_json::from_slice::<LinkStore>(&raw).ok())
         .unwrap_or_default()
+}
+
+fn valid_store(bytes: &[u8]) -> bool {
+    serde_json::from_slice::<LinkStore>(bytes).is_ok_and(|store| store.version == LINKS_VERSION)
 }
 
 pub fn save_links(vault: &Path, store: &LinkStore) -> anyhow::Result<()> {
     let path = links_path(vault);
+    crate::storage::read_validated(&path, valid_store)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     let json = serde_json::to_string_pretty(store)?;
-    fs::write(path, json)?;
+    crate::storage::write_validated(&path, json.as_bytes(), valid_store)?;
     Ok(())
 }
 
@@ -538,6 +544,23 @@ pub fn apply_operations(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn corrupt_links_recover_valid_relationships_and_cannot_overwrite_unrecoverable_data() {
+        let root = tempfile::tempdir().unwrap();
+        let mut store = LinkStore::new();
+        store.links.push(LinkEdge { source: "a.md".into(), target: "b.md".into(), origin: LinkOrigin::manual });
+        save_links(root.path(), &store).unwrap();
+        let expected = store.clone();
+        store.links.push(LinkEdge { source: "b.md".into(), target: "c.md".into(), origin: LinkOrigin::agent });
+        save_links(root.path(), &store).unwrap();
+        fs::write(links_path(root.path()), b"truncated").unwrap();
+        assert_eq!(load_links(root.path()), expected);
+        fs::write(links_path(root.path()), b"broken again").unwrap();
+        fs::remove_file(crate::storage::backup_path(&links_path(root.path()))).unwrap();
+        assert!(save_links(root.path(), &LinkStore::new()).is_err());
+        assert_eq!(fs::read(links_path(root.path())).unwrap(), b"broken again");
+    }
 
     fn temp_vault(tag: &str) -> PathBuf {
         let dir =
