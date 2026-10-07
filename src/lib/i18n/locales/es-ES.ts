@@ -2,7 +2,7 @@ import type { Dictionary } from '../types';
 
 const esES: Dictionary = {
   storage: {
-    recovered: 'Se recuperó un archivo local desde su copia de seguridad. Se conservó la copia dañada.',
+    recovered: 'Se recuperaron los datos locales. Se conservó el contenido divergente o dañado para su revisión.',
     failed: 'No se pudo recuperar un archivo local. Se conservó el original; restaura una copia válida antes de modificarlo.',
   },
   credentials: {

@@ -245,6 +245,7 @@ pub fn delete_item(root: &Path, relative: &str) -> anyhow::Result<()> {
 
 pub fn build_manifest(root: &Path) -> anyhow::Result<Manifest> {
     crate::note_transaction::recover_all(root)?;
+    crate::links::prepare_sync(root)?;
     let mut manifest = Manifest::new();
     let items = list_vault_items(root)?;
 
@@ -268,26 +269,27 @@ pub fn build_manifest(root: &Path) -> anyhow::Result<Manifest> {
     }
 
     // Include the hidden links store so P2P sync (manifest-driven) propagates it.
-    let links_rel = ".lownotes/links.json";
-    let links_file = root.join(links_rel);
-    if links_file.is_file() {
-        if let (Ok(bytes), Ok(metadata)) = (fs::read(&links_file), fs::metadata(&links_file)) {
-            let hash = blake3::hash(&bytes).to_hex().to_string();
-            let modified_ms = metadata
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-            manifest.insert(
-                links_rel.to_string(),
-                NoteMeta {
-                    path: links_rel.to_string(),
-                    modified_ms,
-                    size: metadata.len(),
-                    hash,
-                },
-            );
+    for links_rel in [crate::links::LINKS_REL_PATH, crate::link_operations::RELATIVE_PATH] {
+        let links_file = root.join(links_rel);
+        if links_file.is_file() {
+            if let (Ok(bytes), Ok(metadata)) = (fs::read(&links_file), fs::metadata(&links_file)) {
+                let hash = blake3::hash(&bytes).to_hex().to_string();
+                let modified_ms = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                manifest.insert(
+                    links_rel.to_string(),
+                    NoteMeta {
+                        path: links_rel.to_string(),
+                        modified_ms,
+                        size: metadata.len(),
+                        hash,
+                    },
+                );
+            }
         }
     }
 

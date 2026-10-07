@@ -1,17 +1,26 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::OnceLock,
 };
 
 use anyhow::bail;
 use serde::{Deserialize, Serialize};
 
-use crate::vault;
+use crate::{link_operations::LinkChanges, vault};
+
+// Serialize read/modify/write, including graph reconciliation and receipt of
+// remote operations. File replacement alone cannot protect a read-modify-write.
+static CHANGES_LOCK: OnceLock<parking_lot::Mutex<()>> = OnceLock::new();
+
+fn changes_lock() -> parking_lot::MutexGuard<'static, ()> {
+    CHANGES_LOCK.get_or_init(parking_lot::Mutex::default).lock()
+}
 
 pub const LINKS_VERSION: u8 = 1;
 pub const LINKS_REL_PATH: &str = ".lownotes/links.json";
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
 #[allow(non_camel_case_types)]
 pub enum LinkOrigin {
@@ -28,7 +37,7 @@ pub enum LinkAction {
     remove,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LinkEdge {
     pub source: String,
     pub target: String,
@@ -68,13 +77,10 @@ pub fn links_path(vault: &Path) -> PathBuf {
     vault.join(".lownotes").join("links.json")
 }
 
-/// Load the link store. Missing or corrupted file yields an empty store (version 1).
+/// Read the current projection. Callers that mutate must use the checked path.
 pub fn load_links(vault: &Path) -> LinkStore {
-    crate::storage::read_validated(&links_path(vault), valid_store)
-        .ok()
-        .flatten()
-        .and_then(|raw| serde_json::from_slice::<LinkStore>(&raw).ok())
-        .unwrap_or_default()
+    let _guard = changes_lock();
+    read_changes(vault).map(|(store, _)| store).unwrap_or_default()
 }
 
 fn valid_store(bytes: &[u8]) -> bool {
@@ -82,14 +88,92 @@ fn valid_store(bytes: &[u8]) -> bool {
 }
 
 pub fn save_links(vault: &Path, store: &LinkStore) -> anyhow::Result<()> {
-    let path = links_path(vault);
-    crate::storage::read_validated(&path, valid_store)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+    let _guard = changes_lock();
+    let (_, mut history) = read_changes(vault)?;
+    for edge in history.edges() {
+        if !store.links.contains(&edge) { history.remove(&edge.source, &edge.target); }
     }
-    let json = serde_json::to_string_pretty(store)?;
-    crate::storage::write_validated(&path, json.as_bytes(), valid_store)?;
+    for edge in &store.links { history.add(edge.clone()); }
+    persist_changes(vault, store, &history)?;
     Ok(())
+}
+
+fn operations_path(vault: &Path) -> PathBuf {
+    vault.join(crate::link_operations::RELATIVE_PATH)
+}
+
+fn project(store: &LinkStore, history: &LinkChanges) -> LinkStore {
+    let mut links = history.edges();
+    for edge in store.links.iter().filter(|edge| edge.origin == LinkOrigin::wikilink) {
+        if !links.iter().any(|known| known.source == edge.source && known.target == edge.target) {
+            links.push(edge.clone());
+        }
+    }
+    links.sort(); links.dedup();
+    LinkStore { version: LINKS_VERSION, links }
+}
+
+fn read_changes(vault: &Path) -> anyhow::Result<(LinkStore, LinkChanges)> {
+    let operations = crate::storage::read_validated(&operations_path(vault), |bytes| LinkChanges::decode(bytes).is_ok())?;
+    let (cached, damaged_cache) = match crate::storage::read_validated(&links_path(vault), valid_store) {
+        Ok(Some(bytes)) => (serde_json::from_slice::<LinkStore>(&bytes)?, false),
+        Ok(None) => (LinkStore::new(), false),
+        Err(error) if operations.is_none() => return Err(error),
+        Err(_) => (LinkStore::new(), true),
+    };
+    let history = match operations {
+        Some(bytes) => LinkChanges::decode(&bytes)?,
+        None => { let mut history = LinkChanges::default(); history.import_legacy(&cached.links); history }
+    };
+    // Missing operations are a one-time legacy migration. Do not import the
+    // projection once a journal exists, as its old contents can be stale.
+    let projected = project(&cached, &history);
+    if damaged_cache {
+        crate::storage::write_validated(&links_path(vault), &serde_json::to_vec_pretty(&projected)?, valid_store)?;
+        crate::storage::report_recovery(&links_path(vault), true);
+    }
+    // Ensure callers cannot bypass validation with malformed legacy paths.
+    history.validate()?;
+    Ok((projected, history))
+}
+
+fn persist_changes(vault: &Path, store: &LinkStore, history: &LinkChanges) -> anyhow::Result<()> {
+    // Commit the authority first. If projection replacement is interrupted,
+    // the next read reconstructs the same links from the operation journal.
+    crate::storage::write_validated(&operations_path(vault), &history.encode()?, |bytes| LinkChanges::decode(bytes).is_ok())?;
+    let projected = project(store, history);
+    crate::storage::write_validated(&links_path(vault), &serde_json::to_vec_pretty(&projected)?, valid_store)?;
+    Ok(())
+}
+
+pub fn prepare_sync(vault: &Path) -> anyhow::Result<()> {
+    let _guard = changes_lock();
+    if !links_path(vault).exists() && !operations_path(vault).exists() { return Ok(()); }
+    let (store, history) = read_changes(vault)?;
+    persist_changes(vault, &store, &history)
+}
+
+pub fn is_sync_metadata(path: &str) -> bool {
+    path == LINKS_REL_PATH || path == crate::link_operations::RELATIVE_PATH
+}
+
+pub fn merge_sync(vault: &Path, path: &str, bytes: &[u8]) -> anyhow::Result<bool> {
+    if !is_sync_metadata(path) { bail!("invalid link metadata path"); }
+    // Reject a malformed packet before touching any local projection or journal.
+    let remote_history = if path == crate::link_operations::RELATIVE_PATH {
+        Some(LinkChanges::decode(bytes)?)
+    } else {
+        if bytes.len() > crate::link_operations::MAX_BYTES || !valid_store(bytes) { bail!("invalid link projection"); }
+        None
+    };
+    let _guard = changes_lock();
+    let (store, history) = read_changes(vault)?;
+    let mut merged = history.clone();
+    if let Some(remote) = remote_history { merged = history.merged(&remote)?; }
+    else { merged.import_legacy(&serde_json::from_slice::<LinkStore>(bytes)?.links); }
+    let changed = merged != history;
+    persist_changes(vault, &store, &merged)?;
+    Ok(changed)
 }
 
 /// Scan `[[...]]` tokens, skipping fenced code blocks and inline code spans.
@@ -357,7 +441,8 @@ pub fn resolve_link_target(vault: &Path, token: &str) -> Option<String> {
 pub fn graph_links(vault: &Path) -> anyhow::Result<Vec<LinkEdge>> {
     let items = vault::list_vault_items(vault)?;
     let exists = |path: &str| items.iter().any(|i| !i.is_dir && i.path == path);
-    let mut edges: Vec<LinkEdge> = load_links(vault)
+    let store = { let _guard = changes_lock(); read_changes(vault)?.0 };
+    let mut edges: Vec<LinkEdge> = store
         .links
         .into_iter()
         .filter(|e| {
@@ -367,6 +452,10 @@ pub fn graph_links(vault: &Path) -> anyhow::Result<Vec<LinkEdge>> {
                 && e.source != e.target
         })
         .collect();
+    // One visible relation per pair; the operation history retains every
+    // origin. Prefer a manual relation when a manual/assistant pair coincides.
+    edges.sort_by_key(|edge| (edge.source.clone(), edge.target.clone(), edge.origin != LinkOrigin::manual));
+    edges.dedup_by(|a, b| a.source == b.source && a.target == b.target);
     for item in items.iter().filter(|i| !i.is_dir) {
         let Ok(content) = vault::read_note(vault, &item.path) else {
             continue;
@@ -394,14 +483,17 @@ pub fn graph_links(vault: &Path) -> anyhow::Result<Vec<LinkEdge>> {
 /// Rebuild wikilink-origin edges for `source` from its current content.
 /// Manual/agent edges are never touched. Saves only when the store changed.
 pub fn reconcile_wikilinks(vault: &Path, source: &str, content: &str) -> anyhow::Result<()> {
-    let mut store = load_links(vault);
+    // Read note items before holding the metadata mutex: recovery of a note
+    // can itself reconcile links.
+    let items = vault::list_vault_items(vault)?;
+    let _guard = changes_lock();
+    let (mut store, history) = read_changes(vault)?;
     let before = store.links.clone();
 
     store
         .links
         .retain(|e| !(e.origin == LinkOrigin::wikilink && e.source == source));
 
-    let items = vault::list_vault_items(vault)?;
     for token in note_tokens(content) {
         let Some(target) = resolve_from_items(&items, source, &token) else {
             continue;
@@ -424,7 +516,7 @@ pub fn reconcile_wikilinks(vault: &Path, source: &str, content: &str) -> anyhow:
     }
 
     if store.links != before {
-        save_links(vault, &store)?;
+        persist_changes(vault, &store, &history)?;
     }
     Ok(())
 }
@@ -493,9 +585,9 @@ pub fn apply_operations(
         validate_note(vault, &op.target)?;
     }
 
-    let mut store = load_links(vault);
     let mut wikilink_removals: Vec<(String, String)> = Vec::new();
-
+    let guard = changes_lock();
+    let (mut store, mut history) = read_changes(vault)?;
     for op in ops {
         match op.action {
             LinkAction::add => {
@@ -504,14 +596,17 @@ pub fn apply_operations(
                     .iter()
                     .any(|e| e.source == op.source && e.target == op.target);
                 if !exists {
-                    store.links.push(LinkEdge {
+                    let edge = LinkEdge {
                         source: op.source.clone(),
                         target: op.target.clone(),
                         origin: origin.clone(),
-                    });
+                    };
+                    history.add(edge.clone());
+                    store.links.push(edge);
                 }
             }
             LinkAction::remove => {
+                history.remove(&op.source, &op.target);
                 store
                     .links
                     .retain(|e| !(e.source == op.source && e.target == op.target));
@@ -520,7 +615,8 @@ pub fn apply_operations(
         }
     }
 
-    save_links(vault, &store)?;
+    persist_changes(vault, &store, &history)?;
+    drop(guard);
 
     for (source, target) in &wikilink_removals {
         let Ok(content) = vault::read_note(vault, source) else {
@@ -546,20 +642,65 @@ mod tests {
     use super::*;
 
     #[test]
+    fn concurrent_local_map_actions_keep_every_link_and_journal_survives_a_stale_projection() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("a.md"), "# A\n").unwrap();
+        for index in 0..20 { fs::write(root.path().join(format!("{index}.md")), "target").unwrap(); }
+        std::thread::scope(|scope| {
+            for index in 0..20 {
+                let vault = root.path();
+                scope.spawn(move || apply_operations(vault, &[LinkOperation {
+                    source: "a.md".into(), target: format!("{index}.md"), action: LinkAction::add,
+                }], LinkOrigin::manual).unwrap());
+            }
+        });
+        assert_eq!(graph_links(root.path()).unwrap().len(), 20);
+        let expected = fs::read(operations_path(root.path())).unwrap();
+        // Simulates process termination after committing operations but before
+        // replacing the projection. Reading/manifest preparation repairs it.
+        fs::write(links_path(root.path()), br#"{"version":1,"links":[]}"#).unwrap();
+        assert_eq!(load_links(root.path()).links.len(), 20);
+        prepare_sync(root.path()).unwrap();
+        assert_eq!(serde_json::from_slice::<LinkStore>(&fs::read(links_path(root.path())).unwrap()).unwrap().links.len(), 20);
+        assert_eq!(fs::read(operations_path(root.path())).unwrap(), expected);
+    }
+
+    #[test]
+    fn invalid_remote_metadata_cannot_replace_local_operations_or_projection() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("a.md"), "# A\n").unwrap();
+        fs::write(root.path().join("b.md"), "# B\n").unwrap();
+        apply_operations(root.path(), &[LinkOperation { source: "a.md".into(), target: "b.md".into(), action: LinkAction::add }], LinkOrigin::manual).unwrap();
+        let projection = fs::read(links_path(root.path())).unwrap();
+        let operations = fs::read(operations_path(root.path())).unwrap();
+        let mut remote = LinkChanges::decode(&operations).unwrap();
+        remote.additions.values_mut().next().unwrap().target = "c.md".into();
+        assert!(merge_sync(root.path(), crate::link_operations::RELATIVE_PATH, &remote.encode().unwrap()).is_err());
+        assert!(merge_sync(root.path(), crate::link_operations::RELATIVE_PATH, b"truncated").is_err());
+        assert!(merge_sync(root.path(), LINKS_REL_PATH, br#"{"version":99,"links":[]}"#).is_err());
+        assert_eq!(fs::read(operations_path(root.path())).unwrap(), operations);
+        assert_eq!(fs::read(links_path(root.path())).unwrap(), projection);
+    }
+
+    #[test]
     fn corrupt_links_recover_valid_relationships_and_cannot_overwrite_unrecoverable_data() {
         let root = tempfile::tempdir().unwrap();
         let mut store = LinkStore::new();
         store.links.push(LinkEdge { source: "a.md".into(), target: "b.md".into(), origin: LinkOrigin::manual });
         save_links(root.path(), &store).unwrap();
-        let expected = store.clone();
         store.links.push(LinkEdge { source: "b.md".into(), target: "c.md".into(), origin: LinkOrigin::agent });
         save_links(root.path(), &store).unwrap();
         fs::write(links_path(root.path()), b"truncated").unwrap();
-        assert_eq!(load_links(root.path()), expected);
+        // The journal is authoritative even when the recovered projection's
+        // backup predates the latest addition.
+        assert_eq!(load_links(root.path()), store);
         fs::write(links_path(root.path()), b"broken again").unwrap();
         fs::remove_file(crate::storage::backup_path(&links_path(root.path()))).unwrap();
+        assert_eq!(load_links(root.path()), store, "valid operations rebuild a corrupt projection");
+        fs::write(operations_path(root.path()), b"broken operations").unwrap();
+        fs::remove_file(crate::storage::backup_path(&operations_path(root.path()))).unwrap();
         assert!(save_links(root.path(), &LinkStore::new()).is_err());
-        assert_eq!(fs::read(links_path(root.path())).unwrap(), b"broken again");
+        assert_eq!(fs::read(operations_path(root.path())).unwrap(), b"broken operations");
     }
 
     fn temp_vault(tag: &str) -> PathBuf {
@@ -603,11 +744,12 @@ mod tests {
         let loaded = load_links(&vault);
         assert_eq!(loaded, store);
 
-        // Corrupted file => empty store, version 1.
+        // A corrupt projection is rebuilt from its valid operation history.
         fs::write(links_path(&vault), "{ not json").unwrap();
         let corrupt = load_links(&vault);
         assert_eq!(corrupt.version, 1);
-        assert!(corrupt.links.is_empty());
+        assert_eq!(corrupt.links.len(), 2);
+        assert!(corrupt.links.iter().all(|edge| edge.origin != LinkOrigin::wikilink));
 
         let _ = fs::remove_dir_all(&vault);
     }

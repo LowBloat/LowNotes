@@ -20,7 +20,8 @@ use crate::{
     vault::{self, Manifest, NoteMeta},
 };
 
-const ALPN: &[u8] = b"lownotes/sync/3";
+const ALPN: &[u8] = b"lownotes/sync/4";
+const IMAGE_ALPN: &[u8] = b"lownotes/sync/3";
 const LEGACY_ALPN: &[u8] = b"lownotes/sync/2";
 const MAX_PACKET_BYTES: usize = 24 * 1024 * 1024;
 
@@ -91,6 +92,10 @@ pub enum Packet {
     ImagePut {
         meta: NoteMeta,
         content_base64: String,
+    },
+    JsonPut {
+        meta: NoteMeta,
+        content: serde_json::Value,
     },
     Request {
         path: String,
@@ -251,7 +256,7 @@ async fn run_network(
 ) -> anyhow::Result<()> {
     let endpoint = Endpoint::builder(presets::N0)
         .secret_key(identity.secret_key.clone())
-        .alpns(vec![ALPN.to_vec(), LEGACY_ALPN.to_vec()])
+        .alpns(vec![ALPN.to_vec(), IMAGE_ALPN.to_vec(), LEGACY_ALPN.to_vec()])
         .bind()
         .await?;
 
@@ -576,7 +581,7 @@ async fn handle_incoming_connection(
                 .cloned()
                 .context("errors.unauthorizedDevice")?;
 
-            let changed = serve_sync(&mut send, &mut recv, &vault, remote_manifest, Some(&app), connection.alpn() == ALPN).await?;
+            let changed = serve_sync(&mut send, &mut recv, &vault, remote_manifest, Some(&app), connection.alpn() != LEGACY_ALPN, connection.alpn() == ALPN).await?;
             connection.close(0u32.into(), b"sync complete");
 
             let direct = connection_is_direct(&connection);
@@ -761,12 +766,16 @@ async fn dial_sync(
     let addr = peer.endpoint_addr()?;
     let connection = match endpoint.connect(addr.clone(), ALPN).await {
         Ok(connection) => connection,
-        Err(_) => endpoint.connect(addr, LEGACY_ALPN).await?,
+        Err(_) => match endpoint.connect(addr.clone(), IMAGE_ALPN).await {
+            Ok(connection) => connection,
+            Err(_) => endpoint.connect(addr, LEGACY_ALPN).await?,
+        },
     };
     let (mut send, mut recv) = connection.open_bi().await?;
 
-    let images_supported = connection.alpn() == ALPN;
-    let my_manifest = sync_manifest(&vault, images_supported)?;
+    let images_supported = connection.alpn() != LEGACY_ALPN;
+    let metadata_supported = connection.alpn() == ALPN;
+    let my_manifest = sync_manifest(&vault, images_supported, metadata_supported)?;
     send_packet(&mut send, &Packet::Manifest(my_manifest.clone())).await?;
 
     let mut changed = 0;
@@ -776,10 +785,10 @@ async fn dial_sync(
         match packet {
             Packet::Request { path } => {
                 let meta = my_manifest.get(&path).context("errors.metaMissing")?;
-                send_sync_content(&mut send, &vault, meta).await?;
+                send_sync_content(&mut send, &vault, meta, metadata_supported).await?;
             }
-            packet @ (Packet::Put { .. } | Packet::ImagePut { .. }) => {
-                let (meta, content) = unpack_sync_content(packet, images_supported)?;
+            packet @ (Packet::Put { .. } | Packet::ImagePut { .. } | Packet::JsonPut { .. }) => {
+                let (meta, content) = unpack_sync_content(packet, images_supported, metadata_supported)?;
                 let outcome = write_sync_content(&vault, &meta.path, &content, app)?;
                 if outcome.changed {
                     changed += 1;
@@ -803,9 +812,13 @@ async fn serve_sync(
     remote_manifest: Manifest,
     app: Option<&AppHandle>,
     images_supported: bool,
+    metadata_supported: bool,
 ) -> anyhow::Result<usize> {
-    let local_manifest = sync_manifest(vault, images_supported)?;
+    let local_manifest = sync_manifest(vault, images_supported, metadata_supported)?;
     if !images_supported && remote_manifest.keys().any(|path| crate::local_images::is_sync_image(path)) {
+        bail!("errors.unexpectedPacketSync");
+    }
+    if !metadata_supported && remote_manifest.contains_key(crate::link_operations::RELATIVE_PATH) {
         bail!("errors.unexpectedPacketSync");
     }
     let mut changed = 0;
@@ -815,12 +828,12 @@ async fn serve_sync(
         if skip_markdown_sync(path, &local_manifest, &remote_manifest) { continue; }
         let needs_send = match remote_manifest.get(path) {
             None => true,
-            Some(remote_meta) if is_crdt_state(path) => local_meta.hash != remote_meta.hash,
+            Some(remote_meta) if is_crdt_state(path) || crate::links::is_sync_metadata(path) => local_meta.hash != remote_meta.hash,
             Some(remote_meta) => local_meta.modified_ms > remote_meta.modified_ms && local_meta.hash != remote_meta.hash,
         };
 
         if needs_send {
-            send_sync_content(send, vault, local_meta).await?;
+            send_sync_content(send, vault, local_meta, metadata_supported).await?;
         }
     }
 
@@ -829,14 +842,14 @@ async fn serve_sync(
         if skip_markdown_sync(path, &local_manifest, &remote_manifest) { continue; }
         let needs_request = match local_manifest.get(path) {
             None => true,
-            Some(local_meta) if is_crdt_state(path) => remote_meta.hash != local_meta.hash,
+            Some(local_meta) if is_crdt_state(path) || crate::links::is_sync_metadata(path) => remote_meta.hash != local_meta.hash,
             Some(local_meta) => remote_meta.modified_ms > local_meta.modified_ms && remote_meta.hash != local_meta.hash,
         };
 
         if needs_request {
             send_packet(send, &Packet::Request { path: path.clone() }).await?;
             let packet: Packet = recv_packet(recv).await?;
-            let (meta, content) = unpack_sync_content(packet, images_supported)?;
+            let (meta, content) = unpack_sync_content(packet, images_supported, metadata_supported)?;
             if meta.path != *path { bail!("errors.unexpectedPacketSync"); }
             if write_sync_content(vault, &meta.path, &content, app)?.changed {
                 changed += 1;
@@ -852,23 +865,32 @@ async fn serve_sync(
     Ok(changed)
 }
 
-fn sync_manifest(root: &Path, images_supported: bool) -> anyhow::Result<Manifest> {
+fn sync_manifest(root: &Path, images_supported: bool, metadata_supported: bool) -> anyhow::Result<Manifest> {
     let mut manifest = vault::build_manifest(root)?;
     if !images_supported { manifest.retain(|path, _| !crate::local_images::is_sync_image(path)); }
+    if !metadata_supported { manifest.remove(crate::link_operations::RELATIVE_PATH); }
     Ok(manifest)
 }
 
-async fn send_sync_content(send: &mut iroh::endpoint::SendStream, root: &Path, meta: &NoteMeta) -> anyhow::Result<()> {
+async fn send_sync_content(send: &mut iroh::endpoint::SendStream, root: &Path, meta: &NoteMeta, metadata_supported: bool) -> anyhow::Result<()> {
     let content = read_sync_content(root, &meta.path)?;
-    let packet = if crate::local_images::is_sync_image(&meta.path) {
+    let packet = if metadata_supported && crate::links::is_sync_metadata(&meta.path) {
+        Packet::JsonPut { meta: meta.clone(), content: serde_json::from_slice(&content)? }
+    } else if crate::local_images::is_sync_image(&meta.path) {
         Packet::ImagePut { meta: meta.clone(), content_base64: STANDARD.encode(content) }
     } else { Packet::Put { meta: meta.clone(), content } };
     send_packet(send, &packet).await
 }
 
-fn unpack_sync_content(packet: Packet, images_supported: bool) -> anyhow::Result<(NoteMeta, Vec<u8>)> {
+fn unpack_sync_content(packet: Packet, images_supported: bool, metadata_supported: bool) -> anyhow::Result<(NoteMeta, Vec<u8>)> {
     match packet {
-        Packet::Put { meta, content } if !crate::local_images::is_sync_image(&meta.path) => Ok((meta, content)),
+        Packet::JsonPut { meta, content } if metadata_supported && crate::links::is_sync_metadata(&meta.path) => {
+            let bytes = serde_json::to_vec_pretty(&content)?;
+            if bytes.len() > crate::link_operations::MAX_BYTES { bail!("invalid link metadata size"); }
+            Ok((meta, bytes))
+        }
+        Packet::Put { meta, content } if !crate::local_images::is_sync_image(&meta.path)
+            && (metadata_supported || meta.path != crate::link_operations::RELATIVE_PATH) => Ok((meta, content)),
         Packet::ImagePut { meta, content_base64 } if images_supported => {
             let name = crate::local_images::sync_name(&meta.path)?;
             let (id, _) = crate::local_images::image_name(name)?;
@@ -889,13 +911,20 @@ fn is_crdt_state(path: &str) -> bool {
 }
 
 fn skip_markdown_sync(path: &str, local: &Manifest, remote: &Manifest) -> bool {
+    // Modern peers exchange the authority rather than importing its projection
+    // as extra legacy additions. Older peers can still read the plain list.
+    if path == crate::links::LINKS_REL_PATH
+        && local.contains_key(crate::link_operations::RELATIVE_PATH)
+        && remote.contains_key(crate::link_operations::RELATIVE_PATH) { return true; }
     if !vault::is_markdown(Path::new(path)) { return false; }
     let state_path = CrdtManager::state_relative_path(path);
     local.contains_key(&state_path) || remote.contains_key(&state_path)
 }
 
 fn read_sync_content(vault_path: &Path, path: &str) -> anyhow::Result<Vec<u8>> {
-    if crate::local_images::is_sync_image(path) {
+    if crate::links::is_sync_metadata(path) {
+        Ok(std::fs::read(vault::safe_join(vault_path, path)?)?)
+    } else if crate::local_images::is_sync_image(path) {
         Ok(crate::local_images::load(vault_path, crate::local_images::sync_name(path)?)?.bytes)
     } else if is_crdt_state(path) {
         Ok(std::fs::read(vault::safe_join(vault_path, path)?)?)
@@ -910,7 +939,9 @@ struct WriteOutcome {
 }
 
 fn write_sync_content(vault_path: &Path, path: &str, content: &[u8], app: Option<&AppHandle>) -> anyhow::Result<WriteOutcome> {
-    if crate::local_images::is_sync_image(path) {
+    if crate::links::is_sync_metadata(path) {
+        Ok(WriteOutcome { changed: crate::links::merge_sync(vault_path, path, content)?, conflict_created: false })
+    } else if crate::local_images::is_sync_image(path) {
         let changed = crate::local_images::insert(vault_path, crate::local_images::sync_name(path)?, content)?;
         Ok(WriteOutcome { changed, conflict_created: false })
     } else if is_crdt_state(path) {
@@ -1071,7 +1102,7 @@ mod tests {
                 let packet: Packet = recv_packet(&mut recv).await.unwrap();
                 match packet {
                     Packet::Manifest(remote_manifest) => {
-                        serve_sync(&mut send, &mut recv, &accept_vault, remote_manifest, None, true)
+                        serve_sync(&mut send, &mut recv, &accept_vault, remote_manifest, None, true, true)
                             .await
                             .unwrap();
                     }
@@ -1084,7 +1115,7 @@ mod tests {
         let (changed_b, _direct, _) = dial_sync(ep_b.clone(), vault_b.clone(), peer_a.clone(), None)
             .await
             .unwrap();
-        assert_eq!(changed_b, 2, "B deveria receber nota_a.md + .lownotes/links.json");
+        assert_eq!(changed_b, 2, "B recebe uma nota e a relação; a projeção repetida não é uma nova alteração");
         assert!(vault_b.join("nota_a.md").exists(), "vault B nao recebeu nota_a.md");
         assert_eq!(
             fs::read_to_string(vault_b.join("nota_a.md")).unwrap(),
@@ -1102,7 +1133,12 @@ mod tests {
         );
 
         // Incremental: edit on B, second sync must converge A without ping-pong
+        // Make the newer timestamp explicit: Windows can give two rapid writes
+        // the same millisecond, which is a different reconciliation scenario.
+        let previous_time = fs::metadata(vault_a.join("nota_b.md")).unwrap().modified().unwrap();
         fs::write(vault_b.join("nota_b.md"), "# Nota B\n\nConteudo de B atualizado.").unwrap();
+        filetime::set_file_mtime(vault_b.join("nota_b.md"),
+            filetime::FileTime::from_system_time(previous_time + Duration::from_secs(1))).unwrap();
         let (changed_b2, _, _) = dial_sync(ep_b.clone(), vault_b.clone(), peer_a.clone(), None)
             .await
             .unwrap();
@@ -1180,7 +1216,7 @@ mod tests {
                 let connection = ep_accept(&server_ep).await.await.unwrap();
                 let (mut send, mut recv) = connection.accept_bi().await.unwrap();
                 let Packet::Manifest(manifest) = recv_packet(&mut recv).await.unwrap() else { panic!("Expected manifest"); };
-                serve_sync(&mut send, &mut recv, &server_root, manifest, None, true).await.unwrap();
+                serve_sync(&mut send, &mut recv, &server_root, manifest, None, true, true).await.unwrap();
             }
         });
         let (changed, _, _) = dial_sync(ep_b.clone(), b.path().to_path_buf(), peer_a.clone(), None).await.unwrap();
@@ -1210,14 +1246,14 @@ mod tests {
         let root = a.path().to_path_buf();
         let server_ep = ep_a.clone();
         let responder = tokio::spawn(async move {
-            // Ignore the incompatible v3 handshake, then accept the v2 fallback.
+            // Ignore incompatible v4/v3 handshakes, then accept the v2 fallback.
             loop {
                 let incoming = ep_accept(&server_ep).await;
                 let Ok(connection) = incoming.await else { continue; };
                 let (mut send, mut recv) = connection.accept_bi().await.unwrap();
                 let Packet::Manifest(manifest) = recv_packet(&mut recv).await.unwrap() else { panic!("Expected manifest"); };
                 assert!(!manifest.keys().any(|p| crate::local_images::is_sync_image(p)));
-                serve_sync(&mut send, &mut recv, &root, manifest, None, false).await.unwrap();
+                serve_sync(&mut send, &mut recv, &root, manifest, None, false, false).await.unwrap();
                 break;
             }
         });
@@ -1237,9 +1273,119 @@ mod tests {
         let meta = NoteMeta { path: format!(".lownotes/images/{id}.png"), hash: id, size: content.len() as u64, modified_ms: 0 };
         let packet = Packet::ImagePut { meta: meta.clone(), content_base64: STANDARD.encode(&content) };
         assert!(serde_json::to_vec(&packet).unwrap().len() < MAX_PACKET_BYTES);
-        assert!(unpack_sync_content(packet, false).is_err());
+        assert!(unpack_sync_content(packet, false, false).is_err());
         let packet = Packet::ImagePut { meta, content_base64: STANDARD.encode(b"different data") };
-        assert!(unpack_sync_content(packet, true).is_err());
+        assert!(unpack_sync_content(packet, true, true).is_err());
+    }
+
+    #[test]
+    fn json_metadata_avoids_numeric_byte_expansion_and_is_rejected_on_older_protocols() {
+        let mut history = crate::link_operations::LinkChanges::default();
+        for index in 0..1800 {
+            history.additions.insert(format!("add-{index:032x}"), crate::links::LinkEdge {
+                source: format!("{}-{index}.md", "a".repeat(4000)),
+                target: format!("{}.md", "b".repeat(4000)),
+                origin: crate::links::LinkOrigin::manual,
+            });
+        }
+        let bytes = history.encode().unwrap();
+        assert!(bytes.len() > 10 * 1024 * 1024);
+        let meta = NoteMeta { path: crate::link_operations::RELATIVE_PATH.into(),
+            hash: blake3::hash(&bytes).to_hex().to_string(), size: bytes.len() as u64, modified_ms: 0 };
+        let packet = Packet::JsonPut { meta: meta.clone(), content: serde_json::from_slice(&bytes).unwrap() };
+        assert!(serde_json::to_vec(&packet).unwrap().len() < MAX_PACKET_BYTES);
+        let (_, received) = unpack_sync_content(packet, true, true).unwrap();
+        assert_eq!(crate::link_operations::LinkChanges::decode(&received).unwrap(), history);
+        let packet = Packet::JsonPut { meta, content: serde_json::from_slice(&bytes).unwrap() };
+        assert!(unpack_sync_content(packet, true, false).is_err());
+    }
+
+    #[tokio::test]
+    async fn v3_fallback_keeps_images_and_legacy_links_without_sending_operation_packets() {
+        let a = tempfile::tempdir().unwrap(); let b = tempfile::tempdir().unwrap();
+        fs::write(a.path().join("a.md"), "A").unwrap(); fs::write(a.path().join("b.md"), "B").unwrap();
+        crate::links::apply_operations(a.path(), &[crate::links::LinkOperation {
+            source: "a.md".into(), target: "b.md".into(), action: crate::links::LinkAction::add,
+        }], crate::links::LinkOrigin::manual).unwrap();
+        let image = STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC").unwrap();
+        let link = crate::local_images::save_pasted(a.path(), image).unwrap();
+        let server = Endpoint::builder(presets::N0).secret_key(SecretKey::generate()).alpns(vec![IMAGE_ALPN.to_vec()]).bind().await.unwrap();
+        let client = bind_endpoint().await; let peer = peer_of(&server, "v3 peer");
+        let accept_ep = server.clone(); let root = a.path().to_path_buf();
+        let responder = tokio::spawn(async move {
+            loop {
+                let Ok(connection) = ep_accept(&accept_ep).await.await else { continue; };
+                let (mut send, mut recv) = connection.accept_bi().await.unwrap();
+                let Packet::Manifest(manifest) = recv_packet(&mut recv).await.unwrap() else { panic!("Expected manifest"); };
+                assert!(!manifest.contains_key(crate::link_operations::RELATIVE_PATH));
+                serve_sync(&mut send, &mut recv, &root, manifest, None, true, false).await.unwrap();
+                break;
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(30), dial_sync(client.clone(), b.path().into(), peer, None)).await.unwrap().unwrap();
+        responder.await.unwrap();
+        assert_eq!(crate::links::graph_links(b.path()).unwrap().len(), 1);
+        let name = crate::local_images::link_name(&link).unwrap();
+        assert_eq!(crate::local_images::load(a.path(), name).unwrap().bytes, crate::local_images::load(b.path(), name).unwrap().bytes);
+        server.close().await; client.close().await;
+    }
+
+    async fn sync_test_pair(client: &Endpoint, client_root: &Path, server: &Endpoint, server_root: &Path) -> usize {
+        let server_ep = server.clone();
+        let root = server_root.to_path_buf();
+        let peer = peer_of(server, "test replica");
+        let responder = tokio::spawn(async move {
+            let connection = ep_accept(&server_ep).await.await.unwrap();
+            let (mut send, mut recv) = connection.accept_bi().await.unwrap();
+            let Packet::Manifest(manifest) = recv_packet(&mut recv).await.unwrap() else { panic!("Expected manifest"); };
+            serve_sync(&mut send, &mut recv, &root, manifest, None, true, true).await.unwrap();
+        });
+        let outcome = tokio::time::timeout(Duration::from_secs(30),
+            dial_sync(client.clone(), client_root.to_path_buf(), peer, None)).await.unwrap().unwrap();
+        responder.await.unwrap();
+        outcome.0
+    }
+
+    #[tokio::test]
+    async fn three_devices_merge_offline_map_changes_without_replaying_a_deleted_link() {
+        use crate::links::{self, LinkAction, LinkOperation, LinkOrigin};
+        let roots = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
+        for root in &roots {
+            for name in ["a.md", "b.md", "c.md", "d.md"] { fs::write(root.path().join(name), format!("# {name}\n")).unwrap(); }
+        }
+        let endpoints = [bind_endpoint().await, bind_endpoint().await, bind_endpoint().await];
+        let op = |target: &str, action| LinkOperation { source: "a.md".into(), target: target.into(), action };
+        links::apply_operations(roots[0].path(), &[op("b.md", LinkAction::add)], LinkOrigin::manual).unwrap();
+        sync_test_pair(&endpoints[1], roots[1].path(), &endpoints[0], roots[0].path()).await;
+        sync_test_pair(&endpoints[2], roots[2].path(), &endpoints[0], roots[0].path()).await;
+        let stale_operations = fs::read(roots[0].path().join(crate::link_operations::RELATIVE_PATH)).unwrap();
+        let stale_projection = fs::read(roots[0].path().join(links::LINKS_REL_PATH)).unwrap();
+        // Separate offline operations, deliberately unrelated file timestamps.
+        links::apply_operations(roots[0].path(), &[op("b.md", LinkAction::remove)], LinkOrigin::manual).unwrap();
+        links::apply_operations(roots[1].path(), &[op("c.md", LinkAction::add)], LinkOrigin::agent).unwrap();
+        links::apply_operations(roots[2].path(), &[op("d.md", LinkAction::add)], LinkOrigin::manual).unwrap();
+        for (index, root) in roots.iter().enumerate() {
+            filetime::set_file_mtime(root.path().join(crate::link_operations::RELATIVE_PATH),
+                filetime::FileTime::from_unix_time(100 - index as i64, 0)).unwrap();
+        }
+        for _ in 0..2 {
+            sync_test_pair(&endpoints[1], roots[1].path(), &endpoints[0], roots[0].path()).await;
+            sync_test_pair(&endpoints[2], roots[2].path(), &endpoints[1], roots[1].path()).await;
+            sync_test_pair(&endpoints[0], roots[0].path(), &endpoints[2], roots[2].path()).await;
+        }
+        let expected = links::graph_links(roots[0].path()).unwrap();
+        assert_eq!(expected.len(), 2);
+        assert!(expected.iter().any(|edge| edge.target == "c.md" && edge.origin == LinkOrigin::agent));
+        assert!(expected.iter().any(|edge| edge.target == "d.md" && edge.origin == LinkOrigin::manual));
+        for root in &roots {
+            assert_eq!(links::graph_links(root.path()).unwrap(), expected);
+            assert!(!write_sync_content(root.path(), crate::link_operations::RELATIVE_PATH, &stale_operations, None).unwrap().changed);
+            write_sync_content(root.path(), links::LINKS_REL_PATH, &stale_projection, None).unwrap();
+            assert_eq!(links::graph_links(root.path()).unwrap(), expected);
+        }
+        // After restart, no cached in-memory state is needed to prevent resurrection.
+        assert_eq!(sync_test_pair(&endpoints[1], roots[1].path(), &endpoints[0], roots[0].path()).await, 0);
+        for endpoint in endpoints { endpoint.close().await; }
     }
 
     async fn ep_accept(endpoint: &Endpoint) -> iroh::endpoint::Incoming {

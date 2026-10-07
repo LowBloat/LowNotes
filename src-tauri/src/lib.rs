@@ -5,6 +5,7 @@ pub mod vault;
 pub mod commands;
 pub mod rag;
 pub mod links;
+pub mod link_operations;
 pub mod assistant;
 pub mod web_search;
 pub mod chat_history;

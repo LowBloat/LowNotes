@@ -1,6 +1,6 @@
 const enUS = {
   storage: {
-    recovered: 'A local file was recovered from its backup. The damaged copy was preserved.',
+    recovered: 'Local data was recovered. Any conflicting or damaged content was preserved for review.',
     failed: 'A local file could not be recovered. The original was preserved; restore a valid copy before changing it.',
   },
   credentials: {

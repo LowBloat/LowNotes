@@ -94,7 +94,9 @@ flowchart LR
 
 ### Data and sync decisions
 
-**Markdown stays a real file.** Notes live in the folder you chose and can be opened in other editors. The history needed for collaboration lives in `.lownotes/crdt/`; links added outside the text live in `.lownotes/links.json`. When backing up or moving a vault between computers, take the `.lownotes/` folder along with the `.md` files.
+**Markdown stays a real file.** Notes live in the folder you chose and can be opened in other editors. The history needed for collaboration lives in `.lownotes/crdt/`; links added outside the text have an immutable add/remove history in `.lownotes/link-operations.json` and a readable projection in `.lownotes/links.json`. When backing up or moving a vault between computers, take the `.lownotes/` folder along with the `.md` files.
+
+**Map changes merge between devices.** Distinct manual or assistant links created offline survive reconciliation regardless of file timestamps. Removing a relation records the additions already seen, so receiving a stale list cannot bring them back. A genuinely concurrent new addition remains available; a later intentional re-add uses a fresh identity. The operation history retains the origin of every addition. Both devices need this operation-capable version for full map reconciliation; older versions can exchange ordinary notes, images when supported, and legacy link lists, but cannot express durable link removals or intentional re-adds after those removals.
 
 **Live and offline edits follow different paths.** With two connected apps, editor changes are sent as CRDT updates and appear on the other device. With paired peers, a full reconciliation happens when the app opens; another periodic round recovers lost messages or disconnected periods.
 
@@ -112,7 +114,7 @@ flowchart LR
 
 ## P2P pairing
 
-Use the same up-to-date version on both computers to get offline conflict resolution. The current sync protocol is `lownotes/sync/2`.
+Use the same up-to-date version on both computers to get the complete sync behavior. The current sync protocol is `lownotes/sync/4`, with `/3` fallback for notes/images and `/2` fallback for ordinary notes. Pairing codes remain `LOWNOTES2_...`; their prefix does not identify the negotiated sync protocol.
 
 1. Open LowNotes on both computers and select a vault on each.
 2. On the first one, open **Manage Connections → Share Code** and copy the `LOWNOTES2_...` code.

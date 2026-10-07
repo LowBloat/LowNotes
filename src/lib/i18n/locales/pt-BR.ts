@@ -2,7 +2,7 @@ import type { Dictionary } from '../types';
 
 const ptBR: Dictionary = {
   storage: {
-    recovered: 'Um arquivo local foi recuperado do backup. A cópia danificada foi preservada.',
+    recovered: 'Os dados locais foram recuperados. Conteúdo divergente ou danificado foi preservado para revisão.',
     failed: 'Não foi possível recuperar um arquivo local. O original foi preservado; restaure uma cópia válida antes de alterá-lo.',
   },
   credentials: {

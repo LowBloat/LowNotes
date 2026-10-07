@@ -772,7 +772,9 @@ pub fn links_apply(
         &operations,
         origin.unwrap_or(links::LinkOrigin::manual),
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    if let Some(net) = state.network.read().as_ref() { net.sync_now(); }
+    Ok(())
 }
 
 #[tauri::command]

@@ -69,8 +69,15 @@ jobs:
       - name: Verificar frontend e Markdown
         run: |
           bun run check
+          bun run check:e2e
           bun test
           python3 .github/scripts/test_update_manifest.py
+
+      - name: Verificar interface antes de publicar
+        run: |
+          bun run build
+          bunx playwright install --with-deps chromium
+          bun run test:e2e
 
   windows:
     name: Windows x64
@@ -93,6 +100,9 @@ jobs:
 
       - name: Instalar dependências do frontend
         run: bun install --frozen-lockfile
+
+      - name: Testar regressões Rust
+        run: cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
 
       - name: Compilar aplicativo com Tauri
         run: bun run tauri build
@@ -181,6 +191,9 @@ jobs:
 
       - name: Instalar dependências do frontend
         run: bun install --frozen-lockfile
+
+      - name: Testar regressões Rust
+        run: cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
 
       - name: Compilar aplicativo com Tauri
         run: bun run tauri build
@@ -284,6 +297,9 @@ jobs:
 
       - name: Instalar dependências do frontend
         run: bun install --frozen-lockfile
+
+      - name: Testar regressões Rust
+        run: cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
 
       - name: Compilar aplicativo com Tauri (universal)
         run: bun run tauri build --target universal-apple-darwin

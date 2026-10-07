@@ -1,8 +1,8 @@
 # Backlog proposto para o LowNotes
 
-Investigação em 07/10/2026, sobre a base v0.3.3 (`caf91b8`) e as alterações locais em andamento. Priorização proposta para preservar a leveza, o funcionamento offline e o controle local dos dados.
+Investigação em 07/10/2026, sobre a base v0.3.3 (`caf91b8`) e o trabalho em `codex/p1-reliability` (`d2e3177` mais alterações locais). Priorização proposta para preservar a leveza, o funcionamento offline e o controle local dos dados.
 
-O levantamento foi feito por inspeção do README, frontend, backend, testes e workflows. Também foram executados `bun test` (90 testes passaram) e `cargo test --locked --lib --manifest-path src-tauri/Cargo.toml` (73 passaram, 2 testes de upload real ignorados). Não inclui medições de desempenho nem uma reprodução de todos os cenários descritos. Os riscos de sincronização abaixo são deduzidos dos fluxos do código; sua reprodução e os testes de regressão fazem parte dos respectivos itens.
+O levantamento foi feito por inspeção do README, frontend, backend, testes e workflows. Na execução P1 mais recente, `bun test` passou 90 testes e `cargo test --locked --lib --manifest-path src-tauri/Cargo.toml` passou 93, com 4 testes condicionais/fixtures ignorados. Não inclui medições de desempenho nem a reprodução de todos os cenários propostos. Os riscos de exclusão/renomeação abaixo são deduzidos dos fluxos do código; sua reprodução e os testes de regressão fazem parte dos respectivos itens. Evidências e conclusão de cada P1 estão em [P1-IMPLEMENTATION.md](F:/Desenv/2026/8-LOWCARB/3-lownotes/P1-IMPLEMENTATION.md).
 
 Esforço relativo: **P** = mudança localizada; **M** = vários fluxos ou componentes; **G** = mudança de arquitetura, protocolo ou plataforma. As estimativas não representam prazos. **P1** = confiabilidade e sustentação; **P2** = melhorias de uso e escala; **P3** = expansão.
 
@@ -11,7 +11,9 @@ Esforço relativo: **P** = mudança localizada; **M** = vários fluxos ou compon
 | Item | Estado observado | O que ainda precisa ser entregue |
 | --- | --- | --- |
 | B03 | Em andamento: `storage.rs`, backups válidos, recuperação e avisos na interface | Validar a recuperação coordenada de Markdown/CRDT, falhas durante operações completas e preservação da identidade P2P |
-| B07 | Em andamento: workflow de PR/push com frontend e Rust nos três sistemas | Executar o CI e completar os cenários de integração e testes de interface |
+| B05 | Implementado localmente: união de operações, remoção durável e migração | Conferir o novo CI remoto; os cenários locais com três dispositivos passaram |
+| B07 | CI de PR/push e etapas de teste na release; Linux/macOS passaram na primeira execução | Conferir novamente Windows após o ajuste do cenário de timestamp e completar exclusão/renomeação/restauração |
+| B08 | Concluído: credenciais do SO, migração, proteção de identidade e retentativa | Manter as regressões nos três sistemas |
 | B27 | Ícones regenerados no workspace | Automatizar a conferência e entregar os novos ícones em uma release |
 
 Os demais itens são propostas ou lacunas ainda não resolvidas. Uma base implementada não equivale ao atendimento de todos os critérios de aceite.
@@ -52,7 +54,7 @@ Adicionar lixeira em disco, retenção configurável, versões de notas e compar
 
 ### B05. Mesclar vínculos do mapa criados em dispositivos diferentes — G
 
-Os vínculos manuais e do assistente ficam em `.lownotes/links.json`. Esse arquivo participa da sincronização por hash e data de modificação, mas não usa a mesclagem CRDT aplicada às notas.
+Na base v0.3.3, os vínculos manuais e do assistente ficam em `.lownotes/links.json` e usam hash/data de modificação. O trabalho P1 atual já adiciona o histórico imutável `.lownotes/link-operations.json`, com união de adições/remoções, proteção contra replay de listas antigas e preservação de origens. Os testes locais com três dispositivos passaram; falta validar a alteração no novo CI remoto.
 
 Adotar operações de adicionar/remover vínculos com identidade e resolução de concorrência, preservando a origem de cada relação.
 
@@ -76,7 +78,7 @@ Concluir e executar o CI para PRs e pushes. Automatizar os cenários de exclusã
 
 ### B08. Armazenar credenciais fora do JSON de preferências — M
 
-Chaves de provedores e a chave privada de identidade P2P são campos das configurações locais, serializadas em JSON.
+Na base v0.3.3, chaves de provedores e identidade P2P eram serializadas no JSON. O trabalho P1 já migrou esses dados para o armazenamento de credenciais do SO, com referências imutáveis no JSON, verificação antes de limpar dados antigos e retentativa quando o armazenamento está bloqueado. Migração, exportação e preservação de identidade foram testadas; os backends nativos Windows, Linux e macOS passaram.
 
 Usar o armazenamento de credenciais do sistema, migrar instalações existentes e definir o comportamento quando esse armazenamento estiver indisponível. Exportações de configurações devem omitir segredos.
 
@@ -190,7 +192,7 @@ Validar o destino efetivo das operações contra a raiz do vault, definir compor
 
 ### B28. Documentação consistente e guia de diagnóstico — P/M
 
-O README declara `lownotes/sync/2` como protocolo atual, enquanto o backend usa `lownotes/sync/3` e mantém `/2` para compatibilidade. Também apresenta Megumin e Rimuru na tabela inicial, sem destacar a paleta LowBloat padrão.
+O README da base v0.3.3 declarava `/2` enquanto o backend usava `/3`. Essa indicação foi corrigida no trabalho P1: agora documenta `/4`, os fallbacks e o prefixo dos códigos de pareamento. A tabela inicial ainda apresenta Megumin e Rimuru sem destacar a paleta LowBloat padrão; falta também o guia de diagnóstico abaixo.
 
 Revisar documentação junto às releases; explicar compatibilidade, backup completo, localização dos dados e diferenças entre RAG lexical local e modelos locais. Adicionar um guia de diagnóstico de pareamento, sincronização e atualizações com informações que possam ser compartilhadas sem chaves, códigos de pareamento ou conteúdo das notas.
 
