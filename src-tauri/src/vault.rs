@@ -182,23 +182,10 @@ pub fn create_note(
         clean_relative.push_str(".md");
     }
 
-    let target = safe_join(root, &clean_relative)?;
-    if target.exists() {
-        bail!("errors.noteExists");
-    }
-
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
     let default_content = initial_content
         .map(|s| s.to_string())
         .unwrap_or_else(|| default_note_content(lang));
-    crate::storage::write_text(&target, &default_content)?;
-    if crate::catalog::file_path(root).exists() {
-        crate::catalog::transact(root, |catalog| { catalog.ensure_path(&clean_relative, false, "local")?; Ok(()) })?;
-    }
-    Ok(clean_relative)
+    crate::creation::create(root, &clean_relative, Some(&default_content), &crate::crdt::CrdtManager::new(), "local")
 }
 
 /// Template written into brand-new notes when no initial content is supplied.
@@ -212,11 +199,7 @@ fn default_note_content(lang: &str) -> String {
 }
 
 pub fn create_folder(root: &Path, relative: &str) -> anyhow::Result<()> {
-    let target = safe_join(root, relative)?;
-    fs::create_dir_all(&target)?;
-    if crate::catalog::file_path(root).exists() {
-        crate::catalog::transact(root, |catalog| { catalog.ensure_path(relative, true, "local")?; Ok(()) })?;
-    }
+    crate::creation::create(root, &relative.trim().replace('\\', "/"), None, &crate::crdt::CrdtManager::new(), "local")?;
     Ok(())
 }
 

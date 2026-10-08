@@ -1,4 +1,6 @@
-use std::{collections::HashSet, fs, io::Write, path::Path};
+use std::{collections::HashSet, path::Path};
+#[cfg(test)]
+use std::fs;
 
 use anyhow::{bail, Context};
 use serde::{Deserialize, Serialize};
@@ -240,38 +242,7 @@ pub fn extract_edits(answer: &str, sources: &[crate::rag::RagChunk]) -> (String,
 /// Only creates new Markdown files. Existing notes are never overwritten, including on retries.
 pub fn save_draft(root: &Path, draft: &NoteDraft) -> anyhow::Result<String> {
     validate_draft(draft)?;
-    let canonical_root = root.canonicalize()?;
-    let target = crate::vault::safe_join(&canonical_root, &draft.path)?;
-    let parent = target.parent().context("ai.invalidDraftPath")?;
-    let mut current = canonical_root.clone();
-    for component in parent.strip_prefix(&canonical_root)?.components() {
-        current.push(component);
-        match fs::create_dir(&current) {
-            Ok(()) => (),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
-            Err(e) => return Err(e.into()),
-        }
-        if !current.canonicalize()?.starts_with(&canonical_root) {
-            bail!("errors.pathEscape");
-        }
-    }
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&target)
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::AlreadyExists {
-                anyhow::anyhow!("errors.noteExists")
-            } else {
-                e.into()
-            }
-        })?;
-    if let Err(error) = file.write_all(draft.content.as_bytes()) {
-        drop(file);
-        let _ = fs::remove_file(&target);
-        return Err(error.into());
-    }
-    Ok(draft.path.clone())
+    crate::creation::create(root, &draft.path, Some(&draft.content), &crate::crdt::CrdtManager::new(), "assistant")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -173,6 +173,37 @@ fn write_progress(directory: &Path, progress: &Progress) -> anyhow::Result<()> {
     )
 }
 
+/// A creation deleted before it ever reached the filesystem still has a full
+/// restore payload. Use the ordinary trash format, so restart/undo and future
+/// trash selection use the same validated archive as other deletions.
+pub(crate) fn archive_creation(root: &Path, entry: &ResolvedEntry, content: Option<&str>, state: Option<&[u8]>, catalog: &Catalog) -> anyhow::Result<()> {
+    if !entry.deleted() || entry.is_dir != content.is_none() { bail!("invalid deleted creation archive"); }
+    let record = blake3::hash(format!("interrupted-creation:{}", entry.id).as_bytes()).to_hex().to_string();
+    let directory = root.join(TRASH).join(record);
+    fs::create_dir_all(directory.join("items"))?;
+    fs::create_dir_all(directory.join("states"))?;
+    let created_ms = read_intent(&directory)?.map(|intent| intent.created_ms).unwrap_or_else(|| {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64
+    });
+    let intent = Intent { version: 1, created_ms, device: "recovery".into(), catalog: catalog.clone(),
+        before: BTreeMap::from([(entry.id.clone(), entry.path.clone())]),
+        items: vec![Item { id: entry.id.clone(), old: entry.path.clone(), new: None, is_dir: entry.is_dir, location: entry.location.clone(), restore_from: None }] };
+    storage::write_validated(&directory.join("intent.json"), &serde_json::to_vec(&intent)?, |bytes| parse(bytes).is_ok())?;
+    if let (Some(content), Some(state)) = (content, state) {
+        let target = directory.join("items").join(&entry.id);
+        if target.exists() && fs::read_to_string(&target)? != content { bail!("creation archive already has different text"); }
+        storage::write_text(&target, content)?;
+        let mut bytes = Vec::with_capacity(4 + entry.path.len() + state.len());
+        bytes.extend_from_slice(&(entry.path.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(entry.path.as_bytes());
+        bytes.extend_from_slice(state);
+        storage::write_validated(&saved_state(&directory, &entry.id), &bytes, |bytes| decode_doc(&entry.path, bytes).is_ok())?;
+    } else if entry.is_dir {
+        fs::create_dir_all(directory.join("items").join(&entry.id))?;
+    } else { bail!("creation archive has no collaborative state"); }
+    Ok(())
+}
+
 /// Copies are deterministic across peers and never live inside a deleted folder.
 pub fn preserve_deleted(
     root: &Path,

@@ -21,6 +21,7 @@ pub mod image_upload;
 pub mod local_images;
 pub mod storage;
 pub mod note_transaction;
+pub mod creation;
 pub mod credentials;
 
 use std::sync::Arc;

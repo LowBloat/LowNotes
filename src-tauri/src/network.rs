@@ -993,6 +993,11 @@ fn unpack_identified_content(packet: Packet, images_supported: bool, metadata_su
 }
 
 fn write_identified_content(root: &Path, id: &str, path: &str, content: &[u8], app: Option<&AppHandle>) -> anyhow::Result<WriteOutcome> {
+    let manager = app.map(|app| app.state::<AppState>().crdt.clone()).unwrap_or_default();
+    crate::structural::exclusive(root, &manager, || write_identified_inner(root, id, path, content, app))
+}
+
+fn write_identified_inner(root: &Path, id: &str, path: &str, content: &[u8], app: Option<&AppHandle>) -> anyhow::Result<WriteOutcome> {
     let resolved = crate::catalog::load(root)?.resolve()?;
     let entry = resolved.get(id).context("unknown note identity")?;
     if entry.is_dir { bail!("note packet belongs to a directory"); }
@@ -1115,6 +1120,11 @@ struct WriteOutcome {
 }
 
 fn write_sync_content(vault_path: &Path, path: &str, content: &[u8], app: Option<&AppHandle>) -> anyhow::Result<WriteOutcome> {
+    let manager = app.map(|app| app.state::<AppState>().crdt.clone()).unwrap_or_default();
+    crate::structural::exclusive(vault_path, &manager, || write_sync_inner(vault_path, path, content, app))
+}
+
+fn write_sync_inner(vault_path: &Path, path: &str, content: &[u8], app: Option<&AppHandle>) -> anyhow::Result<WriteOutcome> {
     let legacy_path = if is_crdt_state(path) { Some(CrdtManager::decode_file(path, content)?.0) }
         else if vault::is_markdown(Path::new(path)) { Some(path.into()) } else { None };
     if let Some(entry) = legacy_path.as_ref().map(|path| legacy_entry(vault_path, path)).transpose()?.flatten() {
@@ -1126,6 +1136,11 @@ fn write_sync_content(vault_path: &Path, path: &str, content: &[u8], app: Option
 }
 
 fn write_native_content(vault_path: &Path, path: &str, content: &[u8], app: Option<&AppHandle>) -> anyhow::Result<WriteOutcome> {
+    let manager = app.map(|app| app.state::<AppState>().crdt.clone()).unwrap_or_default();
+    crate::structural::exclusive(vault_path, &manager, || write_native_inner(vault_path, path, content, app))
+}
+
+fn write_native_inner(vault_path: &Path, path: &str, content: &[u8], app: Option<&AppHandle>) -> anyhow::Result<WriteOutcome> {
     if crate::links::is_sync_metadata(path) {
         Ok(WriteOutcome { changed: crate::links::merge_sync(vault_path, path, content)?, conflict_created: false })
     } else if crate::local_images::is_sync_image(path) {

@@ -3,7 +3,7 @@
 Escopo: B01–B08 de BACKLOG.md, solicitado em 07/10/2026. Este arquivo acompanha trabalho e evidências; um item só deve ser marcado concluído depois de validar seus critérios de aceite.
 
 - [ ] B01 — exclusões duráveis, peers offline, confirmação, conflito excluir/editar, pastas.
-- [ ] B02 — identidade e histórico em renomeações, referências e mapa, convergência offline.
+- [x] B02 — identidade e histórico em renomeações, referências e mapa, convergência offline; CI `37722631096` nos três sistemas.
 - [ ] B03 — gravação atômica, backups válidos, recuperação coordenada e aviso ao usuário.
 - [ ] B04 — lixeira e versões persistentes, retenção, comparação e restauração colaborativa.
 - [x] B05 — operações de vínculos com mesclagem e remoção durável.
@@ -66,3 +66,16 @@ Escopo: B01–B08 de BACKLOG.md, solicitado em 07/10/2026. Este arquivo acompanh
 - Execução local final: `cargo test --locked --lib --manifest-path src-tauri/Cargo.toml` passou 130 testes, com 6 fixtures/testes condicionais ignorados; workers de crash são executados pelos pais. `bun test` passou 92 testes; Svelte/TypeScript e build passaram. Os 13 cenários de interface passaram, incluindo caminhos Markdown relativos codificados, wikilinks e abertura de URLs web no navegador.
 - Um cenário de rede ultrapassou 30 segundos em uma execução conjunta anterior. Passou isoladamente e nas duas execuções completas subsequentes; a última matriz local com endereços explícitos passou em 9,10 segundos. Não foi necessário aumentar o timeout ou retirar o cenário.
 - Escopo P1 permanece aberto: auditoria de criação interrompida e coordenação de mutações; lixeira/versões com interface, retenção, comparação e restauração colaborativa; benchmarks nativos nas três plataformas; conferência do CI desta etapa e de todas as etapas posteriores.
+
+## Etapa de criação durável (08/10/2026)
+
+- Escopo preservado: somente B01–B08 do backlog original. B05/B08 continuam concluídos; nenhum novo P1 foi criado.
+- CI `37722631096`, sobre `5b4aec3`, concluiu com sucesso em Windows, Linux e macOS. Confirma a etapa de referências escritas, incluindo persistência/rede nativas, credenciais e os 13 cenários de interface.
+- B01/B03: notas, pastas e rascunhos da IA compartilham uma intenção durável anterior à publicação de identidade e conteúdo. Notas novas têm um seed CRDT independente, inclusive quando vazias. A criação evita reaproveitar a identidade de um nome excluído.
+- A recuperação segue movimentos recebidos durante uma criação e não deixa o arquivo antigo reaparecer. Uma exclusão observada continua válida; os dados e o estado colaborativo são preservados no formato normal da lixeira e a restauração funciona após reiniciar, mesmo se a nota ainda não tivesse sido materializada.
+- Um arquivo externo que ocupa o nome após a intenção é mantido no lugar, com identidade independente; a criação é colocada em outro nome. Uma edição externa depois da projeção conserva também o texto original para revisão. Uma edição CRDT posterior é mantida sem criar um falso conflito.
+- Gravações nativas de documentos e recebimento de conteúdo identificado/legado passam pelo coordenador estrutural. Um teste concorrente confirma que salvar o caminho antigo durante um movimento não recria esse arquivo. Criar pastas também solicita reconciliação dos peers.
+- B03/B07: 21 execuções de processo filho encerradas com `process::exit(86)`: oito etapas para notas, oito para rascunhos da IA e cinco para pastas. Incluem intenção de criação, catálogo, intenção da edição, estado CRDT, Markdown, bindings e limpeza. O teste pai reabre pela listagem normal, confere conteúdo/estado/identidade e repetição idempotente.
+- Falha de filesystem com um arquivo bloqueando a pasta preserva o bloqueio e a intenção; após remover o bloqueio, a recuperação conclui a criação. Os limites de conteúdo também são validados na transação por nota.
+- Validação local final: `cargo test --locked --lib --manifest-path src-tauri/Cargo.toml` passou **138 testes**, sem falhas, com **7 fixtures/testes condicionais ignorados** na execução geral; os workers de crash são chamados pelos testes pais. Resultado preservado em `.git/p1-native-latest.txt` nesta checkout. Não houve mudança no frontend nesta etapa.
+- Próximos P1: concluir a coordenação das mutações restantes (incluindo remoção de referências escritas), entregar a interface de lixeira/versões, retenção e comparação/restauração de B04; medir B06 nos três sistemas; validar todas essas etapas no CI de B07. Não marcar os P1 completos apenas por esta etapa passar.

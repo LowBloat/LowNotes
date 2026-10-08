@@ -32,6 +32,7 @@ fn parse(bytes: &[u8], file: &Path) -> anyhow::Result<Intent> {
     let intent: Intent = serde_json::from_slice(bytes)?;
     if intent.version != 1
         || !vault::is_markdown(Path::new(&intent.path))
+        || intent.content.len() as u64 > vault::MAX_NOTE_BYTES
         || file.file_name() != path_for(Path::new(""), &intent.path).file_name()
     {
         bail!("invalid note transaction");
@@ -119,7 +120,7 @@ pub fn commit(root: &Path, note: &str, content: &str, state: &[u8]) -> anyhow::R
     commit_with_hook(root, note, content, state, |_| Ok(()))
 }
 
-fn commit_with_hook(
+pub(crate) fn commit_with_hook(
     root: &Path,
     note: &str,
     content: &str,

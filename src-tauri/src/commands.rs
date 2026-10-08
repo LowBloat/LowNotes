@@ -214,6 +214,7 @@ pub fn create_note(
     let init_content = title.map(|t| format!("# {t}\n\n"));
     let created = vault::create_note(&vault.path, &path, init_content.as_deref(), &lang)
         .map_err(|e| e.to_string())?;
+    state.crdt.invalidate_path(&vault.path, &created).map_err(|e| e.to_string())?;
 
     // Best-effort AI auto-linking for brand-new notes.
     if settings.ai.auto_link_notes {
@@ -260,7 +261,9 @@ pub fn create_note(
 pub fn create_folder(path: String, state: State<'_, AppState>) -> Result<(), String> {
     let settings = state.settings.read();
     let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-    vault::create_folder(&vault.path, &path).map_err(|e| e.to_string())
+    vault::create_folder(&vault.path, &path).map_err(|e| e.to_string())?;
+    if let Some(net) = state.network.read().as_ref() { net.sync_now(); }
+    Ok(())
 }
 
 #[tauri::command]
@@ -717,6 +720,7 @@ pub fn ai_save_draft(
         return Err("ai.vaultChanged".into());
     }
     let path = assistant::save_draft(&vault.path, &draft).map_err(|e| e.to_string())?;
+    state.crdt.invalidate_path(&vault.path, &path).map_err(|e| e.to_string())?;
     if let Err(e) = links::reconcile_wikilinks(&vault.path, &path, &draft.content) {
         eprintln!("reconcile_wikilinks failed for {path}: {e}");
     }

@@ -180,6 +180,8 @@ pub(crate) fn exclusive<T>(
     if !_scope.0 {
         crate::note_transaction::recover_all(root)?;
         recover_inner(root, manager)?;
+        crate::catalog_sync::recover_all(root, manager)?;
+        crate::creation::recover_all(root, manager)?;
     }
     action()
 }
@@ -360,9 +362,7 @@ pub fn recover_all(root: &Path, manager: &CrdtManager) -> anyhow::Result<()> {
     if BUSY.get() {
         return Ok(());
     }
-    let _guard = LOCK.get_or_init(|| ReentrantMutex::new(())).lock();
-    let _scope = Scope::enter();
-    recover_inner(root, manager)
+    exclusive(root, manager, || Ok(()))
 }
 
 pub fn rename(
@@ -388,6 +388,7 @@ fn rename_with_hook(
     crate::note_transaction::recover_all(root)?;
     recover_inner(root, manager)?;
     crate::catalog_sync::recover_all(root, manager)?;
+    crate::creation::recover_all(root, manager)?;
     if !valid_path(old) || !valid_path(new) || old == new {
         bail!("errors.pathEscape");
     }

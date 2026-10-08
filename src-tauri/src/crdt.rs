@@ -179,6 +179,10 @@ impl CrdtManager {
     }
 
     pub fn get_or_create_doc(&self, vault_path: &Path, path: &str) -> anyhow::Result<Vec<u8>> {
+        crate::structural::exclusive(vault_path, self, || self.get_doc_inner(vault_path, path))
+    }
+
+    fn get_doc_inner(&self, vault_path: &Path, path: &str) -> anyhow::Result<Vec<u8>> {
         let mut docs = self.docs.lock();
         Ok(Self::encode_state(Self::ensure_doc(
             &mut docs, vault_path, path,
@@ -197,6 +201,10 @@ impl CrdtManager {
         &self, root: &Path, path: &str,
         transform: impl FnOnce(&[u8]) -> anyhow::Result<Vec<u8>>,
     ) -> anyhow::Result<AppliedUpdate> {
+        crate::structural::exclusive(root, self, || self.transform_inner(root, path, transform))
+    }
+
+    fn transform_inner(&self, root: &Path, path: &str, transform: impl FnOnce(&[u8]) -> anyhow::Result<Vec<u8>>) -> anyhow::Result<AppliedUpdate> {
         vault::read_note(root, path)?;
         let mut docs = self.docs.lock();
         let before = Self::encode_state(Self::ensure_doc(&mut docs, root, path)?);
@@ -218,6 +226,10 @@ impl CrdtManager {
     /// Explicit native saves retain the existing collaborative history and
     /// participate in the same durable Markdown/CRDT transaction as typing.
     pub fn replace_note_text(&self, root: &Path, path: &str, content: &str) -> anyhow::Result<AppliedUpdate> {
+        crate::structural::exclusive(root, self, || self.replace_note_inner(root, path, content))
+    }
+
+    fn replace_note_inner(&self, root: &Path, path: &str, content: &str) -> anyhow::Result<AppliedUpdate> {
         vault::read_note(root, path)?;
         if content.len() as u64 > vault::MAX_NOTE_BYTES { bail!("errors.noteTooLarge"); }
         let mut docs = self.docs.lock();
@@ -259,6 +271,10 @@ impl CrdtManager {
     }
 
     pub fn apply_note_edit(&self, vault_path: &Path, edit: &crate::assistant::NoteEdit) -> anyhow::Result<AppliedUpdate> {
+        crate::structural::exclusive(vault_path, self, || self.apply_note_edit_inner(vault_path, edit))
+    }
+
+    fn apply_note_edit_inner(&self, vault_path: &Path, edit: &crate::assistant::NoteEdit) -> anyhow::Result<AppliedUpdate> {
         crate::assistant::validate_edit(edit)?;
         // A proposal may only edit an existing note, never recreate a deleted one.
         vault::read_note(vault_path, &edit.path)?;
@@ -293,6 +309,10 @@ impl CrdtManager {
         bytes: &[u8],
         detect_offline_conflict: bool,
     ) -> anyhow::Result<AppliedUpdate> {
+        crate::structural::exclusive(vault_path, self, || self.apply_update_locked(vault_path, path, bytes, detect_offline_conflict))
+    }
+
+    fn apply_update_locked(&self, vault_path: &Path, path: &str, bytes: &[u8], detect_offline_conflict: bool) -> anyhow::Result<AppliedUpdate> {
         let incoming = if detect_offline_conflict { crate::reference_sync::normalize_snapshot(vault_path, path, bytes)? } else { bytes.to_vec() };
         let update = Update::decode_v1(&incoming)?;
         let mut docs = self.docs.lock();

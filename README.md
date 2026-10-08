@@ -114,6 +114,8 @@ flowchart LR
 
 **Interrupted saves can be recovered.** Local writes use atomic replacement and validated backups. A durable pending edit coordinates Markdown and its CRDT state; the next open or sync completes an interrupted save and reports the recovery. If an external editor changed the text after the interruption, its version is preserved as a conflict copy for review. Backups, pending saves and corrupt recovery copies stay outside the P2P manifest.
 
+**Creation is recoverable too.** Notes, folders and assistant drafts record a durable creation intent in `.lownotes/pending-create/` before publishing their catalog identity or content. New notes receive an independent collaborative seed, including empty notes. Recovery follows subsequent moves and observed deletions; deleted creations stay restorable in the ordinary local trash. If an external file occupies the filename during recovery, both contents are retained with independent identities. Native document saves and incoming synchronized content share the structural coordinator, so a save cannot recreate an old filename during a move.
+
 **Defaults evolve without replacing personal choices.** Built-in palettes, AI providers and search sources are defined by the app and merged with saved settings. This way, new defaults can arrive in an update without erasing keys, models and custom entries.
 
 **Export loads when used.** The Word and PDF libraries are loaded on demand, not part of the initial editing path.
