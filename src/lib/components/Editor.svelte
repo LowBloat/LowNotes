@@ -68,7 +68,7 @@
     onLocalEdit?: () => void;
     onOpenNote?: (path: string) => void;
     onOpenGraph?: () => void;
-    onOpenWikilink?: (title: string) => void;
+    onOpenWikilink?: (title: string, kind?: 'wiki' | 'markdown') => void;
     deviceName?: string;
     deviceId?: string;
   }>();
@@ -462,9 +462,13 @@
     if (!link) return;
     const wikilink = link.getAttribute('data-wikilink');
     const href = link.getAttribute('href') ?? '';
-    if (wikilink !== null || /\.(?:md|markdown)(?:#[^?]*)?$/i.test(href)) {
+    if (wikilink !== null || (!/^[a-z][\w+.-]*:/i.test(href) && /\.(?:md|markdown)(?:[?#].*)?$/i.test(href))) {
       e.preventDefault();
-      onOpenWikilink?.(wikilink ?? href);
+      onOpenWikilink?.(wikilink ?? href, wikilink !== null ? 'wiki' : 'markdown');
+    } else if (/^https?:\/\//i.test(href)) {
+      e.preventDefault();
+      linkOpenFailed = false;
+      void openUrl(href).catch(() => { linkOpenFailed = true; });
     }
   }
 

@@ -182,8 +182,8 @@
     }
   }
 
-  function handleOpenWikilink(token: string) {
-    const path = resolveNoteLink(items, selectedNotePath, token);
+  function handleOpenWikilink(token: string, kind: 'wiki' | 'markdown' = 'wiki') {
+    const path = resolveNoteLink(items, selectedNotePath, token, kind);
     if (path) {
       openNote(path);
     }

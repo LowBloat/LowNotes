@@ -32,6 +32,20 @@ describe('hierarquia e links de notas', () => {
     expect(resolveNoteLink(items, '', 'Plano')).toBeNull();
   });
 
+  test('links Markdown preservam a base relativa e wikilinks preferem o caminho do vault', () => {
+    const notes = [item('folder/source.md'), item('folder/sub/target.md'), item('sub/target.md')];
+    expect(resolveNoteLink(notes, 'folder/source.md', 'sub/target.md#etapa', 'markdown')).toBe('folder/sub/target.md');
+    expect(resolveNoteLink(notes, 'folder/source.md', 'sub/target#etapa', 'wiki')).toBe('sub/target.md');
+    expect(resolveNoteLink(notes, 'folder/source.md', '/sub/target.md', 'markdown')).toBe('sub/target.md');
+  });
+
+  test('destinos codificados após renomear abrem sem tratar uma URL externa como nota', () => {
+    const notes = [item('folder/ação (nova).md')];
+    expect(resolveNoteLink(notes, 'folder/source.md', 'a%C3%A7%C3%A3o%20%28nova%29.md?view=1#seção', 'markdown')).toBe(notes[0].path);
+    expect(resolveNoteLink(notes, '', 'https://example.org/note.md', 'markdown')).toBeNull();
+    expect(resolveNoteLink(notes, '', 'bad%XX.md', 'markdown')).toBeNull();
+  });
+
   test('agrupa uma série gerada sem mover caminhos já definidos', () => {
     expect(groupDraftPaths('Crie notas para aprender Python', [
       { path: 'Plano.md', content: 'a' }, { path: 'Etapas.md', content: 'b' },

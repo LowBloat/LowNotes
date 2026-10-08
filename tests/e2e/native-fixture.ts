@@ -1,5 +1,6 @@
 import { expect, type Page } from '@playwright/test';
 import * as Y from 'yjs';
+import type { VaultItem } from '../../src/lib/types';
 
 /** Exercise the real frontend and IPC arguments against an isolated native adapter.
  * Native persistence/protocol behavior is covered by the Rust integration suite.
@@ -8,6 +9,7 @@ export async function openVault(page: Page, options: {
   source?: string; theme?: 'light' | 'dark'; palette?: string;
   credentialError?: string;
   notices?: Array<{ path: string; recovered: boolean }>;
+  notePath?: string; otherNotes?: VaultItem[];
 } = {}) {
   const source = options.source ?? '# Search\n\n[Title](https://visible.example)\n\n**hello** world\n\n- [ ] needle task\n\n'
     + Array.from({ length: 12 }, (_, i) => `## Section ${i + 1}\n\n${'Long filler text for scrolling. '.repeat(8)}\n\nneedle checkpoint ${i + 1}\n\n`).join('') + 'needles plural';
@@ -17,12 +19,15 @@ export async function openVault(page: Page, options: {
   const errors: string[] = [];
   const openedUrls: string[] = [];
   const saves: Array<Record<string, any>> = [];
+  const reads: string[] = [];
   let deleted = false;
   const recovered: string[] = [];
   let notices = options.notices ?? [];
   let history = { version: 1, activeConversationId: null, conversations: [], memory: '' };
   const vault = { id: 'fixture', name: 'Test vault', path: 'fixture', peers: [] };
-  const item = { path: 'Lista.md', name: 'Lista', title: 'Lista', is_dir: false, size: source.length, modified_ms: 1 };
+  const notePath = options.notePath ?? 'Lista.md';
+  const item = { path: notePath, name: 'Lista', title: 'Lista', is_dir: false, size: source.length, modified_ms: 1 };
+  const items = [item, ...(options.otherNotes ?? [])];
   const settings = {
     credential_error: options.credentialError ?? '',
     device_name: 'Test device', theme: options.theme ?? 'light',
@@ -35,9 +40,9 @@ export async function openVault(page: Page, options: {
   page.on('pageerror', error => errors.push(error.message));
   await page.exposeFunction('nativeInvokeMock', (command: string, args: Record<string, any>) => {
     switch (command) {
-      case 'get_app_state': return { settings, active_vault: vault, items: [item], pair_info: null };
-      case 'list_notes': return [item];
-      case 'read_note': return { content: text.toString(), crdt_update_base64: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64url'), note_id: 'fixture-note-id' };
+      case 'get_app_state': return { settings, active_vault: vault, items, pair_info: null };
+      case 'list_notes': return items;
+      case 'read_note': reads.push(args.path); return { content: text.toString(), crdt_update_base64: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64url'), note_id: 'fixture-note-id' };
       case 'crdt_apply_client_update': {
         saves.push(args);
         if (deleted) {
@@ -84,7 +89,7 @@ export async function openVault(page: Page, options: {
   await page.goto('/');
   await expect(page.locator('.cm-content')).toBeVisible();
   return {
-    source, errors, openedUrls, saves, recovered,
+    source, errors, openedUrls, saves, recovered, reads,
     deleteWhileEditing() { deleted = true; },
     content: () => text.toString(),
     async remoteAppend(content: string) {

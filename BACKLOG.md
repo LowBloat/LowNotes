@@ -1,8 +1,10 @@
 # Backlog proposto para o LowNotes
 
-Investigação em 07/10/2026, sobre a base v0.3.3 (`caf91b8`) e o trabalho em `codex/p1-reliability` (`e43e5e6` mais alterações locais). Priorização proposta para preservar a leveza, o funcionamento offline e o controle local dos dados. Os avanços da branch e do workspace abaixo ainda não devem ser confundidos com recursos entregues na versão publicada.
+Investigação em 07/10/2026, sobre a base v0.3.3 (`caf91b8`) e o trabalho em `codex/p1-reliability` (`efe5fa7` mais alterações locais). Priorização proposta para preservar a leveza, o funcionamento offline e o controle local dos dados. Os avanços da branch e do workspace abaixo ainda não devem ser confundidos com recursos entregues na versão publicada.
 
-O levantamento foi feito por inspeção do README, frontend, backend, testes e workflows. Nesta revisão, `bun test` passou 90 testes e confirmei a conclusão da execução nativa em andamento de `cargo test --locked --lib --manifest-path src-tauri/Cargo.toml`: 117 passaram no Windows, sem falhas, com 5 testes condicionais/fixtures ignorados na execução geral. Não inclui medições de desempenho, uma nova execução dos testes de interface ou uma nova conferência do CI remoto. Os testes nativos já cobrem cenários de exclusão/edição/renomeação offline com dois e três endpoints reais, recuperação após encerramento abrupto e preservação de versões para revisão; as auditorias restantes são indicadas por item. O histórico de execução dos P1 está em [P1-IMPLEMENTATION.md](F:/Desenv/2026/8-LOWCARB/3-lownotes/P1-IMPLEMENTATION.md); esta revisão não marca itens como concluídos apenas por passarem testes isolados.
+Atualização de execução em 08/10/2026: a etapa de referências passou 130 testes nativos no Windows, com 6 fixtures/testes condicionais ignorados na execução geral; frontend com 92 testes, verificações Svelte/TypeScript e build passou. As evidências adicionais e pendências estão registradas no acompanhamento P1.
+
+O levantamento original foi feito por inspeção do README, frontend, backend, testes e workflows. Nesta revisão, `bun test` passou 90 testes e confirmei a conclusão da execução nativa em andamento de `cargo test --locked --lib --manifest-path src-tauri/Cargo.toml`: 117 passaram no Windows, sem falhas, com 5 testes condicionais/fixtures ignorados na execução geral. Não inclui medições de desempenho, uma nova execução dos testes de interface ou uma nova conferência do CI remoto. Os testes nativos já cobrem cenários de exclusão/edição/renomeação offline com dois e três endpoints reais, recuperação após encerramento abrupto e preservação de versões para revisão; as auditorias restantes são indicadas por item. O histórico de execução dos P1 está em [P1-IMPLEMENTATION.md](F:/Desenv/2026/8-LOWCARB/3-lownotes/P1-IMPLEMENTATION.md); esta revisão não marca itens como concluídos apenas por passarem testes isolados.
 
 Esforço relativo: **P** = mudança localizada; **M** = vários fluxos ou componentes; **G** = mudança de arquitetura, protocolo ou plataforma. As estimativas não representam prazos. **P1** = confiabilidade e sustentação; **P2** = melhorias de uso e escala; **P3** = expansão.
 
@@ -10,9 +12,9 @@ Esforço relativo: **P** = mudança localizada; **M** = vários fluxos ou compon
 
 | Item | Estado observado | O que ainda precisa ser entregue |
 | --- | --- | --- |
-| B01 | Catálogo e comandos integrados ao protocolo `/5`; cenário real de três dispositivos passou, com exclusão/edição/renomeação offline e recriação do nome | Concluir a auditoria dos cenários adicionais e a validação multiplataforma da nova integração |
-| B02 | Movimentação recuperável e pacotes por identidade conservam histórico CRDT e arquivos da pasta | Atualizar referências escritas e validar a convergência completa; vínculos manuais/IA já seguem identidades nos testes locais |
-| B03 | Gravação atômica, backups válidos, coordenação Markdown/CRDT e avisos na interface | Completar recuperação e testes das operações estruturais, exclusão e restauração |
+| B01 | Catálogo e comandos integrados ao protocolo `/5`; cenário real de três dispositivos passou, com exclusão/edição/renomeação offline e recriação do nome | Concluir a auditoria de criações interrompidas/mutações e a validação remota das novas etapas |
+| B02 | Movimentação recuperável e pacotes por identidade conservam histórico CRDT e arquivos da pasta | Referências escritas e mapa já têm regressões locais; validar a nova etapa nos três sistemas e concluir a auditoria |
+| B03 | Gravação atômica, backups válidos, coordenação Markdown/CRDT e avisos na interface | Concluir a auditoria de criações interrompidas, coordenação das mutações e falhas de disco |
 | B04 | Arquivos removidos e estados CRDT conservados em disco; desfazer usa restauração explícita e funciona após reiniciar | Interface de lixeira, retenção configurável, versões de notas e comparação/restauração de versões |
 | B05 | Concluído: união de operações, remoção durável e migração; testes locais e CI nos três sistemas passaram | Manter regressões e validar a integração futura com renomeações |
 | B06 | Sem benchmark reproduzível identificado | Medir RAM, CPU e latências por plataforma, incluindo WebView |
@@ -34,7 +36,7 @@ Implementar registros persistentes de exclusão, confirmação por dispositivo e
 
 ### B02. Renomear e mover sem perder vínculos ou histórico — G
 
-Na versão publicada, a renomeação movia o arquivo e removia o estado CRDT do caminho antigo. O workspace já passa por uma movimentação recuperável que conserva histórico e identidade; a gravação nativa de texto também preserva o CRDT. O comando agora sincroniza o catálogo em vez de transmitir uma exclusão do caminho antigo, e o protocolo identifica a nota independentemente do nome. Os vínculos manuais e do assistente já têm extremos por identidade; a projeção acompanha os dois extremos após movimentos offline. Ainda faltam as referências escritas nas outras notas.
+Na versão publicada, a renomeação movia o arquivo e removia o estado CRDT do caminho antigo. O workspace já passa por uma movimentação recuperável que conserva histórico e identidade; a gravação nativa de texto também preserva o CRDT. O comando agora sincroniza o catálogo em vez de transmitir uma exclusão do caminho antigo, e o protocolo identifica a nota independentemente do nome. Os vínculos manuais e do assistente já têm extremos por identidade; a projeção acompanha os dois extremos após movimentos offline. A nova etapa atualiza referências Markdown, definições e wikilinks, com posições colaborativas estáveis; mantém rótulos, títulos, âncoras e exemplos de código. Um cenário local com três endpoints reais combina movimentos offline e uma edição de texto, sem duplicar destinos nem criar um falso conflito. A validação remota desta etapa e a auditoria final continuam pendentes.
 
 Preservar a identidade e o histórico da nota, atualizar links relativos, wikilinks e vínculos manuais, e definir a operação correspondente no protocolo. Cobrir também a renomeação de pastas.
 
@@ -74,7 +76,7 @@ Medir o processo principal e o conjunto de processos do aplicativo, incluindo We
 
 ### B07. Verificações em cada PR e regressões de integração — M
 
-Na branch, o workflow de PR/push em `main` executa frontend, Rust, credenciais nativas e Playwright em Windows, Linux e macOS. A release também exige testes Rust antes de cada build nativa e regressões de interface na verificação inicial. Já há evidências locais e execuções remotas registradas; o CI `37717262436` sobre `e43e5e6` foi conferido e passou nos três sistemas. A etapa posterior do mapa e da fila de catálogo precisa de sua própria matriz. Falta completar a cobertura dos fluxos abaixo.
+Na branch, o workflow de PR/push em `main` executa frontend, Rust, credenciais nativas e Playwright em Windows, Linux e macOS. A release também exige testes Rust antes de cada build nativa e regressões de interface na verificação inicial. Já há evidências locais e execuções remotas registradas; o CI `37717262436` sobre `e43e5e6` foi conferido e passou nos três sistemas. O CI `37719161090` sobre `efe5fa7`, com mapa e fila de catálogo, também passou nos três sistemas. A etapa posterior de referências precisa de sua própria matriz. Falta completar a cobertura dos fluxos abaixo.
 
 Automatizar os cenários completos de exclusão offline, renomeação, interrupção de gravação e restauração. Manter as regressões existentes de imagens, edição concorrente, tarefas, busca, temas, atalhos e exportação. Distinguir testes de interface com IPC simulado dos testes de persistência, credenciais e rede nativas. Se necessário, ampliar o gatilho de push para branches de desenvolvimento sem PR.
 

@@ -191,85 +191,12 @@ pub fn merge_sync(vault: &Path, path: &str, bytes: &[u8]) -> anyhow::Result<bool
 /// Scan `[[...]]` tokens, skipping fenced code blocks and inline code spans.
 /// Returns `(token, span_start, span_end)` with byte offsets into `content`.
 fn wikilink_spans(content: &str) -> Vec<(String, usize, usize)> {
-    let mut spans = Vec::new();
-    let mut in_fence = false;
-    let mut line_offset = 0usize;
-
-    for line in content.split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_fence = !in_fence;
-            line_offset += line.len();
-            continue;
-        }
-        if in_fence {
-            line_offset += line.len();
-            continue;
-        }
-
-        let b = line.as_bytes();
-        let mut i = 0usize;
-        while i < b.len() {
-            if b[i] == b'`' {
-                // Inline code span: opening backtick run closes on a run of equal length.
-                let mut run = 0usize;
-                let mut j = i;
-                while j < b.len() && b[j] == b'`' {
-                    run += 1;
-                    j += 1;
-                }
-                let mut k = j;
-                let mut closed_at = None;
-                while k < b.len() {
-                    if b[k] == b'`' {
-                        let mut run2 = 0usize;
-                        while k < b.len() && b[k] == b'`' {
-                            run2 += 1;
-                            k += 1;
-                        }
-                        if run2 == run {
-                            closed_at = Some(k);
-                            break;
-                        }
-                    } else {
-                        k += 1;
-                    }
-                }
-                // Unterminated backtick run: treat the rest of the line as code.
-                i = closed_at.unwrap_or(b.len());
-                continue;
-            }
-
-            if b[i] == b'[' && i + 1 < b.len() && b[i + 1] == b'[' {
-                let inner_start = i + 2;
-                let mut j = inner_start;
-                let mut end = None;
-                while j + 1 < b.len() {
-                    if b[j] == b']' && b[j + 1] == b']' {
-                        end = Some(j);
-                        break;
-                    }
-                    j += 1;
-                }
-                if let Some(end) = end {
-                    let token = line[inner_start..end].trim().to_string();
-                    if !token.is_empty() {
-                        spans.push((token, line_offset + i, line_offset + end + 2));
-                    }
-                    i = end + 2;
-                    continue;
-                }
-                i += 2;
-                continue;
-            }
-
-            i += 1;
-        }
-
-        line_offset += line.len();
-    }
-
-    spans
+    crate::references::scan(content).into_iter()
+        .filter(|reference| reference.kind == crate::references::ReferenceKind::Wiki && !reference.image)
+        .map(|reference| {
+            let span = reference.source_range;
+            (content[span.start + 2..span.end - 2].trim().to_string(), span.start, span.end)
+        }).collect()
 }
 
 /// Extract wikilink tokens from note content, deduplicated, preserving order.
@@ -285,89 +212,24 @@ pub fn extract_wikilinks(content: &str) -> Vec<String> {
 
 /// Local Markdown links in ordinary prose (code spans and fences are ignored).
 fn markdown_link_spans(content: &str) -> Vec<(String, usize, usize, String)> {
-    let mut spans = Vec::new();
-    let mut in_fence = false;
-    let mut offset = 0;
-    for line in content.split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_fence = !in_fence;
-            offset += line.len();
-            continue;
-        }
-        if in_fence {
-            offset += line.len();
-            continue;
-        }
-        let b = line.as_bytes();
-        let mut i = 0;
-        while i < b.len() {
-            if b[i] == b'`' {
-                let run = b[i..].iter().take_while(|&&c| c == b'`').count();
-                i += run;
-                while i < b.len() {
-                    if b[i..].starts_with(&vec![b'`'; run]) {
-                        i += run;
-                        break;
-                    }
-                    i += 1;
-                }
-                continue;
-            }
-            if b[i] == b'[' && (i == 0 || b[i - 1] != b'!' && b[i - 1] != b'[') {
-                if let Some(label_end) = b[i + 1..]
-                    .iter()
-                    .position(|&c| c == b']')
-                    .map(|p| i + 1 + p)
-                {
-                    if b.get(label_end + 1) == Some(&b'(') {
-                        if let Some(dest_end) = b[label_end + 2..]
-                            .iter()
-                            .position(|&c| c == b')')
-                            .map(|p| label_end + 2 + p)
-                        {
-                            let dest = line[label_end + 2..dest_end]
-                                .trim()
-                                .trim_matches(['<', '>']);
-                            if !dest.contains("://")
-                                && !dest.starts_with('#')
-                                && [".md", ".markdown"].iter().any(|ext| {
-                                    dest.split('#')
-                                        .next()
-                                        .unwrap_or("")
-                                        .to_ascii_lowercase()
-                                        .ends_with(ext)
-                                })
-                            {
-                                spans.push((
-                                    dest.to_string(),
-                                    offset + i,
-                                    offset + dest_end + 1,
-                                    line[i + 1..label_end].to_string(),
-                                ));
-                            }
-                            i = dest_end + 1;
-                            continue;
-                        }
-                    }
-                }
-            }
-            i += 1;
-        }
-        offset += line.len();
-    }
-    spans
+    crate::references::scan(content).into_iter()
+        .filter(|reference| reference.kind == crate::references::ReferenceKind::Markdown
+            && !reference.image && !reference.definition
+            && crate::vault::is_markdown(Path::new(reference.destination.split(['#', '?']).next().unwrap_or(""))))
+        .map(|reference| (reference.destination, reference.source_range.start, reference.source_range.end, reference.label))
+        .collect()
 }
 
 fn note_tokens(content: &str) -> Vec<String> {
-    extract_wikilinks(content)
-        .into_iter()
-        .chain(
-            markdown_link_spans(content)
-                .into_iter()
-                .map(|(token, _, _, _)| token),
-        )
-        .collect()
+    crate::references::scan(content).into_iter().filter(|reference| !reference.image && !reference.definition)
+        .filter_map(|reference| {
+            if reference.kind == crate::references::ReferenceKind::Wiki { return Some(reference.destination); }
+            let destination = reference.destination;
+            let path = destination.split(['#', '?']).next().unwrap_or("");
+            if path.contains(':') || !crate::vault::is_markdown(Path::new(path)) { return None; }
+            Some(if path.starts_with('/') || path.starts_with("../") || path.starts_with("./") { destination }
+                 else { format!("./{destination}") })
+        }).collect()
 }
 
 fn normalized_path(path: &str) -> Option<String> {
@@ -388,18 +250,20 @@ fn resolve_from_items(items: &[vault::VaultItem], source: &str, token: &str) -> 
     let clean = token
         .split('|')
         .next()?
-        .split('#')
+        .split(['#', '?'])
         .next()?
         .trim()
         .trim_matches(['<', '>'])
-        .replace('\\', "/")
-        .replace("%20", " ");
+        .replace('\\', "/");
+    let clean = percent_encoding::percent_decode_str(&clean).decode_utf8().ok()?.into_owned();
     if clean.is_empty() || clean.contains("://") {
         return None;
     }
     let parent = source.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
     let mut candidates = Vec::new();
-    if clean.starts_with("./") || clean.starts_with("../") {
+    if clean.starts_with('/') {
+        candidates.push(clean.trim_start_matches('/').to_string());
+    } else if clean.starts_with("./") || clean.starts_with("../") {
         candidates.push(format!("{parent}/{clean}"));
     } else if clean.contains('/') {
         candidates.push(clean.clone());
@@ -554,7 +418,7 @@ fn strip_links_to(vault: &Path, source: &str, content: &str, target: &str) -> Op
                 alias.to_string()
             } else {
                 token
-                    .split('#')
+                    .split(['#', '?'])
                     .next()
                     .unwrap_or("")
                     .rsplit('/')

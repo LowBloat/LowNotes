@@ -529,6 +529,7 @@ fn finish(
             manager.invalidate_path(root, new)?;
         }
     }
+    crate::reference_sync::normalize_all(root, manager, &catalog::load(root)?)?;
     catalog::transact(root, |current| {
         current.acknowledge(&intent.device, intent.catalog.operations.keys().cloned())
     })?;
@@ -628,6 +629,7 @@ pub fn prepare(root: &Path, manager: &CrdtManager, device: &str) -> anyhow::Resu
         }
         structural::save_paths(root, &bindings)?;
         crate::links::bind_identities(root, &catalog)?;
+        crate::reference_sync::bind_all(root, manager, &catalog, &bindings.paths)?;
         Ok(catalog)
     })
 }
@@ -778,6 +780,7 @@ fn materialize(
             bindings.paths.insert(id, entry.path);
         }
         structural::save_paths(root, &bindings)?;
+        crate::reference_sync::normalize_all(root, manager, &planned)?;
         catalog::transact(root, |current| {
             current.acknowledge(device, planned.operations.keys().cloned())
         })?;

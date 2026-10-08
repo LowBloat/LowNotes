@@ -6,16 +6,18 @@ use std::{
 };
 
 use anyhow::{bail, Context};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use yrs::{updates::decoder::Decode, Doc, GetString, ReadTxn, StateVector, Text, Transact, Update};
 
 use crate::{links, vault};
 
 const STATE_DIR: &str = ".lownotes/crdt";
+type ProjectionObserver = Arc<dyn Fn(&Path, &str, &[u8]) + Send + Sync>;
 
 #[derive(Clone, Default)]
 pub struct CrdtManager {
     docs: Arc<Mutex<HashMap<PathBuf, Doc>>>,
+    projection_observer: Arc<RwLock<Option<ProjectionObserver>>>,
 }
 
 pub struct AppliedUpdate {
@@ -27,6 +29,9 @@ pub struct AppliedUpdate {
 impl CrdtManager {
     pub fn new() -> Self {
         Self::default()
+    }
+    pub(crate) fn set_projection_observer(&self, observer: ProjectionObserver) {
+        *self.projection_observer.write() = Some(observer);
     }
 
     pub fn state_relative_path(path: &str) -> String {
@@ -186,6 +191,30 @@ impl CrdtManager {
         Ok(())
     }
 
+    /// Transform a validated candidate, persist both projections before caching,
+    /// and release the document lock before any filesystem/link recovery.
+    pub(crate) fn transform_state(
+        &self, root: &Path, path: &str,
+        transform: impl FnOnce(&[u8]) -> anyhow::Result<Vec<u8>>,
+    ) -> anyhow::Result<AppliedUpdate> {
+        vault::read_note(root, path)?;
+        let mut docs = self.docs.lock();
+        let before = Self::encode_state(Self::ensure_doc(&mut docs, root, path)?);
+        let state = transform(&before)?;
+        if state == before {
+            return Ok(AppliedUpdate { state, changed: false, conflict_path: None });
+        }
+        let candidate = Doc::new();
+        candidate.transact_mut().apply_update(Update::decode_v1(&state)?)?;
+        let content = candidate.get_or_insert_text("content").get_string(&candidate.transact());
+        if content.len() as u64 > vault::MAX_NOTE_BYTES { bail!("errors.noteTooLarge"); }
+        crate::note_transaction::commit(root, path, &content, &state)?;
+        docs.insert(vault::safe_join(root, path)?, candidate);
+        drop(docs);
+        if let Some(observer) = self.projection_observer.read().clone() { observer(root, path, &state); }
+        Ok(AppliedUpdate { state, changed: true, conflict_path: None })
+    }
+
     /// Explicit native saves retain the existing collaborative history and
     /// participate in the same durable Markdown/CRDT transaction as typing.
     pub fn replace_note_text(&self, root: &Path, path: &str, content: &str) -> anyhow::Result<AppliedUpdate> {
@@ -264,27 +293,31 @@ impl CrdtManager {
         bytes: &[u8],
         detect_offline_conflict: bool,
     ) -> anyhow::Result<AppliedUpdate> {
-        let update = Update::decode_v1(bytes)?;
+        let incoming = if detect_offline_conflict { crate::reference_sync::normalize_snapshot(vault_path, path, bytes)? } else { bytes.to_vec() };
+        let update = Update::decode_v1(&incoming)?;
         let mut docs = self.docs.lock();
         let target = vault::safe_join(vault_path, path)?;
         let doc = Self::ensure_doc(&mut docs, vault_path, path)?;
         let before = Self::encode_state(doc);
         // Validate and merge in a candidate, leaving cached state unchanged on failure.
         let mut candidate = Doc::new();
-        candidate.transact_mut().apply_update(Update::decode_v1(&before)?)?;
+        let normalized_before = crate::reference_sync::normalize_snapshot(vault_path, path, &before)?;
+        candidate.transact_mut().apply_update(Update::decode_v1(&normalized_before)?)?;
         let doc = &candidate;
         let mut resolution = None;
         if detect_offline_conflict {
             let remote = Doc::new();
-            remote.transact_mut().apply_update(Update::decode_v1(bytes)?)?;
+            remote.transact_mut().apply_update(Update::decode_v1(&incoming)?)?;
             let local_content = doc.get_or_insert_text("content");
             let remote_content = remote.get_or_insert_text("content");
+            let mut structural_clients = crate::reference_sync::structural_clients(doc)?;
+            structural_clients.extend(crate::reference_sync::structural_clients(&remote)?);
             let local_txn = doc.transact();
             let remote_txn = remote.transact();
             let local_vector = local_txn.state_vector();
             let remote_vector = remote_txn.state_vector();
-            let local_has_unique = local_vector.iter().any(|(id, clock)| *clock > remote_vector.get(id));
-            let remote_has_unique = remote_vector.iter().any(|(id, clock)| *clock > local_vector.get(id));
+            let local_has_unique = local_vector.iter().any(|(id, clock)| !structural_clients.contains(id) && *clock > remote_vector.get(id));
+            let remote_has_unique = remote_vector.iter().any(|(id, clock)| !structural_clients.contains(id) && *clock > local_vector.get(id));
             let local_text = local_content.get_string(&local_txn);
             let remote_text = remote_content.get_string(&remote_txn);
             if local_text != remote_text && local_has_unique && remote_has_unique {
@@ -344,6 +377,9 @@ impl CrdtManager {
             drop(txn);
             candidate = resolved;
         }
+        let projected = crate::reference_sync::normalize_snapshot(vault_path, path, &Self::encode_state(&candidate))?;
+        candidate = Doc::new();
+        candidate.transact_mut().apply_update(Update::decode_v1(&projected)?)?;
         let doc = &candidate;
         let state = Self::encode_state(doc);
         let changed = state != before;

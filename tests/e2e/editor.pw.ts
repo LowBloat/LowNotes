@@ -91,6 +91,25 @@ test('Ctrl-click delegates links to the system browser and ignores code examples
   } finally { vault.destroy(); }
 });
 
+test('preview resolves encoded relative Markdown paths and vault wikilinks while web Markdown URLs use the browser', async ({ page }) => {
+  const note = (path: string) => ({ path, name: path, title: path, is_dir: false, size: 0, modified_ms: 1 });
+  const vault = await openVault(page, { notePath: 'folder/source.md',
+    source: '[relative](sub/a%C3%A7%C3%A3o.md#etapa)\n\n[[sub/ação|wiki]]\n\n[external](https://visible.example/file.md)\n',
+    otherNotes: [note('folder/sub/ação.md'), note('sub/ação.md')],
+  });
+  try {
+    await page.getByRole('link', { name: 'relative', exact: true }).click();
+    await expect.poll(() => vault.reads.at(-1)).toBe('folder/sub/ação.md');
+    await page.getByRole('link', { name: 'wiki', exact: true }).click();
+    await expect.poll(() => vault.reads.at(-1)).toBe('sub/ação.md');
+    const reads = vault.reads.length;
+    await page.getByRole('link', { name: 'external', exact: true }).click();
+    await expect.poll(() => vault.openedUrls).toEqual(['https://visible.example/file.md']);
+    expect(vault.reads).toHaveLength(reads);
+    expect(vault.content()).toBe(vault.source); expect(vault.errors).toEqual([]);
+  } finally { vault.destroy(); }
+});
+
 for (const palette of ['lowbloat', 'megumin', 'rimuru']) {
   for (const theme of ['light', 'dark'] as const) {
     test(`links and code language labels remain readable in ${palette}/${theme}`, async ({ page }) => {

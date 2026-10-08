@@ -177,8 +177,10 @@ pub(crate) fn exclusive<T>(
 ) -> anyhow::Result<T> {
     let _guard = LOCK.get_or_init(|| ReentrantMutex::new(())).lock();
     let _scope = Scope::enter();
-    crate::note_transaction::recover_all(root)?;
-    recover_inner(root, manager)?;
+    if !_scope.0 {
+        crate::note_transaction::recover_all(root)?;
+        recover_inner(root, manager)?;
+    }
     action()
 }
 
@@ -300,6 +302,8 @@ fn finish(
     }
     manager.invalidate_path(root, &intent.old)?;
     manager.invalidate_path(root, &intent.new)?;
+    crate::reference_sync::normalize_all(root, manager, &catalog::load(root)?)?;
+    hook(4)?;
     if directory.join("external").exists() {
         let archive = root
             .join(".lownotes/recovered-files")
@@ -383,6 +387,7 @@ fn rename_with_hook(
     let _scope = Scope::enter();
     crate::note_transaction::recover_all(root)?;
     recover_inner(root, manager)?;
+    crate::catalog_sync::recover_all(root, manager)?;
     if !valid_path(old) || !valid_path(new) || old == new {
         bail!("errors.pathEscape");
     }
@@ -425,6 +430,7 @@ fn rename_with_hook(
         .filter(|(_, entry)| !entry.deleted())
         .map(|(id, entry)| (id, entry.path))
         .collect();
+    crate::reference_sync::bind_all(root, manager, &planned, &before_paths)?;
     let entry_id = planned.ensure_path(old, is_dir, author)?;
     let (parent_path, name) = new
         .rsplit_once('/')
@@ -480,6 +486,46 @@ fn rename_with_hook(
 mod tests {
     use super::*;
     use yrs::{ReadTxn, StateVector, Text};
+
+    #[test]
+    #[ignore = "Isolated child process for abrupt-exit reference move regression"]
+    fn reference_move_crash_worker() {
+        let root = PathBuf::from(std::env::var_os("LOWNOTES_REFERENCE_CRASH_ROOT").unwrap());
+        let phase: u8 = std::env::var("LOWNOTES_REFERENCE_CRASH_PHASE").unwrap().parse().unwrap();
+        rename_with_hook(&root, "folder", "moved", &CrdtManager::new(), "worker", |step| {
+            if step == phase { std::process::exit(86); }
+            Ok(())
+        }).unwrap();
+        panic!("crash phase was not reached");
+    }
+
+    #[test]
+    fn actual_process_exit_recovers_incoming_and_outgoing_references_in_every_move_phase() {
+        for phase in 0..=4 {
+            let root = tempfile::tempdir().unwrap();
+            fs::create_dir_all(root.path().join("folder")).unwrap();
+            fs::write(root.path().join("folder/source.md"), "É 🙂 [destino](target.md#seção \"título\")\n[[folder/target|alias]]\n").unwrap();
+            fs::write(root.path().join("folder/target.md"), "# Destino\n").unwrap();
+            fs::write(root.path().join("index.md"), "[origem](folder/source.md)\n[[folder/source|alias]]\n").unwrap();
+            let child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "structural::tests::reference_move_crash_worker", "--ignored", "--nocapture"])
+                .env("LOWNOTES_REFERENCE_CRASH_ROOT", root.path()).env("LOWNOTES_REFERENCE_CRASH_PHASE", phase.to_string())
+                .output().unwrap();
+            assert_eq!(child.status.code(), Some(86), "phase {phase}: {}", String::from_utf8_lossy(&child.stderr));
+            let manager = CrdtManager::new();
+            recover_all(root.path(), &manager).unwrap();
+            assert_eq!(vault::read_note(root.path(), "moved/source.md").unwrap(), "É 🙂 [destino](target.md#seção \"título\")\n[[moved/target|alias]]\n");
+            assert_eq!(vault::read_note(root.path(), "index.md").unwrap(), "[origem](moved/source.md)\n[[moved/source|alias]]\n");
+            for path in ["moved/source.md", "moved/target.md", "index.md"] {
+                let state = manager.get_or_create_doc(root.path(), path).unwrap();
+                let doc = Doc::new(); doc.transact_mut().apply_update(Update::decode_v1(&state).unwrap()).unwrap();
+                assert_eq!(doc.get_or_insert_text("content").get_string(&doc.transact()), vault::read_note(root.path(), path).unwrap());
+            }
+            recover_all(root.path(), &manager).unwrap();
+            assert!(!root.path().join("folder").exists());
+            assert_eq!(crate::links::graph_links(root.path()).unwrap().len(), 2);
+        }
+    }
 
     #[test]
     fn recreated_sources_after_staging_or_placement_are_preserved_and_recovery_finishes() {

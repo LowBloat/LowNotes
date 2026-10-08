@@ -1253,15 +1253,21 @@ mod tests {
     }
 
     fn peer_of(endpoint: &Endpoint, name: &str) -> PeerConfig {
+        // These are real encrypted Iroh connections, with explicit local
+        // addresses so CI does not depend on public relay/discovery services.
+        let mut socket = endpoint.bound_sockets().into_iter().find(|socket| socket.is_ipv4()).unwrap();
+        if socket.ip().is_unspecified() { socket.set_ip(std::net::Ipv4Addr::LOCALHOST.into()); }
         PeerConfig {
             name: name.to_string(),
             endpoint_id: endpoint.id().to_string(),
-            ticket: EndpointTicket::new(endpoint.addr()).to_string(),
+            ticket: EndpointTicket::new(iroh::EndpointAddr::new(endpoint.id()).with_ip_addr(socket)).to_string(),
         }
     }
 
     async fn bind_endpoint() -> Endpoint {
-        Endpoint::builder(presets::N0)
+        Endpoint::builder(presets::Minimal)
+            .clear_ip_transports()
+            .bind_addr("127.0.0.1:0").unwrap()
             .secret_key(SecretKey::generate())
             .alpns(vec![ALPN.to_vec()])
             .bind()
@@ -1592,6 +1598,39 @@ mod tests {
 
     async fn ep_accept(endpoint: &Endpoint) -> iroh::endpoint::Incoming {
         endpoint.accept().await.expect("endpoint fechado")
+    }
+
+    #[tokio::test]
+    async fn three_real_devices_converge_markdown_references_and_a_user_edit_through_offline_moves() {
+        let roots = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
+        let endpoints = [bind_endpoint().await, bind_endpoint().await, bind_endpoint().await];
+        let baseline = "É 🙂 [**plano**](target.md#seção \"Título\")\n[[folder/target#etapa|alias]]\n[referência][id]\n\n[id]: <target.md#ref> 'título'\n\n`[exemplo](target.md)`\n";
+        for (index, root) in roots.iter().enumerate() {
+            fs::create_dir_all(root.path().join("folder")).unwrap();
+            fs::write(root.path().join("folder/source.md"), baseline).unwrap();
+            fs::write(root.path().join("folder/target.md"), "# Destino\n").unwrap();
+            crate::catalog_sync::prepare(root.path(), &CrdtManager::new(), &format!("device-{index}")).unwrap();
+        }
+        for index in 1..3 { sync_test_pair(&endpoints[index], roots[index].path(), &endpoints[0], roots[0].path()).await; }
+        crate::structural::rename(roots[0].path(), "folder", "moved", &CrdtManager::new(), "device-0").unwrap();
+        crate::structural::rename(roots[1].path(), "folder/target.md", "target.md", &CrdtManager::new(), "device-1").unwrap();
+        CrdtManager::new().replace_note_text(roots[2].path(), "folder/source.md", &format!("Edição offline 🙂\n{baseline}")).unwrap();
+        crate::structural::rename(roots[2].path(), "folder/source.md", "folder/renamed.md", &CrdtManager::new(), "device-2").unwrap();
+        for _ in 0..3 {
+            sync_test_pair(&endpoints[1], roots[1].path(), &endpoints[0], roots[0].path()).await;
+            sync_test_pair(&endpoints[2], roots[2].path(), &endpoints[1], roots[1].path()).await;
+            sync_test_pair(&endpoints[0], roots[0].path(), &endpoints[2], roots[2].path()).await;
+        }
+        let expected = baseline.replace("(target.md#seção", "(../target.md#seção").replace("[[folder/target#etapa", "[[target#etapa").replace("<target.md#ref>", "<../target.md#ref>");
+        for root in &roots {
+            assert_eq!(vault::read_note(root.path(), "moved/renamed.md").unwrap(), format!("Edição offline 🙂\n{expected}"));
+            let notes = vault::list_vault_items(root.path()).unwrap().into_iter().filter(|item| !item.is_dir).collect::<Vec<_>>();
+            assert_eq!(notes.len(), 2, "reference maintenance is not a competing user edit");
+            let edges = crate::links::graph_links(root.path()).unwrap();
+            assert_eq!(edges.len(), 1); assert_eq!(edges[0].source, "moved/renamed.md"); assert_eq!(edges[0].target, "target.md");
+        }
+        assert_eq!(sync_test_pair(&endpoints[1], roots[1].path(), &endpoints[0], roots[0].path()).await, 0);
+        for endpoint in endpoints { endpoint.close().await; }
     }
 
     #[tokio::test]

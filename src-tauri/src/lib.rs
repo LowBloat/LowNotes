@@ -9,6 +9,8 @@ pub mod link_operations;
 pub mod catalog;
 pub mod structural;
 pub mod catalog_sync;
+pub mod references;
+pub mod reference_sync;
 pub mod assistant;
 pub mod web_search;
 pub mod chat_history;
@@ -94,6 +96,13 @@ pub fn run() {
         .manage(update_policy)
         .manage(app_state)
         .setup(move |app| {
+            let projection_app = app.handle().clone();
+            app.state::<AppState>().crdt.set_projection_observer(Arc::new(move |_root, path, state| {
+                use tauri::Emitter;
+                let _ = projection_app.emit("p2p:crdt-update", network::NetworkEventPayload::RemoteCrdtUpdate {
+                    note_path: path.into(), update: state.into(),
+                });
+            }));
             let mut s = settings.write();
             let mut saved_keys = false;
             if let Some(vault) = s.active_vault_mut() {
