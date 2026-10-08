@@ -4,14 +4,16 @@ Escopo: B01–B08 de BACKLOG.md, solicitado em 07/10/2026. Este arquivo acompanh
 
 - [x] B01 — exclusões duráveis, peers offline, confirmação, conflito excluir/editar, pastas; criação durável e CI `37780774528` nos três sistemas.
 - [x] B02 — identidade e histórico em renomeações, referências e mapa, convergência offline; CI `37722631096` nos três sistemas.
-- [ ] B03 — gravação atômica, backups válidos, recuperação coordenada e aviso ao usuário.
+- [x] B03 — gravação atômica, backups válidos, recuperação coordenada e aviso ao usuário; CI `37791448257` sobre `e82d006` nos três sistemas.
 - [x] B04 — lixeira e versões persistentes, retenção, comparação e restauração colaborativa; CI `37788217531` nos três sistemas.
 - [x] B05 — operações de vínculos com mesclagem e remoção durável.
-- [ ] B06 — benchmarks reproduzíveis de RAM/CPU/latência e relatórios por plataforma.
-- [ ] B07 — CI de PR/push com Rust/frontend e regressões de integração/interface.
+- [ ] B06 — benchmarks reproduzíveis de RAM/CPU/latência e relatórios por plataforma; adiado por solicitação do autor em 08/10/2026.
+- [x] B07 — CI de PR/push com Rust/frontend e regressões de integração/interface; matriz `37791448257` sobre `e82d006` aprovada nos três sistemas.
 - [x] B08 — armazenamento de credenciais do SO, migração e tratamento de indisponibilidade.
 
 ## Trabalho em andamento
+
+Estado atual: B01/B02/B03/B04/B05/B07/B08 concluídos; B06 adiado explicitamente pelo autor. A entrega final limita-se ao B07 e ao merge do PR existente na main, com exclusão da branch. As etapas abaixo conservam o registro histórico da implementação; as pendências antigas foram resolvidas conforme as evidências das etapas posteriores.
 
 - Base de gravação atômica com backups e recuperação, usando substituição atômica do tempfile em vez de apagar o arquivo de destino.
 - B03: intenção durável por nota coordena Markdown e CRDT; recuperação conclui gravações interrompidas e preserva edições externas em uma cópia para revisão. Atualizações remotas são validadas em um documento candidato antes de substituir o cache.
@@ -100,3 +102,17 @@ Escopo: B01–B08 de BACKLOG.md, solicitado em 07/10/2026. Este arquivo acompanh
 - Seis encerramentos reais adicionais cobrem criação e substituição por recebimento em três fases da gravação por nota. Testes recusam conteúdo inválido, excesso de tamanho, caminhos externos e tipos desconhecidos antes de alterar os arquivos. Os cenários de dois/três endpoints Iroh e os fallbacks `/2`, `/3` e `/4` passaram na matriz nativa local.
 - Execução local final: **158 testes Rust passaram**, sem falhas, com **9 fixtures/testes condicionais ignorados** na execução geral; os workers de crash são chamados pelos testes pais. Log: `.git/p1-text-integration.txt`. A regressão do cache também cobre metadados recuperados sem mudança no texto, para não perder associações colaborativas na próxima edição. Os **92 testes do frontend** passaram, com 3.199 assertions. Não houve mudança no frontend nesta etapa.
 - B03 permanece aberto até conferir o CI desta etapa. Próximos itens do escopo original: relatórios nativos reproduzíveis de B06 e validação final de B07. Nenhum P1 novo foi criado; B01/B02/B04/B05/B08 ficam na manutenção das regressões.
+
+## Revisão do backlog e confirmação da coordenação de texto (08/10/2026)
+
+- O CI `37791448257`, sobre `e82d006431cd356e8a910bc2deadd885966e4e20`, foi conferido e concluiu com sucesso em Windows, Linux e macOS. Inclui regressões Rust, armazenamento nativo de credenciais, frontend, 19 cenários de interface e build de produção. B03 está concluído sobre essa evidência e seus critérios originais, sem ampliar o escopo.
+- A revisão de README, código e workflows conserva os 28 itens do backlog original e distingue a versão publicada v0.3.3 das mudanças da branch. B01/B02/B03/B04/B05/B08 ficam na manutenção das regressões; o objetivo P1 continua aberto para B06 e B07.
+- B06: há instrumentação inicial no workspace, com uma feature de benchmark no backend, acionamento dos fluxos reais no frontend e um coletor Python de recursos por processo. As configurações, conversas, vault e dados do WebView usam diretórios sintéticos separados. A compilação de verificação da feature e Svelte/TypeScript passaram localmente, mas ainda não há execuções nativas nem relatórios Windows/Linux/macOS. Isso não comprova o consumo total de RAM nem conclui B06.
+- B07: a integração final deve incluir a instrumentação validada e seus relatórios. Os itens P2/P3 continuam como propostas; nenhum novo P1 foi criado ou implementado.
+
+## Fechamento de B07 e adiamento de B06 (08/10/2026)
+
+- O autor adiou B06 e autorizou concluir somente B07, juntar o PR na main e excluir a branch. Relatórios de desempenho deixam de ser condição desta entrega; B06 permanece pendente.
+- A instrumentação incompleta e seu workflow foram preservados em um stash local identificado como `Deferred B06 benchmark instrumentation by user request`. Os assets de logo pendentes também foram preservados separadamente, fora do escopo B07.
+- O código entregue é o mesmo validado pelo CI `37791448257` em Windows, Linux e macOS. O commit final atualiza somente este acompanhamento e o backlog; não altera comportamento nem dependências.
+- B07 tem verificações em PR/push na main e antes das builds de release: Rust, frontend, credenciais nativas, regressões de interface e artefatos de diagnóstico. Persistência/protocolo são exercitados nativamente; a interface usa IPC isolado. Nenhum novo P1 foi criado e nenhum P2/P3 foi implementado.

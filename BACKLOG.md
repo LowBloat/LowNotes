@@ -1,10 +1,10 @@
 # Backlog proposto para o LowNotes
 
-Investigação iniciada em 07/10/2026 e revisada em 08/10/2026. Base publicada: versão v0.3.3 (`caf91b8`). A branch `codex/p1-reliability` inclui referências, criação durável, lixeira/versões/retenção (`16151d7`) e a etapa de coordenação de vínculos e texto recebido. Priorização proposta para preservar a leveza, o funcionamento offline e o controle local dos dados. Os avanços da branch e do workspace abaixo ainda não devem ser confundidos com recursos entregues na versão publicada. A execução autorizada se limita aos oito P1 originais (B01–B08).
+Investigação iniciada em 07/10/2026 e revisada em 08/10/2026. Base publicada: versão v0.3.3 (`caf91b8`), conferida nas releases do projeto. A branch `codex/p1-reliability` inclui referências, criação durável, lixeira/versões/retenção (`16151d7`) e coordenação de vínculos e texto recebido (`e82d006`). Priorização proposta para preservar a leveza, o funcionamento offline e o controle local dos dados. Os avanços da branch e do workspace abaixo ainda não devem ser confundidos com recursos entregues na versão publicada. A execução autorizada se limita aos oito P1 originais (B01–B08).
 
-Evidências existentes da etapa de referências: 130 testes nativos passaram no Windows, com 6 fixtures/testes condicionais ignorados na execução geral; 92 testes do frontend, verificações Svelte/TypeScript, build e 13 cenários de interface passaram. As evidências adicionais e pendências estão registradas no acompanhamento P1.
+Este backlog contém **28 itens**: oito P1 originais, quinze P2 e cinco P3. **Sete P1 estão concluídos na branch**; B06 foi adiado pelo autor em 08/10/2026. A entrega final autorizada é concluir B07, juntar o PR na main e excluir a branch. Os demais itens são propostas, sem autorização de implementação nesta etapa.
 
-O levantamento foi feito por inspeção do README, frontend, backend, testes, empacotamento e workflows. O CI da criação durável (`37780774528`, sobre `7b7a797`) e o do histórico/lixeira (`37788217531`, sobre `16151d7`) passaram em Windows, Linux e macOS. Este último inclui 150 testes nativos, 92 testes do frontend, 19 cenários de interface, verificações Svelte/TypeScript e build de produção. A etapa posterior de coordenação de texto passou 158 testes nativos locais e aguarda sua validação remota. Não há novas medições de desempenho. Os testes nativos cobrem exclusão/edição/renomeação offline com dois e três endpoints reais, recuperação após encerramento abrupto, restauração colaborativa, retenção e preservação de cópias para revisão. O histórico e os critérios ainda pendentes estão em [P1-IMPLEMENTATION.md](F:/Desenv/2026/8-LOWCARB/3-lownotes/P1-IMPLEMENTATION.md).
+O levantamento foi feito por inspeção do README, frontend, backend, testes, empacotamento e workflows. O [CI da coordenação de texto](https://github.com/LowBloat/LowNotes/actions/runs/37791448257), sobre `e82d006`, foi conferido nesta revisão e passou em Windows, Linux e macOS: regressões Rust, armazenamento nativo de credenciais, frontend, 19 cenários de interface e build de produção. A execução local desta etapa passou 158 testes Rust e 92 testes do frontend. Os testes nativos cobrem exclusão/edição/renomeação offline com dois e três endpoints reais, recuperação após encerramento abrupto, restauração colaborativa, retenção e preservação de cópias para revisão. A instrumentação inicial de desempenho foi preservada em stash local; B06 foi adiado e ainda não há relatórios de execuções nativas. O histórico e os critérios pendentes estão em [P1-IMPLEMENTATION.md](F:/Desenv/2026/8-LOWCARB/3-lownotes/P1-IMPLEMENTATION.md).
 
 Esforço relativo: **P** = mudança localizada; **M** = vários fluxos ou componentes; **G** = mudança de arquitetura, protocolo ou plataforma. As estimativas não representam prazos. **P1** = confiabilidade e sustentação; **P2** = melhorias de uso e escala; **P3** = expansão.
 
@@ -12,15 +12,15 @@ Esforço relativo: **P** = mudança localizada; **M** = vários fluxos ou compon
 
 | Item | Estado observado | O que ainda precisa ser entregue |
 | --- | --- | --- |
-| B01 | Concluído: catálogo durável, peers offline, confirmações, conflitos, pastas e criação recuperável; CI `37780774528` passou nos três sistemas | Manter as regressões; os fluxos de texto restantes continuam em B03 |
+| B01 | Concluído: catálogo durável, peers offline, confirmações, conflitos, pastas e criação recuperável; CI `37780774528` passou nos três sistemas | Manter as regressões |
 | B02 | Concluído: identidade, histórico, referências e mapa acompanham os movimentos; cenários offline reais e CI nos três sistemas passaram | Manter as regressões nas próximas etapas |
-| B03 | Coordenação de gravações/criações/movimentos, remoção de referências e recebimento de Markdown legado; cache reimporta estados recuperados e a sincronização importa edições externas antes do manifesto; 158 testes nativos locais passaram | Validar esta etapa no CI dos três sistemas antes de marcar concluído |
+| B03 | Concluído: gravações/criações/movimentos coordenados, remoção de referências, recebimento legado e recuperação; CI `37791448257` sobre `e82d006` passou nos três sistemas | Manter as regressões |
 | B04 | Concluído: lixeira selecionável, versões por identidade, comparação/combinação, restauração colaborativa e retenção; CI `37788217531` passou nos três sistemas | Manter as regressões nas próximas etapas |
 | B05 | Concluído: união de operações, remoção durável e migração; testes locais e CI nos três sistemas passaram | Manter as regressões, incluindo a associação por identidade implementada em B02 |
-| B06 | Sem benchmark reproduzível identificado | Medir RAM, CPU e latências por plataforma, incluindo WebView |
-| B07 | CI de PR/main e testes antes das builds de release configurados; histórico/lixeira passou com 19 cenários de interface nos três sistemas | Validar a coordenação de texto, os benchmarks e a integração final |
+| B06 | Adiado pelo autor; instrumentação inicial preservada em stash local, sem execuções e relatórios | Retomar somente quando solicitado; medir RAM, CPU e latências por plataforma, incluindo WebView |
+| B07 | Concluído: CI de PR/main e testes antes das builds de release; código final `e82d006` passou nos três sistemas | Manter as regressões; benchmarks de B06 não bloqueiam esta entrega |
 | B08 | Concluído: credenciais do SO, migração, proteção de identidade e retentativa | Manter as regressões nos três sistemas |
-| B27 | Ícones regenerados no workspace | Automatizar a conferência e entregar os novos ícones em uma release |
+| B27 | Ícones regenerados e preservados em stash local, fora do escopo desta entrega | Automatizar a conferência e entregar os novos ícones em uma release |
 
 Os demais itens são propostas ou lacunas ainda não resolvidas. Uma base implementada não equivale ao atendimento de todos os critérios de aceite.
 
@@ -28,18 +28,19 @@ Os demais itens são propostas ou lacunas ainda não resolvidas. Uma base implem
 
 | Ordem | Entrega | Benefício | Esforço |
 | --- | --- | --- | --- |
-| 1 | Validar a etapa final de coordenação de texto (B03), com regressões B07 | Proteger Markdown e estado colaborativo na remoção de vínculos e em recebimentos legados | M |
-| 2 | Benchmark nativo reproduzível (B06) | Sustentar o diferencial de leveza com medições de todo o aplicativo | M |
-| 3 | Conferir a integração final dos P1 originais (B07) | Detectar regressões antes de publicar uma versão | M |
-| 4 | Backup completo e exportação Markdown com imagens (B09/B19) | Recuperar o vault e usar seus arquivos em outros editores | M |
-| 5 | Busca por conteúdo, índice incremental e watcher (B10/B12) | Encontrar informação e acompanhar edições externas sem reabrir notas | M/G |
-| 6 | RAG mais preciso, resposta em streaming e revisão dos vínculos da IA (B11/B13/B14) | Tornar o assistente mais previsível, rápido e controlável | M |
+| 1 | Benchmark nativo reproduzível (B06) | Sustentar o diferencial de leveza com medições de todo o aplicativo | M |
+| 2 | Conferir a integração final dos P1 originais (B07) | Detectar regressões antes de publicar uma versão | M |
+| 3 | Backup completo e exportação Markdown com imagens (B09/B19) | Recuperar o vault e usar seus arquivos em outros editores | M |
+| 4 | Busca por conteúdo, índice incremental e watcher (B10/B12) | Encontrar informação e acompanhar edições externas sem reabrir notas | M/G |
+| 5 | Revisão dos vínculos da IA e limites efetivos do vault (B14/B22) | Controlar alterações propostas e acesso aos arquivos | P/M |
+| 6 | RAG mais preciso e resposta em streaming com cancelamento (B11/B13) | Melhorar o contexto e reduzir a espera percebida no assistente | M |
 | 7 | Mapa escalável, backlinks e tarefas consolidadas (B15/B17/B18) | Ajudar a navegar e acompanhar um vault crescente | M/G |
-| 8 | Adaptadores de nuvem e canais Linux mantidos (B23/B24) | Expandir sincronização e simplificar instalação/atualização | G |
+| 8 | Realce de código, diálogos, diagnóstico e marca (B16/B21/B28/B27) | Melhorar leitura, navegação e consistência das releases | P/M |
+| 9 | Adaptadores de nuvem e canais Linux mantidos (B23/B24) | Expandir sincronização e simplificar instalação/atualização | G |
 
-B01, B02, B04, B05 e B08 já têm implementação e evidências; entram na manutenção das regressões. B03 aguarda a validação remota da etapa de texto. B06 continua sem relatório reproduzível e B07 aguarda a integração final. As propostas de expansão devem usar a mesma semântica de identidade, exclusão e conflito já adotada no P2P.
+B01, B02, B03, B04, B05, B07 e B08 já têm implementação e evidências; entram na manutenção das regressões. B06 continua sem relatório reproduzível e foi adiado explicitamente pelo autor, sem bloquear esta entrega. Nenhum novo P1 foi criado. As propostas de expansão devem usar a mesma semântica de identidade, exclusão e conflito já adotada no P2P.
 
-O [CI do histórico e da lixeira](https://github.com/LowBloat/LowNotes/actions/runs/37788217531), sobre `16151d7`, concluiu com sucesso em Windows, Linux e macOS. Na etapa seguinte, passaram localmente 158 testes Rust, com 9 fixtures condicionais/workers ignorados na execução geral, e 92 testes do frontend. Os testes pais executaram 14 encerramentos reais adicionais: oito na remoção de vínculos e seis no recebimento/criação de texto legado. A execução nativa final está em `.git/p1-text-integration.txt`. Nenhum novo P1 foi criado.
+Além da matriz remota, passaram localmente 158 testes Rust, com 9 fixtures condicionais/workers ignorados na execução geral, e 92 testes do frontend. Os testes pais executaram 14 encerramentos reais adicionais: oito na remoção de vínculos e seis no recebimento/criação de texto legado. A execução nativa final está em `.git/p1-text-integration.txt`.
 
 ## P1 — Confiabilidade e sustentação
 
@@ -63,11 +64,11 @@ Preservar a identidade e o histórico da nota, atualizar links relativos, wikili
 
 ### B03. Gravação atômica e recuperação de arquivos locais — M
 
-Na versão publicada, Markdown, snapshots CRDT, configurações e vínculos usavam gravações diretas. Na branch, esses fluxos e o histórico do chat já usam substituição atômica, backup validado, preservação de arquivos corrompidos e aviso na interface. A intenção durável por nota coordena Markdown e CRDT e tem testes de recuperação após encerramento abrupto do processo. Movimentações recuperáveis foram acrescentadas no workspace e têm testes de interrupção por etapa; ainda falta completar todos os fluxos estruturais.
+Na versão publicada, Markdown, snapshots CRDT, configurações e vínculos usavam gravações diretas. Na branch, esses fluxos e o histórico do chat usam substituição atômica, backup validado, preservação de arquivos corrompidos e aviso na interface. A intenção durável por nota coordena Markdown e CRDT; movimentos, criações e remoções de referências têm coordenação recuperável e testes de interrupção por etapa. B03 está concluído sobre o CI `37791448257`, nos três sistemas.
 
-Concluir essa integração e coordenar a recuperação entre Markdown e CRDT. Cobrir falhas entre a gravação do estado colaborativo e do texto, além de falhas no disco e recuperação sem backup válido. Exibir a recuperação ao usuário sem descartar silenciosamente configurações e vínculos.
+Critérios implementados: coordenar a recuperação entre Markdown e CRDT, cobrir falhas entre a gravação do estado colaborativo e do texto, falhas no disco e recuperação sem backup válido, e exibir a recuperação ao usuário sem descartar silenciosamente configurações e vínculos.
 
-A criação comum e os rascunhos da IA usam uma criação durável compartilhada, validada por 21 encerramentos reais e CI nos três sistemas. A etapa seguinte coordena também a remoção de referências ao remover vínculos e o recebimento de Markdown legado, com mais 14 encerramentos reais. O cache importa estados recuperados sem duplicar texto e a sincronização importa edições externas antes dos manifestos. Esta etapa precisa passar em seu próprio CI antes de considerar B03 concluído.
+A criação comum e os rascunhos da IA usam uma criação durável compartilhada, validada por 21 encerramentos reais e CI nos três sistemas. A etapa seguinte coordena também a remoção de referências ao remover vínculos e o recebimento de Markdown legado, com mais 14 encerramentos reais. O cache importa estados recuperados sem duplicar texto e a sincronização importa edições externas antes dos manifestos. Esta etapa também passou em seu próprio CI nos três sistemas.
 
 **Aceite:** interrupção durante gravação, criação de nota/pasta ou salvamento de rascunho deixa uma versão válida recuperável e identidade coerente. Falta de espaço ou destino bloqueado preservam os dados anteriores e exibem erro. A recuperação não perde a identidade P2P nem substitui dados corrompidos por defaults sem aviso. Base: [gravação e recuperação](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/storage.rs), [criação de notas](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/vault.rs:174), [rascunhos do assistente](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/assistant.rs:241), [CRDT](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/crdt.rs:59), [configurações](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/config.rs:460) e [vínculos](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/links.rs:90).
 
@@ -89,7 +90,7 @@ Adotar operações de adicionar/remover vínculos com identidade e resolução d
 
 ### B06. Medir e proteger o consumo de RAM, CPU e a latência — M
 
-A leveza é um diferencial do produto, mas não encontrei um benchmark reproduzível no projeto. O número de RAM informado pelo autor precisa ter um cenário de referência documentado.
+A leveza é um diferencial do produto. A instrumentação inicial, preservada em stash local, usa o aplicativo Tauri, o WebView e os comandos nativos, com vaults sintéticos isolados; ainda não há execuções nem relatórios para comprovar B06. O autor adiou este item em 08/10/2026. O número de RAM informado pelo autor precisa ter um cenário de referência documentado, distinguindo o processo Rust do conjunto do aplicativo com WebView.
 
 Medir o processo principal e o conjunto de processos do aplicativo, incluindo WebView, em Windows, Linux e macOS. Separar modelos locais externos da medição do aplicativo. Registrar abertura, digitação, busca, mapa, imagens e sincronização em vaults de 100, 1.000 e 10.000 notas.
 
@@ -97,7 +98,7 @@ Medir o processo principal e o conjunto de processos do aplicativo, incluindo We
 
 ### B07. Verificações em cada PR e regressões de integração — M
 
-Na branch, o workflow de PR/push em `main` executa frontend, Rust, credenciais nativas e Playwright em Windows, Linux e macOS. A release também exige testes Rust antes de cada build nativa e regressões de interface na verificação inicial. Referências, criação durável e histórico/lixeira (`37788217531`, sobre `16151d7`) passaram na matriz dos três sistemas. Falta validar remotamente a etapa de coordenação de texto, acrescentar os relatórios nativos de desempenho e conferir a integração final dos P1.
+Na branch, o workflow de PR/push em `main` executa frontend, Rust, credenciais nativas e Playwright em Windows, Linux e macOS. A release também exige testes Rust antes de cada build nativa e regressões de interface na verificação inicial. A coordenação de texto (`37791448257`, sobre `e82d006`) passou na matriz dos três sistemas, mantendo as regressões das etapas anteriores. B07 está concluído; o código final é o mesmo validado nessa execução. O autor adiou os relatórios nativos de B06 e autorizou o merge desta entrega sem esse item.
 
 Automatizar os cenários completos de exclusão offline, renomeação, interrupção de gravação e restauração. Manter as regressões existentes de imagens, edição concorrente, tarefas, busca, temas, atalhos e exportação. Distinguir testes de interface com IPC simulado dos testes de persistência, credenciais e rede nativas. Se necessário, ampliar o gatilho de push para branches de desenvolvimento sem PR.
 
@@ -259,13 +260,12 @@ Adicionar modelos opcionais para notas diárias, reuniões, estudos e acompanham
 
 Automatizar a geração e a conferência dos ícones a partir da logo canônica, evitando que a tela de boas-vindas e os pacotes voltem a usar marcas diferentes.
 
-**Aceite:** atualizar a logo canônica gera os assets corretos de todas as plataformas e uma inconsistência é detectada antes da release. A substituição dos ícones antigos já foi feita no workspace; falta entregar essa alteração em uma versão.
+**Aceite:** atualizar a logo canônica gera os assets corretos de todas as plataformas e uma inconsistência é detectada antes da release. A substituição dos ícones antigos está preservada em stash local, fora desta entrega; falta entregá-la em uma versão.
 
 ## Ordem sugerida
 
-1. Validar o CI da coordenação dos fluxos de texto (B03), mantendo as regressões já concluídas de B01/B02/B04/B05/B08.
-2. Criar os relatórios nativos de medição (B06) e conferir a integração final (B07), dentro dos P1 originais.
-3. Após concluir os P1, oferecer backup consistente (B09) e exportação Markdown portável (B19).
-4. Melhorar busca, RAG, observação de arquivos e resposta da IA (B10–B14).
-5. Evoluir mapa, código, organização, tarefas e portabilidade (B15–B22).
-6. Implementar nuvem e novas plataformas sobre essa base (B23–B25). Modelos, automação da marca e documentação podem entrar antes como entregas menores de B26, B27 e B28.
+1. Manter as regressões de B01/B02/B03/B04/B05/B07/B08. Retomar os relatórios nativos de medição (B06) somente quando solicitado pelo autor.
+2. Após concluir os P1, oferecer backup consistente (B09) e exportação Markdown portável (B19).
+3. Melhorar busca e observação de arquivos (B10/B12), revisão das alterações da IA e acesso ao vault (B14/B22), e qualidade/resposta do assistente (B11/B13).
+4. Evoluir mapa, código, organização, tarefas e uso de espaço (B15–B21).
+5. Implementar nuvem e novas plataformas sobre essa base (B23–B25). Modelos, automação da marca e documentação podem entrar antes como entregas menores de B26, B27 e B28.
