@@ -52,6 +52,11 @@ struct MoveIntent {
 }
 
 #[derive(Default, Serialize, Deserialize)]
+struct MoveProgress {
+    staged: bool,
+}
+
+#[derive(Default, Serialize, Deserialize)]
 pub struct MaterializedPaths {
     #[serde(default)]
     pub paths: BTreeMap<String, String>,
@@ -192,23 +197,37 @@ fn finish(
     let source = vault::safe_join(root, &intent.old)?;
     let destination = vault::safe_join(root, &intent.new)?;
     let staged = directory.join("item");
+    let progress_file = directory.join("progress.json");
+    let mut progress: MoveProgress = storage::read_validated(&progress_file, |bytes| {
+        serde_json::from_slice::<MoveProgress>(bytes).is_ok()
+    })?
+    .map(|bytes| serde_json::from_slice(&bytes))
+    .transpose()?
+    .unwrap_or_default();
     if source.exists() {
-        if staged.exists() {
-            bail!("move source and staged copy both exist");
+        if staged.exists() || progress.staged {
+            crate::catalog_sync::preserve_recreated_source(
+                root,
+                directory,
+                &intent.entry_id,
+                &source,
+            )?;
+        } else {
+            fs::rename(&source, &staged)?;
+            progress.staged = true;
+            storage::write_validated(&progress_file, &serde_json::to_vec(&progress)?, |bytes| {
+                serde_json::from_slice::<MoveProgress>(bytes).is_ok()
+            })?;
+            hook(1)?;
         }
-        fs::rename(&source, &staged)?;
-        hook(1)?;
     }
     if staged.exists() {
-        if destination.exists() {
-            bail!("errors.targetExists");
-        }
         fs::create_dir_all(
             destination
                 .parent()
                 .context("missing move destination parent")?,
         )?;
-        fs::rename(&staged, &destination)?;
+        crate::catalog_sync::move_preserving(&staged, &destination)?;
         hook(2)?;
     }
     if !destination.exists() {
@@ -281,6 +300,15 @@ fn finish(
     }
     manager.invalidate_path(root, &intent.old)?;
     manager.invalidate_path(root, &intent.new)?;
+    if directory.join("external").exists() {
+        let archive = root
+            .join(".lownotes/recovered-files")
+            .join(directory.file_name().unwrap());
+        fs::create_dir_all(archive.parent().unwrap())?;
+        fs::rename(directory, &archive)?;
+        storage::report_recovery(&archive, true);
+        return Ok(());
+    }
     // Only this owned transaction directory is removed, after the staged user
     // item has moved out and every Markdown/CRDT projection is durable.
     let file = directory.join("intent.json");
@@ -309,6 +337,10 @@ fn recover_inner(root: &Path, manager: &CrdtManager) -> anyhow::Result<()> {
         }
         let file = entry.path().join("intent.json");
         let Some(bytes) = storage::read_validated(&file, |bytes| parse(bytes).is_ok())? else {
+            if entry.path().join("item").exists() || entry.path().join("external").exists() {
+                storage::report_recovery(&entry.path(), false);
+                bail!("move recovery data has no valid intent");
+            }
             continue;
         };
         let intent = parse(&bytes)?;
@@ -386,6 +418,7 @@ fn rename_with_hook(
     }
     let mut planned = catalog::load(root)?;
     planned.discover_existing(root, author)?;
+    crate::links::bind_identities(root, &planned)?;
     let before_paths: BTreeMap<_, _> = planned
         .resolve()?
         .into_iter()
@@ -447,6 +480,56 @@ fn rename_with_hook(
 mod tests {
     use super::*;
     use yrs::{ReadTxn, StateVector, Text};
+
+    #[test]
+    fn recreated_sources_after_staging_or_placement_are_preserved_and_recovery_finishes() {
+        for phase in [1, 2] {
+            let root = tempfile::tempdir().unwrap();
+            fs::create_dir_all(root.path().join("folder")).unwrap();
+            fs::write(root.path().join("folder/note.md"), "original").unwrap();
+            let manager = CrdtManager::new();
+            assert!(rename_with_hook(
+                root.path(),
+                "folder",
+                "moved",
+                &manager,
+                "local",
+                |current| {
+                    if current == phase {
+                        bail!("interrupted");
+                    }
+                    Ok(())
+                }
+            )
+            .is_err());
+            fs::create_dir_all(root.path().join("folder")).unwrap();
+            fs::write(root.path().join("folder/note.md"), "external recreation").unwrap();
+            fs::write(root.path().join("folder/asset.bin"), [1, 0, 255]).unwrap();
+            recover_all(root.path(), &CrdtManager::new()).unwrap();
+            assert!(!root.path().join("folder").exists());
+            assert_eq!(
+                vault::read_note(root.path(), "moved/note.md").unwrap(),
+                "original"
+            );
+            let copies = vault::list_vault_items(root.path())
+                .unwrap()
+                .into_iter()
+                .filter(|item| item.path.contains("recreated conflict"))
+                .collect::<Vec<_>>();
+            assert_eq!(copies.len(), 1);
+            assert_eq!(
+                vault::read_note(root.path(), &copies[0].path).unwrap(),
+                "external recreation"
+            );
+            let assets = walkdir::WalkDir::new(root.path().join(".lownotes/recovered-files"))
+                .into_iter()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name() == "asset.bin")
+                .collect::<Vec<_>>();
+            assert_eq!(assets.len(), 1);
+            assert_eq!(fs::read(assets[0].path()).unwrap(), [1, 0, 255]);
+        }
+    }
     #[test]
     fn folder_moves_keep_crdt_history_assets_and_identity_after_every_interrupted_phase() {
         for phase in 0..4 {

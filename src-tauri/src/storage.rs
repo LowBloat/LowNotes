@@ -80,10 +80,32 @@ fn replace(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     pending.write_all(bytes)?;
     pending.as_file().sync_all()?;
     // tempfile uses an atomic replacement on Unix and Windows; never unlink the destination first.
-    pending.persist(path).map_err(|error| error.error)?;
+    persist_atomic(pending, path)
+        .with_context(|| format!("replace local file {}", path.display()))?;
     #[cfg(unix)]
     fs::File::open(parent)?.sync_all()?;
     Ok(())
+}
+
+fn persist_atomic(mut pending: tempfile::NamedTempFile, path: &Path) -> std::io::Result<()> {
+    for attempt in 0..=6 {
+        match pending.persist(path) {
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                // Windows scanners/editors can briefly hold a handle without
+                // FILE_SHARE_DELETE. Keep the same synced temporary file and
+                // atomic replacement; never unlink the valid destination.
+                let temporary_lock =
+                    cfg!(windows) && matches!(error.error.raw_os_error(), Some(5 | 32 | 33));
+                if !temporary_lock || attempt == 6 {
+                    return Err(error.error);
+                }
+                pending = error.file;
+                std::thread::sleep(std::time::Duration::from_millis(5 << attempt));
+            }
+        }
+    }
+    unreachable!("bounded persistence retry returned")
 }
 
 pub fn write_validated(
@@ -265,5 +287,54 @@ mod tests {
         write_text(&path, "# Note").unwrap();
         assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
         assert!(!backup_path(&path).exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_temporary_windows_delete_lock_preserves_the_old_file_until_atomic_replacement() {
+        use std::{os::windows::fs::OpenOptionsExt, sync::mpsc, time::Duration};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        write_validated(&path, br#"{"value":1}"#, json).unwrap();
+        let held = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .open(&path)
+            .unwrap();
+        let (ready, started) = mpsc::channel();
+        let worker_path = path.clone();
+        let worker = std::thread::spawn(move || {
+            write_with_hook(&worker_path, br#"{"value":2}"#, json, || {
+                ready.send(()).unwrap();
+                Ok(())
+            })
+        });
+        started.recv_timeout(Duration::from_secs(2)).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(fs::read(&path).unwrap(), br#"{"value":1}"#);
+        drop(held);
+        worker.join().unwrap().unwrap();
+        assert_eq!(fs::read(&path).unwrap(), br#"{"value":2}"#);
+        assert_eq!(fs::read(backup_path(&path)).unwrap(), br#"{"value":1}"#);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_persistent_windows_delete_lock_returns_an_error_without_removing_either_version() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        write_validated(&path, br#"{"value":1}"#, json).unwrap();
+        let held = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .open(&path)
+            .unwrap();
+        assert!(write_validated(&path, br#"{"value":2}"#, json).is_err());
+        assert_eq!(fs::read(&path).unwrap(), br#"{"value":1}"#);
+        assert_eq!(fs::read(backup_path(&path)).unwrap(), br#"{"value":1}"#);
+        drop(held);
+        write_validated(&path, br#"{"value":2}"#, json).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), br#"{"value":2}"#);
     }
 }

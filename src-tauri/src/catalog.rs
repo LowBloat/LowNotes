@@ -671,7 +671,7 @@ fn is_descendant(id: &str, ancestor: &str, locations: &BTreeMap<String, Location
     false
 }
 
-fn conflict_name(name: &str, id: &str, is_dir: bool, counter: usize) -> String {
+pub(crate) fn conflict_name(name: &str, id: &str, is_dir: bool, counter: usize) -> String {
     let path = Path::new(name);
     let stem = if is_dir {
         name

@@ -17,6 +17,7 @@ use std::{
 use yrs::{updates::decoder::Decode, Doc, GetString, Transact, Update};
 
 const PENDING: &str = ".lownotes/pending-structure";
+const PENDING_CATALOG: &str = ".lownotes/pending-catalog.json";
 pub const TRASH: &str = ".lownotes/trash";
 thread_local! { static BUSY: Cell<bool> = const { Cell::new(false) }; }
 struct Scope(bool);
@@ -54,6 +55,35 @@ struct Intent {
 struct Progress {
     staged: bool,
     placed: BTreeSet<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PendingCatalog {
+    version: u8,
+    device: String,
+    catalog: Catalog,
+}
+
+fn parse_pending(bytes: &[u8]) -> anyhow::Result<PendingCatalog> {
+    if bytes.len() > 24 * 1024 * 1024 {
+        bail!("pending catalog is too large");
+    }
+    let pending: PendingCatalog = serde_json::from_slice(bytes)?;
+    if pending.version != 1
+        || pending.device.is_empty()
+        || pending.device.len() > 256
+        || pending.device.chars().any(char::is_control)
+    {
+        bail!("invalid pending catalog");
+    }
+    pending.catalog.validate()?;
+    Ok(pending)
+}
+
+fn clear_pending(root: &Path) -> anyhow::Result<()> {
+    let path = root.join(PENDING_CATALOG);
+    storage::remove_file(&storage::backup_path(&path))?;
+    storage::remove_file(&path)
 }
 fn valid_id(id: &str) -> bool {
     id.len() == 64 && id.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -189,10 +219,16 @@ pub fn preserve_deleted(
     Ok(Some(copy))
 }
 
-fn move_preserving(source: &Path, destination: &Path) -> anyhow::Result<()> {
+pub(crate) fn move_preserving(source: &Path, destination: &Path) -> anyhow::Result<()> {
     if !destination.exists() {
         fs::create_dir_all(destination.parent().context("missing destination parent")?)?;
-        fs::rename(source, destination)?;
+        fs::rename(source, destination).with_context(|| {
+            format!(
+                "place structural item {} -> {}",
+                source.display(),
+                destination.display()
+            )
+        })?;
         return Ok(());
     }
     if source.is_dir() && destination.is_dir() {
@@ -246,15 +282,22 @@ fn copy_tree(source: &Path, destination: &Path) -> anyhow::Result<()> {
         }
     } else {
         let bytes = fs::read(source)?;
-        storage::write_validated(destination, &bytes, |data| data == bytes.as_slice())?;
+        storage::write_validated(destination, &bytes, |data| data == bytes.as_slice())
+            .with_context(|| {
+                format!(
+                    "copy archived file {} -> {}",
+                    source.display(),
+                    destination.display()
+                )
+            })?;
     }
     Ok(())
 }
 
-fn preserve_recreated(
+pub(crate) fn preserve_recreated_source(
     root: &Path,
     directory: &Path,
-    item: &Item,
+    id: &str,
     source: &Path,
 ) -> anyhow::Result<()> {
     for entry in walkdir::WalkDir::new(source).follow_links(false) {
@@ -273,7 +316,7 @@ fn preserve_recreated(
         while stem.len() > 160 {
             stem.pop();
         }
-        let hash = blake3::hash(format!("{}:{original_path}:{content}", item.id).as_bytes())
+        let hash = blake3::hash(format!("{id}:{original_path}:{content}").as_bytes())
             .to_hex()
             .to_string();
         let copy = format!("{stem} (recreated conflict {}).md", &hash[..12]);
@@ -287,7 +330,7 @@ fn preserve_recreated(
     }
     let archived = directory
         .join("external")
-        .join(&item.id)
+        .join(id)
         .join(catalog::random_id());
     fs::create_dir_all(archived.parent().unwrap())?;
     fs::rename(source, archived)?;
@@ -338,7 +381,7 @@ fn finish(
             };
             if staged.exists() {
                 if item.restore_from.is_none() && source.exists() {
-                    preserve_recreated(root, directory, item, &source)?;
+                    preserve_recreated_source(root, directory, &item.id, &source)?;
                 }
                 continue;
             }
@@ -349,7 +392,13 @@ fn finish(
             if item.restore_from.is_some() {
                 copy_tree(&source, &staged)?;
             } else {
-                fs::rename(&source, &staged)?;
+                fs::rename(&source, &staged).with_context(|| {
+                    format!(
+                        "stage structural source {} -> {}",
+                        source.display(),
+                        staged.display()
+                    )
+                })?;
             }
             hook(1)?;
         }
@@ -446,7 +495,7 @@ fn finish(
         if item.restore_from.is_none() && !active_names.contains(item.old.as_str()) {
             let old = vault::safe_join(root, &item.old)?;
             if old.exists() {
-                preserve_recreated(root, directory, item, &old)?;
+                preserve_recreated_source(root, directory, &item.id, &old)?;
             }
         }
     }
@@ -490,7 +539,8 @@ fn finish(
     fs::rename(
         directory,
         root.join(TRASH).join(directory.file_name().unwrap()),
-    )?;
+    )
+    .context("archive completed structural transaction")?;
     if recovered {
         storage::report_recovery(&root.join(catalog::RELATIVE_PATH), true);
     }
@@ -498,21 +548,46 @@ fn finish(
 }
 fn recover_inner(root: &Path, manager: &CrdtManager) -> anyhow::Result<()> {
     let pending = root.join(PENDING);
-    if !pending.exists() {
-        return Ok(());
-    }
-    for entry in fs::read_dir(&pending)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_dir() || !valid_id(&entry.file_name().to_string_lossy()) {
-            continue;
+    if pending.exists() {
+        for entry in fs::read_dir(&pending)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() || !valid_id(&entry.file_name().to_string_lossy()) {
+                continue;
+            }
+            let Some(intent) = read_intent(&entry.path())? else {
+                let contains_data = ["items", "external"].iter().any(|name| {
+                    fs::read_dir(entry.path().join(name))
+                        .is_ok_and(|mut entries| entries.next().is_some())
+                });
+                if contains_data {
+                    storage::report_recovery(&entry.path(), false);
+                    bail!("structural recovery data has no valid intent");
+                }
+                continue;
+            };
+            if let Err(error) = finish(root, &entry.path(), &intent, manager, true, &|_| Ok(())) {
+                storage::report_recovery(&entry.path().join("intent.json"), false);
+                return Err(error);
+            }
         }
-        let Some(intent) = read_intent(&entry.path())? else {
-            continue;
-        };
-        if let Err(error) = finish(root, &entry.path(), &intent, manager, true, &|_| Ok(())) {
-            storage::report_recovery(&entry.path().join("intent.json"), false);
+    }
+    let queued = root.join(PENDING_CATALOG);
+    if let Some(bytes) = storage::read_validated(&queued, |bytes| parse_pending(bytes).is_ok())? {
+        let pending = parse_pending(&bytes)?;
+        if let Err(error) =
+            materialize(
+                root,
+                manager,
+                &pending.catalog,
+                &pending.device,
+                &|_| Ok(()),
+            )
+        {
+            storage::report_recovery(&queued, false);
             return Err(error);
         }
+        clear_pending(root)?;
+        storage::report_recovery(&queued, true);
     }
     Ok(())
 }
@@ -552,6 +627,7 @@ pub fn prepare(root: &Path, manager: &CrdtManager, device: &str) -> anyhow::Resu
             }
         }
         structural::save_paths(root, &bindings)?;
+        crate::links::bind_identities(root, &catalog)?;
         Ok(catalog)
     })
 }
@@ -579,12 +655,19 @@ fn restore_source(root: &Path, id: &str) -> anyhow::Result<Option<(String, Item)
         if !entry.path().join("items").join(id).exists() {
             continue;
         }
-        if latest
-            .as_ref()
-            .is_none_or(|(time, _, _)| *time < intent.created_ms)
-        {
+        let order = (
+            intent.created_ms,
+            intent
+                .catalog
+                .operations
+                .values()
+                .map(|op| op.clock)
+                .max()
+                .unwrap_or(0),
+        );
+        if latest.as_ref().is_none_or(|(time, _, _)| *time < order) {
             latest = Some((
-                intent.created_ms,
+                order,
                 entry.file_name().to_string_lossy().into_owned(),
                 item.clone(),
             ));
@@ -624,88 +707,122 @@ fn merge_with_hook(
     structural::exclusive(root, manager, || {
         let _scope = Scope::enter();
         recover_inner(root, manager)?;
-        let planned = catalog::transact(root, |current| {
-            *current = current.merged(remote)?;
-            Ok(current.clone())
-        })?;
-        let bindings = structural::load_paths(root)?;
-        let mut items = Vec::new();
-        for (id, entry) in planned.resolve()? {
-            if let Some(old) = bindings.paths.get(&id) {
-                if !entry.deleted() && old == &entry.path {
-                    continue;
-                }
-                if !root.join(old).exists() {
-                    continue;
-                }
-                items.push(Item {
-                    id,
-                    old: old.clone(),
-                    new: (!entry.deleted()).then_some(entry.path),
-                    is_dir: entry.is_dir,
-                    location: entry.location,
-                    restore_from: None,
-                });
-            } else if !entry.deleted() {
-                if let Some((record, original)) = restore_source(root, &id)? {
-                    items.push(Item {
-                        id,
-                        old: original.old,
-                        new: Some(entry.path),
-                        is_dir: entry.is_dir,
-                        location: original.location,
-                        restore_from: Some(record),
-                    });
-                }
-            }
-        }
-        if items.is_empty() {
-            catalog::transact(root, |current| {
-                current.acknowledge(device, planned.operations.keys().cloned())
-            })?;
-            return Ok(0);
-        }
-        let directory = root.join(PENDING).join(catalog::random_id());
-        fs::create_dir_all(directory.join("states"))?;
-        for item in &items {
-            if item.is_dir {
-                continue;
-            }
-            let bytes = if let Some(record) = &item.restore_from {
-                storage::read_validated(
-                    &saved_state(&root.join(TRASH).join(record), &item.id),
-                    |bytes| decode_doc(&item.old, bytes).is_ok(),
-                )?
-                .context("restored history is unavailable")?
-            } else {
-                manager.get_or_create_doc(root, &item.old)?;
-                CrdtManager::read_state_file(root, &CrdtManager::state_relative_path(&item.old))?
-                    .context("structural history is unavailable")?
-            };
-            storage::write_validated(&saved_state(&directory, &item.id), &bytes, |bytes| {
-                decode_doc(&item.old, bytes).is_ok()
-            })?;
-        }
-        let count = items.len();
-        let intent = Intent {
+        let planned = catalog::load(root)?.merged(remote)?;
+        let queued = PendingCatalog {
             version: 1,
-            created_ms: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_millis() as u64,
             device: device.into(),
             catalog: planned,
-            before: bindings.paths,
-            items,
         };
         storage::write_validated(
-            &directory.join("intent.json"),
-            &serde_json::to_vec_pretty(&intent)?,
-            |bytes| parse(bytes).is_ok(),
+            &root.join(PENDING_CATALOG),
+            &serde_json::to_vec(&queued)?,
+            |bytes| parse_pending(bytes).is_ok(),
         )?;
-        hook(0)?;
-        finish(root, &directory, &intent, manager, false, &hook)?;
+        hook(6)?;
+        let count = materialize(root, manager, &queued.catalog, device, &hook)?;
+        clear_pending(root)?;
         Ok(count)
     })
+}
+
+fn materialize(
+    root: &Path,
+    manager: &CrdtManager,
+    remote: &Catalog,
+    device: &str,
+    hook: &impl Fn(u8) -> anyhow::Result<()>,
+) -> anyhow::Result<usize> {
+    let planned = catalog::transact(root, |current| {
+        *current = current.merged(remote)?;
+        Ok(current.clone())
+    })?;
+    hook(5)?;
+    let bindings = structural::load_paths(root)?;
+    let mut items = Vec::new();
+    for (id, entry) in planned.resolve()? {
+        if let Some(old) = bindings.paths.get(&id) {
+            if !entry.deleted() && old == &entry.path {
+                continue;
+            }
+            if !root.join(old).exists() {
+                continue;
+            }
+            items.push(Item {
+                id,
+                old: old.clone(),
+                new: (!entry.deleted()).then_some(entry.path),
+                is_dir: entry.is_dir,
+                location: entry.location,
+                restore_from: None,
+            });
+        } else if !entry.deleted() {
+            if let Some((record, original)) = restore_source(root, &id)? {
+                items.push(Item {
+                    id,
+                    old: original.old,
+                    new: Some(entry.path),
+                    is_dir: entry.is_dir,
+                    location: original.location,
+                    restore_from: Some(record),
+                });
+            }
+        }
+    }
+    if items.is_empty() {
+        let mut bindings = bindings;
+        for (id, entry) in planned.resolve()? {
+            if entry.deleted() || !entry.is_dir {
+                continue;
+            }
+            fs::create_dir_all(vault::safe_join(root, &entry.path)?)?;
+            bindings.paths.insert(id, entry.path);
+        }
+        structural::save_paths(root, &bindings)?;
+        catalog::transact(root, |current| {
+            current.acknowledge(device, planned.operations.keys().cloned())
+        })?;
+        return Ok(0);
+    }
+    let directory = root.join(PENDING).join(catalog::random_id());
+    fs::create_dir_all(directory.join("states"))?;
+    for item in &items {
+        if item.is_dir {
+            continue;
+        }
+        let bytes = if let Some(record) = &item.restore_from {
+            storage::read_validated(
+                &saved_state(&root.join(TRASH).join(record), &item.id),
+                |bytes| decode_doc(&item.old, bytes).is_ok(),
+            )?
+            .context("restored history is unavailable")?
+        } else {
+            manager.get_or_create_doc(root, &item.old)?;
+            CrdtManager::read_state_file(root, &CrdtManager::state_relative_path(&item.old))?
+                .context("structural history is unavailable")?
+        };
+        storage::write_validated(&saved_state(&directory, &item.id), &bytes, |bytes| {
+            decode_doc(&item.old, bytes).is_ok()
+        })?;
+    }
+    let count = items.len();
+    let intent = Intent {
+        version: 1,
+        created_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis() as u64,
+        device: device.into(),
+        catalog: planned,
+        before: bindings.paths,
+        items,
+    };
+    storage::write_validated(
+        &directory.join("intent.json"),
+        &serde_json::to_vec_pretty(&intent)?,
+        |bytes| parse(bytes).is_ok(),
+    )?;
+    hook(0)?;
+    finish(root, &directory, &intent, manager, false, hook)?;
+    Ok(count)
 }
 pub fn delete(root: &Path, path: &str, manager: &CrdtManager, device: &str) -> anyhow::Result<()> {
     delete_with_hashes(root, path, manager, device, true)
@@ -835,10 +952,33 @@ pub fn restore_latest(
     });
     let root_id = items[0].id.clone();
     let is_dir = items[0].is_dir;
-    let locations = items
-        .into_iter()
-        .map(|item| (item.id, item.location))
+    let mut occupied: BTreeSet<_> = resolved
+        .values()
+        .filter(|entry| !entry.deleted())
+        .map(|entry| {
+            (
+                entry.location.parent.clone(),
+                entry.location.name.to_lowercase(),
+            )
+        })
         .collect();
+    let mut locations = BTreeMap::new();
+    for item in items {
+        let mut location = item.location;
+        if occupied.contains(&(location.parent.clone(), location.name.to_lowercase())) {
+            let original = location.name.clone();
+            for counter in 0.. {
+                location.name =
+                    crate::catalog::conflict_name(&original, &item.id, item.is_dir, counter)
+                        .replace(" (path conflict ", " (restored ");
+                if !occupied.contains(&(location.parent.clone(), location.name.to_lowercase())) {
+                    break;
+                }
+            }
+        }
+        occupied.insert((location.parent.clone(), location.name.to_lowercase()));
+        locations.insert(item.id, location);
+    }
     let planned = catalog::transact(root, |catalog| {
         catalog.push(device, Change::Restore { locations })?;
         Ok(catalog.clone())
@@ -864,6 +1004,20 @@ pub fn has_restorable(root: &Path) -> anyhow::Result<bool> {
 mod tests {
     use super::*;
     use yrs::{ReadTxn, StateVector, Text};
+    #[test]
+    fn empty_remote_directories_are_materialized_and_keep_identity_through_a_move() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let manager = CrdtManager::new();
+        vault::create_folder(a.path(), "empty/nested").unwrap();
+        let snapshot = prepare(a.path(), &manager, "a").unwrap();
+        merge(b.path(), &manager, &snapshot, "b").unwrap();
+        assert!(b.path().join("empty/nested").is_dir());
+        crate::structural::rename(a.path(), "empty", "moved", &manager, "a").unwrap();
+        merge(b.path(), &manager, &catalog::load(a.path()).unwrap(), "b").unwrap();
+        assert!(b.path().join("moved/nested").is_dir());
+        assert!(!b.path().join("empty").exists());
+    }
     #[test]
     fn deletion_survives_restart_preserves_an_offline_edit_and_restores_history() {
         let a = tempfile::tempdir().unwrap();
@@ -943,7 +1097,7 @@ mod tests {
     }
     #[test]
     fn simultaneous_moves_stage_all_sources_and_recover_after_every_phase() {
-        for phase in 0..=4 {
+        for phase in 0..=6 {
             let root = tempfile::tempdir().unwrap();
             let manager = CrdtManager::new();
             fs::write(root.path().join("a.md"), "A\n").unwrap();
@@ -1013,7 +1167,7 @@ mod tests {
 
     #[test]
     fn actual_process_exit_recovers_all_structural_phases() {
-        for phase in 0..=4 {
+        for phase in 0..=6 {
             let root = tempfile::tempdir().unwrap();
             let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args([

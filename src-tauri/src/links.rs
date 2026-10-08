@@ -90,10 +90,13 @@ fn valid_store(bytes: &[u8]) -> bool {
 pub fn save_links(vault: &Path, store: &LinkStore) -> anyhow::Result<()> {
     let _guard = changes_lock();
     let (_, mut history) = read_changes(vault)?;
-    for edge in history.edges() {
-        if !store.links.contains(&edge) { history.remove(&edge.source, &edge.target); }
+    let catalog = crate::catalog::load(vault)?;
+    let entries = catalog.resolve()?;
+    for (_, edge) in history.projected_additions(&entries) {
+        if !store.links.contains(&edge) { history.remove_projected(&entries, &edge.source, &edge.target); }
     }
-    for edge in &store.links { history.add(edge.clone()); }
+    for edge in &store.links { history.add_bound(edge.clone(), &catalog)?; }
+    history.bind_current(&catalog)?;
     persist_changes(vault, store, &history)?;
     Ok(())
 }
@@ -102,15 +105,16 @@ fn operations_path(vault: &Path) -> PathBuf {
     vault.join(crate::link_operations::RELATIVE_PATH)
 }
 
-fn project(store: &LinkStore, history: &LinkChanges) -> LinkStore {
-    let mut links = history.edges();
+fn project(vault: &Path, store: &LinkStore, history: &LinkChanges) -> anyhow::Result<LinkStore> {
+    let entries = crate::catalog::load(vault)?.resolve()?;
+    let mut links: Vec<_> = history.projected_additions(&entries).into_iter().map(|(_, edge)| edge).collect();
     for edge in store.links.iter().filter(|edge| edge.origin == LinkOrigin::wikilink) {
         if !links.iter().any(|known| known.source == edge.source && known.target == edge.target) {
             links.push(edge.clone());
         }
     }
     links.sort(); links.dedup();
-    LinkStore { version: LINKS_VERSION, links }
+    Ok(LinkStore { version: LINKS_VERSION, links })
 }
 
 fn read_changes(vault: &Path) -> anyhow::Result<(LinkStore, LinkChanges)> {
@@ -127,7 +131,7 @@ fn read_changes(vault: &Path) -> anyhow::Result<(LinkStore, LinkChanges)> {
     };
     // Missing operations are a one-time legacy migration. Do not import the
     // projection once a journal exists, as its old contents can be stale.
-    let projected = project(&cached, &history);
+    let projected = project(vault, &cached, &history)?;
     if damaged_cache {
         crate::storage::write_validated(&links_path(vault), &serde_json::to_vec_pretty(&projected)?, valid_store)?;
         crate::storage::report_recovery(&links_path(vault), true);
@@ -141,7 +145,7 @@ fn persist_changes(vault: &Path, store: &LinkStore, history: &LinkChanges) -> an
     // Commit the authority first. If projection replacement is interrupted,
     // the next read reconstructs the same links from the operation journal.
     crate::storage::write_validated(&operations_path(vault), &history.encode()?, |bytes| LinkChanges::decode(bytes).is_ok())?;
-    let projected = project(store, history);
+    let projected = project(vault, store, history)?;
     crate::storage::write_validated(&links_path(vault), &serde_json::to_vec_pretty(&projected)?, valid_store)?;
     Ok(())
 }
@@ -150,6 +154,14 @@ pub fn prepare_sync(vault: &Path) -> anyhow::Result<()> {
     let _guard = changes_lock();
     if !links_path(vault).exists() && !operations_path(vault).exists() { return Ok(()); }
     let (store, history) = read_changes(vault)?;
+    persist_changes(vault, &store, &history)
+}
+
+pub fn bind_identities(vault: &Path, catalog: &crate::catalog::Catalog) -> anyhow::Result<()> {
+    let _guard = changes_lock();
+    if !links_path(vault).exists() && !operations_path(vault).exists() { return Ok(()); }
+    let (store, mut history) = read_changes(vault)?;
+    history.bind_current(catalog)?;
     persist_changes(vault, &store, &history)
 }
 
@@ -588,6 +600,8 @@ pub fn apply_operations(
     let mut wikilink_removals: Vec<(String, String)> = Vec::new();
     let guard = changes_lock();
     let (mut store, mut history) = read_changes(vault)?;
+    let catalog = crate::catalog::load(vault)?;
+    let entries = catalog.resolve()?;
     for op in ops {
         match op.action {
             LinkAction::add => {
@@ -601,12 +615,12 @@ pub fn apply_operations(
                         target: op.target.clone(),
                         origin: origin.clone(),
                     };
-                    history.add(edge.clone());
+                    history.add_bound(edge.clone(), &catalog)?;
                     store.links.push(edge);
                 }
             }
             LinkAction::remove => {
-                history.remove(&op.source, &op.target);
+                history.remove_projected(&entries, &op.source, &op.target);
                 store
                     .links
                     .retain(|e| !(e.source == op.source && e.target == op.target));
@@ -615,6 +629,7 @@ pub fn apply_operations(
         }
     }
 
+    history.bind_current(&catalog)?;
     persist_changes(vault, &store, &history)?;
     drop(guard);
 
@@ -987,5 +1002,85 @@ After fence [[Gamma]].\n";
         );
         assert!(graph_links(&vault).unwrap().is_empty());
         let _ = fs::remove_dir_all(&vault);
+    }
+
+    #[test]
+    fn manual_links_follow_both_endpoints_and_removal_survives_old_metadata() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("folder")).unwrap();
+        fs::write(root.path().join("folder/source.md"), "source\n").unwrap();
+        fs::write(root.path().join("target.md"), "target\n").unwrap();
+        let manager = crate::crdt::CrdtManager::new();
+        crate::catalog_sync::prepare(root.path(), &manager, "a").unwrap();
+        apply_operations(root.path(), &[LinkOperation {
+            source: "folder/source.md".into(), target: "target.md".into(), action: LinkAction::add,
+        }], LinkOrigin::manual).unwrap();
+        let old_history = fs::read(operations_path(root.path())).unwrap();
+        let old_projection = fs::read(links_path(root.path())).unwrap();
+        crate::structural::rename(root.path(), "folder", "moved", &manager, "a").unwrap();
+        crate::structural::rename(root.path(), "target.md", "new.md", &manager, "a").unwrap();
+        assert_eq!(graph_links(root.path()).unwrap(), vec![LinkEdge {
+            source: "moved/source.md".into(), target: "new.md".into(), origin: LinkOrigin::manual,
+        }]);
+        apply_operations(root.path(), &[LinkOperation {
+            source: "moved/source.md".into(), target: "new.md".into(), action: LinkAction::remove,
+        }], LinkOrigin::manual).unwrap();
+        merge_sync(root.path(), crate::link_operations::RELATIVE_PATH, &old_history).unwrap();
+        merge_sync(root.path(), LINKS_REL_PATH, &old_projection).unwrap();
+        assert!(graph_links(root.path()).unwrap().is_empty());
+        apply_operations(root.path(), &[LinkOperation {
+            source: "moved/source.md".into(), target: "new.md".into(), action: LinkAction::add,
+        }], LinkOrigin::agent).unwrap();
+        assert_eq!(graph_links(root.path()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_link_to_a_deleted_identity_never_attaches_to_a_reused_name_and_can_be_restored() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("source.md"), "source").unwrap();
+        fs::write(root.path().join("target.md"), "target").unwrap();
+        let manager = crate::crdt::CrdtManager::new();
+        crate::catalog_sync::prepare(root.path(), &manager, "local").unwrap();
+        apply_operations(root.path(), &[LinkOperation {
+            source: "source.md".into(), target: "target.md".into(), action: LinkAction::add,
+        }], LinkOrigin::manual).unwrap();
+        crate::catalog_sync::delete(root.path(), "target.md", &manager, "local").unwrap();
+        crate::vault::create_note(root.path(), "target.md", Some("replacement"), "en-US").unwrap();
+        assert!(graph_links(root.path()).unwrap().is_empty());
+        apply_operations(root.path(), &[LinkOperation {
+            source: "source.md".into(), target: "target.md".into(), action: LinkAction::add,
+        }], LinkOrigin::agent).unwrap();
+        assert_eq!(graph_links(root.path()).unwrap(), vec![LinkEdge {
+            source: "source.md".into(), target: "target.md".into(), origin: LinkOrigin::agent,
+        }]);
+        let restored = crate::catalog_sync::restore_latest(root.path(), &manager, "local").unwrap().unwrap();
+        let links = graph_links(root.path()).unwrap();
+        assert_eq!(links.len(), 2);
+        assert!(links.iter().any(|edge| edge.target == restored.0 && edge.origin == LinkOrigin::manual));
+        assert_ne!(restored.0, "target.md");
+        assert_eq!(crate::vault::read_note(root.path(), "target.md").unwrap(), "replacement");
+    }
+
+    #[test]
+    fn endpoint_bindings_preserve_addition_payloads_and_reject_rebinding_without_writing() {
+        let root = tempfile::tempdir().unwrap();
+        for name in ["a.md", "b.md", "c.md"] { fs::write(root.path().join(name), name).unwrap(); }
+        let manager = crate::crdt::CrdtManager::new();
+        let catalog = crate::catalog_sync::prepare(root.path(), &manager, "local").unwrap();
+        apply_operations(root.path(), &[LinkOperation {
+            source: "a.md".into(), target: "b.md".into(), action: LinkAction::add,
+        }], LinkOrigin::manual).unwrap();
+        let original = LinkChanges::decode(&fs::read(operations_path(root.path())).unwrap()).unwrap();
+        crate::structural::rename(root.path(), "b.md", "moved.md", &manager, "local").unwrap();
+        let bytes = fs::read(operations_path(root.path())).unwrap();
+        let renamed = LinkChanges::decode(&bytes).unwrap();
+        assert_eq!(original.additions, renamed.additions);
+        assert_eq!(original.identities, renamed.identities);
+        let c = catalog.resolve().unwrap().values().find(|entry| entry.path == "c.md").unwrap().id.clone();
+        let mut invalid = renamed;
+        invalid.identities.values_mut().next().unwrap().target = c;
+        assert!(merge_sync(root.path(), crate::link_operations::RELATIVE_PATH, &invalid.encode().unwrap()).is_err());
+        assert_eq!(fs::read(operations_path(root.path())).unwrap(), bytes);
+        assert_eq!(graph_links(root.path()).unwrap()[0].target, "moved.md");
     }
 }

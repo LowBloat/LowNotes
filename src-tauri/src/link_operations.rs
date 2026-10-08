@@ -9,12 +9,22 @@ pub const RELATIVE_PATH: &str = ".lownotes/link-operations.json";
 pub const MAX_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkIdentity {
+    pub source: String,
+    pub target: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkChanges {
     version: u8,
     #[serde(default)]
     pub additions: BTreeMap<String, LinkEdge>,
     #[serde(default)]
     pub removals: BTreeMap<String, BTreeSet<String>>,
+    /// Bind an immutable addition to note identities without rewriting its
+    /// original payload. Existing protocol /4 clients can ignore this field.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub identities: BTreeMap<String, LinkIdentity>,
 }
 
 impl Default for LinkChanges {
@@ -23,6 +33,7 @@ impl Default for LinkChanges {
             version: 1,
             additions: BTreeMap::new(),
             removals: BTreeMap::new(),
+            identities: BTreeMap::new(),
         }
     }
 }
@@ -93,6 +104,12 @@ impl LinkChanges {
                         .iter()
                         .any(|tag| !valid_id(tag) || tag.starts_with("remove-"))
             })
+            || self.identities.iter().any(|(id, identity)| {
+                !self.additions.contains_key(id)
+                    || [&identity.source, &identity.target].iter().any(|id| {
+                        id.len() != 64 || !id.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    })
+            })
         {
             bail!("invalid link operation history");
         }
@@ -122,6 +139,16 @@ impl LinkChanges {
             }
             merged.removals.insert(id.clone(), tags.clone());
         }
+        for (id, identity) in &remote.identities {
+            if merged
+                .identities
+                .get(id)
+                .is_some_and(|local| local != identity)
+            {
+                bail!("a link identity binding was reused");
+            }
+            merged.identities.insert(id.clone(), identity.clone());
+        }
         merged.encode()?;
         Ok(merged)
     }
@@ -144,11 +171,134 @@ impl LinkChanges {
             .collect()
     }
 
+    /// The current path is a projection of the stable endpoints. Deleted
+    /// endpoints remain in history, allowing an explicit restore to reveal
+    /// the original relation without attaching it to a reused filename.
+    pub fn projected_additions(
+        &self,
+        entries: &BTreeMap<String, crate::catalog::ResolvedEntry>,
+    ) -> Vec<(String, LinkEdge)> {
+        let removed = self.removed_tags();
+        self.additions
+            .iter()
+            .filter_map(|(id, edge)| {
+                if removed.contains(id.as_str()) {
+                    return None;
+                }
+                let mut projected = edge.clone();
+                if let Some(identity) = self.identities.get(id) {
+                    let source = entries.get(&identity.source)?;
+                    let target = entries.get(&identity.target)?;
+                    if source.deleted() || target.deleted() || source.is_dir || target.is_dir {
+                        return None;
+                    }
+                    projected.source = source.path.clone();
+                    projected.target = target.path.clone();
+                } else if [&edge.source, &edge.target].iter().any(|path| {
+                    entries
+                        .values()
+                        .filter(|entry| !entry.is_dir && entry.aliases.contains(path.as_str()))
+                        .count()
+                        > 1
+                }) {
+                    // A legacy path cannot disambiguate the original note from a
+                    // replacement. Do not silently attach its relation to either.
+                    return None;
+                }
+                Some((id.clone(), projected))
+            })
+            .collect()
+    }
+
+    /// Called before structural changes while the old paths still identify
+    /// their owners, and when creating new additions. Never rebind an ID.
+    pub fn bind_current(&mut self, catalog: &crate::catalog::Catalog) -> anyhow::Result<()> {
+        let entries = catalog.resolve()?;
+        for (id, edge) in &self.additions {
+            if self.identities.contains_key(id) {
+                continue;
+            }
+            let resolve = |path: &str| {
+                let mut matches = entries
+                    .values()
+                    .filter(|entry| !entry.is_dir && entry.aliases.contains(path));
+                let first = matches.next()?;
+                if matches.next().is_some() {
+                    return None;
+                }
+                Some(first.id.clone())
+            };
+            if let (Some(source), Some(target)) = (resolve(&edge.source), resolve(&edge.target)) {
+                self.identities
+                    .insert(id.clone(), LinkIdentity { source, target });
+            }
+        }
+        self.validate()
+    }
+
+    pub fn remove_projected(
+        &mut self,
+        entries: &BTreeMap<String, crate::catalog::ResolvedEntry>,
+        source: &str,
+        target: &str,
+    ) {
+        let tags: BTreeSet<String> = self
+            .projected_additions(entries)
+            .into_iter()
+            .filter(|(_, edge)| edge.source == source && edge.target == target)
+            .map(|(id, _)| id)
+            .collect();
+        let original_edges: Vec<_> = tags
+            .iter()
+            .filter_map(|id| self.additions.get(id).cloned())
+            .collect();
+        if !tags.is_empty() {
+            self.removals.insert(unique_id("remove"), tags);
+        }
+        for edge in original_edges {
+            self.remove(&edge.source, &edge.target);
+        }
+        // Preserve compatibility protections for unbound legacy additions.
+        self.remove(source, target);
+    }
+
     pub fn add(&mut self, edge: LinkEdge) {
         if edge.origin == LinkOrigin::wikilink || self.edges().contains(&edge) {
             return;
         }
         self.additions.insert(unique_id("add"), edge);
+    }
+
+    pub fn add_bound(
+        &mut self,
+        edge: LinkEdge,
+        catalog: &crate::catalog::Catalog,
+    ) -> anyhow::Result<()> {
+        if edge.origin == LinkOrigin::wikilink {
+            return Ok(());
+        }
+        let entries = catalog.resolve()?;
+        if self
+            .projected_additions(&entries)
+            .iter()
+            .any(|(_, known)| known == &edge)
+        {
+            return Ok(());
+        }
+        let current = |path: &str| {
+            entries
+                .values()
+                .find(|entry| !entry.deleted() && !entry.is_dir && entry.path == path)
+                .map(|entry| entry.id.clone())
+        };
+        if let (Some(source), Some(target)) = (current(&edge.source), current(&edge.target)) {
+            let id = unique_id("add");
+            self.additions.insert(id.clone(), edge);
+            self.identities.insert(id, LinkIdentity { source, target });
+        } else {
+            self.add(edge);
+        }
+        Ok(())
     }
 
     /// Lists from older versions have no identities; deterministic tags make

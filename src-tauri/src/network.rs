@@ -1595,6 +1595,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn three_real_devices_keep_map_identities_through_offline_folder_and_note_moves() {
+        use crate::links::{self, LinkAction, LinkOperation, LinkOrigin};
+        let roots = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
+        let endpoints = [bind_endpoint().await, bind_endpoint().await, bind_endpoint().await];
+        for (index, root) in roots.iter().enumerate() {
+            fs::create_dir_all(root.path().join("folder")).unwrap();
+            for name in ["folder/source.md", "folder/target.md", "extra.md"] {
+                fs::write(root.path().join(name), format!("# {name}\n")).unwrap();
+            }
+            crate::catalog_sync::prepare(root.path(), &CrdtManager::new(), &format!("device-{index}")).unwrap();
+        }
+        links::apply_operations(roots[0].path(), &[LinkOperation {
+            source: "folder/source.md".into(), target: "folder/target.md".into(), action: LinkAction::add,
+        }], LinkOrigin::manual).unwrap();
+        for index in 1..3 { sync_test_pair(&endpoints[index], roots[index].path(), &endpoints[0], roots[0].path()).await; }
+        let stale = fs::read(roots[0].path().join(links::LINKS_REL_PATH)).unwrap();
+        crate::structural::rename(roots[0].path(), "folder", "moved", &CrdtManager::new(), "device-0").unwrap();
+        links::apply_operations(roots[1].path(), &[LinkOperation {
+            source: "folder/source.md".into(), target: "extra.md".into(), action: LinkAction::add,
+        }], LinkOrigin::agent).unwrap();
+        crate::structural::rename(roots[1].path(), "folder/target.md", "target.md", &CrdtManager::new(), "device-1").unwrap();
+        crate::structural::rename(roots[2].path(), "folder/source.md", "folder/renamed.md", &CrdtManager::new(), "device-2").unwrap();
+        for _ in 0..2 {
+            sync_test_pair(&endpoints[1], roots[1].path(), &endpoints[0], roots[0].path()).await;
+            sync_test_pair(&endpoints[2], roots[2].path(), &endpoints[1], roots[1].path()).await;
+            sync_test_pair(&endpoints[0], roots[0].path(), &endpoints[2], roots[2].path()).await;
+        }
+        for root in &roots {
+            let edges = links::graph_links(root.path()).unwrap();
+            assert_eq!(edges.len(), 2);
+            assert!(edges.iter().all(|edge| edge.source == "moved/renamed.md"));
+            assert!(edges.iter().any(|edge| edge.target == "target.md" && edge.origin == LinkOrigin::manual));
+            assert!(edges.iter().any(|edge| edge.target == "extra.md" && edge.origin == LinkOrigin::agent));
+        }
+        links::apply_operations(roots[0].path(), &[LinkOperation {
+            source: "moved/renamed.md".into(), target: "target.md".into(), action: LinkAction::remove,
+        }], LinkOrigin::manual).unwrap();
+        for index in 1..3 { sync_test_pair(&endpoints[index], roots[index].path(), &endpoints[0], roots[0].path()).await; }
+        for root in &roots {
+            links::merge_sync(root.path(), links::LINKS_REL_PATH, &stale).unwrap();
+            let edges = links::graph_links(root.path()).unwrap();
+            assert_eq!(edges.len(), 1);
+            assert_eq!(edges[0].target, "extra.md");
+        }
+        for endpoint in endpoints { endpoint.close().await; }
+    }
+
+    #[tokio::test]
     async fn three_real_devices_apply_offline_deletions_before_files_and_keep_concurrent_edits() {
         let roots = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
         let endpoints = [bind_endpoint().await, bind_endpoint().await, bind_endpoint().await];
