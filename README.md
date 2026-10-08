@@ -55,6 +55,8 @@ On Linux, updates follow the installation format. Arch, DEB and RPM packages sho
 - Interface zoom with **Ctrl + +**, **Ctrl + -** or **Ctrl + mouse wheel**; **Ctrl + 0** resets to 100%. The chosen level is saved on the device.
 - **Ctrl + Z** undoes only your local note edits, preserving text from other devices; **Ctrl + Y** or **Ctrl + Shift + Z** redoes your edits.
 - Immediate autosave with a stable **Saved** indicator while typing and a warning if saving fails.
+- **History and trash** in the sidebar keeps recovery on this computer. Select an archived deletion to restore it after a restart, including folders, assets and collaborative history; an occupied filename gets an alternative name. Note versions follow their identity through moves. Compare a version or another note (including conflict copies) with the current Markdown, choose either text or combine/edit the result, then apply it as a new collaborative edit. If the note changed during comparison, refresh to review the new text while keeping your combined result.
+- Local recovery data is kept forever by default. Under **History and trash → Retention**, optional day limits are checked at startup and every 15 minutes while the vault is active. A cleanup preview shows expired versions/archives and protected items before manual removal. Deletion archives awaiting acknowledgement from a paired device, external recovery files and unsafe/incomplete archives stay protected. The structural deletion history and immutable image blobs are retained.
 - Long editor lines wrap visually by default, preserving the file's line breaks and numbering. Disable **Visual line wrapping** in **Settings → General** to use horizontal scrolling.
 - Folders, note search, `[[links between notes]]` and local Markdown links. The link map combines relations written in notes with relations added manually or by the assistant.
 - Export notes and drafts to Word (`.docx`) and PDF using the same Markdown dialect as the preview. Rich text, lists, tasks, aligned tables, links and footnotes are preserved; Mermaid diagrams and images are embedded as visuals. PDF text remains selectable and Word text remains editable. Images can come from the vault, HTTP(S) addresses or data URLs.
@@ -94,7 +96,15 @@ flowchart LR
 
 ### Data and sync decisions
 
-**Markdown stays a real file.** Notes live in the folder you chose and can be opened in other editors. The history needed for collaboration lives in `.lownotes/crdt/`; links added outside the text live in `.lownotes/links.json`. When backing up or moving a vault between computers, take the `.lownotes/` folder along with the `.md` files.
+**Markdown stays a real file.** Notes live in the folder you chose and can be opened in other editors. The history needed for collaboration lives in `.lownotes/crdt/`; links added outside the text have an immutable add/remove history in `.lownotes/link-operations.json` and a readable projection in `.lownotes/links.json`. When backing up or moving a vault between computers, take the `.lownotes/` folder along with the `.md` files.
+
+**Deletes and moves have stable identities.** The structural history in `.lownotes/catalog.json` records creation, movement, deletion and explicit restoration. Current peers merge and apply this catalog before comparing file manifests. A missing path is therefore distinguished from a deleted note, and an update to an old name follows the original identity through a move. Creating a note at a deleted filename gives it a new identity; a delayed update to the old note cannot edit the replacement. Concurrent edits to deleted notes are preserved as review copies. Device acknowledgements are retained with the operation history.
+
+**Written references follow moves.** Renaming or moving notes and folders updates local Markdown destinations, reference definitions and wikilinks while retaining labels, aliases, titles, anchors and code examples. Relative links are recalculated from the moved source, including local assets. Bindings travel with the collaborative state and use stable note identities and text positions. Concurrent destination rewrites converge without duplicating URLs; reference maintenance is distinguished from user edits. The graph and preview resolve encoded paths, and web links in the preview open through the system browser. Both peers need the structural version for full offline move convergence.
+
+**Removed data stays recoverable locally.** Structural transactions stage every affected source before placing destinations, preserving collaborative history and files inside moved folders. A restart completes pending transactions; divergent external files remain available for review. Removed files and their original collaborative states are retained in `.lownotes/trash/`, and undoing a deletion records an explicit restore. A durable `.lownotes/pending-catalog.json` queues structural application before the catalog is published, so recovery also covers interruption before filesystem staging begins. Files recreated externally during an interrupted move are preserved as review copies and complete local archives in `.lownotes/recovered-files/`. Restoration uses another filename when the original already belongs to a replacement note. These archives and `.lownotes/catalog-paths.json` describe local storage and are not exchanged as ordinary files. The catalog, active notes, link operations and immutable image blobs carry synchronization between devices.
+
+**Map changes merge between devices.** Distinct manual or assistant links created offline survive reconciliation regardless of file timestamps. Removing a relation records the additions already seen, so receiving a stale list cannot bring them back. A genuinely concurrent new addition remains available; a later intentional re-add uses a fresh identity. The operation history retains the origin of every addition. Current peers also bind each addition to the stable identities of both endpoint notes: the visible map follows folder/note moves without changing the original addition payload. A deleted endpoint hides its relation; explicitly restoring that identity reveals it again. A replacement note at the old filename can receive a new, separate relation. Both devices need this operation-capable version for full map reconciliation; older versions can exchange ordinary notes, images when supported, and legacy link lists, but cannot express durable link removals or intentional re-adds after those removals.
 
 **Live and offline edits follow different paths.** With two connected apps, editor changes are sent as CRDT updates and appear on the other device. With paired peers, a full reconciliation happens when the app opens; another periodic round recovers lost messages or disconnected periods.
 
@@ -102,7 +112,15 @@ flowchart LR
 
 **P2P does not mean no connection infrastructure.** Notes do not live on a central LowNotes server. Iroh uses direct connections when possible and may fall back to discovery/relay infrastructure to establish or forward the encrypted connection.
 
-**Optional data stays separate.** Preferences and API keys live in the app's local `settings.json`; conversation history lives in the local data directory, separated per vault. These files are not part of the vault or the P2P sync. Keys in `settings.json` are not encrypted by LowNotes.
+**Optional data stays separate.** Preferences live in the app's local `settings.json`; provider keys and the private P2P identity use the operating system's credential store (Windows Credential Manager, macOS Keychain, or Secret Service on Linux). Existing installations migrate after each stored secret is read back successfully, preserving pairing and provider settings; legacy settings backups are scrubbed after migration. If the credential store is unavailable or locked, LowNotes keeps the existing data and shows a retry action in Settings. An unavailable migrated identity never generates a replacement identity. Linux needs a running, unlocked Secret Service implementation, such as GNOME Keyring or KWallet. Conversation history lives in the local data directory, separated per vault. These files and credentials are not part of the vault or the P2P sync.
+
+**Interrupted saves can be recovered.** Local writes use atomic replacement and validated backups. A durable pending edit coordinates Markdown and its CRDT state; the next open or sync completes an interrupted save and reports the recovery. If an external editor changed the text after the interruption, its version is preserved as a conflict copy for review. Backups, pending saves and corrupt recovery copies stay outside the P2P manifest.
+
+**Unlinking also edits collaborative text.** Removing a map relation unwraps matching Markdown links and wikilinks while retaining their labels. A local `.lownotes/pending-links.json` coordinates the immutable map operations and those text edits by note identity. Recovery resumes from the current Markdown, preserves external edits and reports a damaged intent instead of resetting it silently. Text and CRDT are committed together, and the open editor receives the updated state. Legacy Markdown packets use the same coordinated save; synchronization imports external Markdown changes into the collaborative state before comparing manifests.
+
+**Creation is recoverable too.** Notes, folders and assistant drafts record a durable creation intent in `.lownotes/pending-create/` before publishing their catalog identity or content. New notes receive an independent collaborative seed, including empty notes. Recovery follows subsequent moves and observed deletions; deleted creations stay restorable in the ordinary local trash. If an external file occupies the filename during recovery, both contents are retained with independent identities. Native document saves and incoming synchronized content share the structural coordinator, so a save cannot recreate an old filename during a move.
+
+**Versions are local checkpoints.** `.lownotes/versions/<note-id>/` stores immutable, hash-validated Markdown snapshots before edits. Ordinary typing is coalesced into one checkpoint per minute; explicit restore/merge actions also preserve the previous text. Restoration adds a new CRDT edit instead of rolling back the document state. History and trash are local to each device, excluded from the ordinary sync manifest, and included when copying the complete vault. Retention preferences live in `.lownotes/history-settings.json`; expiry never removes structural deletion operations or image blobs.
 
 **Defaults evolve without replacing personal choices.** Built-in palettes, AI providers and search sources are defined by the app and merged with saved settings. This way, new defaults can arrive in an update without erasing keys, models and custom entries.
 
@@ -110,7 +128,7 @@ flowchart LR
 
 ## P2P pairing
 
-Use the same up-to-date version on both computers to get offline conflict resolution. The current sync protocol is `lownotes/sync/2`.
+Use the same up-to-date version on both computers to get the complete sync behavior. The current sync protocol is `lownotes/sync/5`, with `/4` fallback for map operations, `/3` for notes/images and `/2` for ordinary notes. Only `/5` peers exchange structural identities and durable deletions; older clients can retain obsolete paths until updated. LowNotes preserves ambiguous legacy changes for review instead of using them to overwrite a new note at a reused filename. Pairing codes remain `LOWNOTES2_...`; their prefix does not identify the negotiated sync protocol.
 
 1. Open LowNotes on both computers and select a vault on each.
 2. On the first one, open **Manage Connections → Share Code** and copy the `LOWNOTES2_...` code.
@@ -145,9 +163,13 @@ bun run check
 bun test
 cargo test --lib --manifest-path src-tauri/Cargo.toml
 bun run build
+bunx playwright install chromium
+bun run test:e2e
 ```
 
 The frontend uses **Svelte 5, TypeScript, Tailwind CSS v4, CodeMirror 6 and Yjs**. The backend uses **Tauri v2, Rust, Yrs and Iroh**. The Markdown renderer is based on `markdown-it` with extensions and Mermaid. Multi-platform publishing is done by the [release workflow](.github/workflows/release.yml), which generates installers, signatures and the updater's `latest.json`.
+
+The [verification workflow](.github/workflows/ci.yml) runs on pushes and pull requests across Windows, Linux and macOS. Browser tests exercise the real frontend with an isolated native IPC adapter; Rust tests cover persistence, crash recovery, credentials and synchronization. Native credential-store tests use a synthetic entry that is deleted afterward; Linux CI creates an isolated Secret Service session.
 
 ## License
 

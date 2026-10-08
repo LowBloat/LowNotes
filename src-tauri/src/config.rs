@@ -49,8 +49,12 @@ pub struct VaultConfig {
     pub id: String,
     pub name: String,
     pub path: PathBuf,
+    #[serde(default)]
     pub secret_key: String,
+    #[serde(default)]
     pub pairing_token: String,
+    #[serde(default, skip_deserializing)]
+    pub credentials_locked: bool,
     #[serde(default)]
     pub peers: Vec<PeerConfig>,
 }
@@ -72,6 +76,7 @@ impl VaultConfig {
             secret_key: URL_SAFE_NO_PAD.encode(rand::rng().random::<[u8; 32]>()),
             pairing_token: new_pairing_token(),
             peers: Vec::new(),
+            credentials_locked: false,
         }
     }
 
@@ -80,6 +85,7 @@ impl VaultConfig {
     }
 
     pub fn ensure_keys(&mut self) -> bool {
+        if self.credentials_locked { return false; }
         let mut changed = false;
         if self.pairing_token.trim().is_empty() {
             self.pairing_token = new_pairing_token();
@@ -358,6 +364,14 @@ impl Default for ImageUploadSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
+    #[serde(default)]
+    pub credential_storage_version: u8,
+    #[serde(default)]
+    pub credential_refs: std::collections::BTreeMap<String, String>,
+    #[serde(default, skip_deserializing)]
+    pub credential_error: String,
+    #[serde(skip)]
+    pub unavailable_credentials: std::collections::BTreeSet<String>,
     pub device_name: String,
     #[serde(default = "default_theme")]
     pub theme: String,
@@ -396,6 +410,10 @@ impl Default for AppSettings {
 
         Self {
             device_name: host,
+            credential_storage_version: 0,
+            credential_refs: Default::default(),
+            credential_error: String::new(),
+            unavailable_credentials: Default::default(),
             theme: default_theme(),
             view_mode: default_view_mode(),
             line_wrapping: default_true(),
@@ -427,10 +445,14 @@ fn default_true() -> bool {
 }
 
 impl AppSettings {
-    fn from_saved_value(saved: serde_json::Value) -> Option<Self> {
+    pub(crate) fn from_saved_value(saved: serde_json::Value) -> Option<Self> {
         let old_brave_key = saved.pointer("/ai/web_search_api_key")
             .and_then(|key| key.as_str()).unwrap_or_default().to_owned();
         let mut settings: Self = serde_json::from_value(saved).ok()?;
+        if settings.credential_storage_version > 1 { return None; }
+        if settings.credential_storage_version == 1 && settings.vaults.iter().any(|vault|
+            !settings.credential_refs.contains_key(&format!("vault:{}:identity", vault.id))
+            || !settings.credential_refs.contains_key(&format!("vault:{}:pairing", vault.id))) { return None; }
         settings.web_search.normalize();
         settings.theme_palettes.normalize();
         settings.ai.normalize();
@@ -460,17 +482,18 @@ impl AppSettings {
     pub fn load() -> Self {
         Self::config_file()
             .ok()
-            .and_then(|p| fs::read_to_string(p).ok())
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .and_then(Self::from_saved_value)
+            .and_then(|p| crate::credentials::load(&p).ok())
             .unwrap_or_default()
     }
 
-    pub fn save(&self) -> anyhow::Result<()> {
+    pub fn save(&mut self) -> anyhow::Result<()> {
         let path = Self::config_file()?;
-        let json = serde_json::to_string_pretty(self)?;
-        fs::write(path, json)?;
+        crate::credentials::save(&path, self)?;
         Ok(())
+    }
+
+    pub(crate) fn valid_saved_bytes(bytes: &[u8]) -> bool {
+        serde_json::from_slice::<serde_json::Value>(bytes).ok().and_then(Self::from_saved_value).is_some()
     }
 
     pub fn active_vault(&self) -> Option<&VaultConfig> {
@@ -518,6 +541,34 @@ pub fn decode_pair_code(code: &str) -> anyhow::Result<PairInvite> {
 #[cfg(test)]
 mod tests {
     use super::{AppSettings, ThemeColors, ThemePalette, ThemePalettesSettings};
+
+    #[test]
+    fn damaged_settings_recover_the_same_vault_identity_and_preserve_the_original_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("settings.json");
+        let mut settings = AppSettings::default();
+        let vault = super::VaultConfig::new(root.path().to_path_buf(), None);
+        let identity = vault.secret_key.clone();
+        let token = vault.pairing_token.clone();
+        settings.active_vault_id = Some(vault.id.clone());
+        settings.vaults.push(vault);
+        let original = serde_json::to_vec(&settings).unwrap();
+        crate::storage::write_validated(&path, &original, AppSettings::valid_saved_bytes).unwrap();
+        settings.theme = "dark".into();
+        crate::storage::write_validated(&path, &serde_json::to_vec(&settings).unwrap(), AppSettings::valid_saved_bytes).unwrap();
+        std::fs::write(&path, b"interrupted settings").unwrap();
+        let bytes = crate::storage::read_validated(&path, AppSettings::valid_saved_bytes).unwrap().unwrap();
+        let recovered = AppSettings::from_saved_value(serde_json::from_slice(&bytes).unwrap()).unwrap();
+        assert_eq!(recovered.vaults[0].secret_key, identity);
+        assert_eq!(recovered.vaults[0].pairing_token, token);
+        assert!(std::fs::read_dir(root.path()).unwrap().any(|entry| std::fs::read(entry.unwrap().path()).ok().as_deref() == Some(b"interrupted settings")));
+    }
+
+    #[test]
+    fn incomplete_settings_are_rejected_instead_of_becoming_a_new_identity() {
+        assert!(!AppSettings::valid_saved_bytes(br#"{}"#));
+        assert!(!AppSettings::valid_saved_bytes(br#"{"vaults":[]}"#));
+    }
 
     #[test]
     fn image_host_settings_migrate_and_round_trip_without_resetting_user_data() {
@@ -594,6 +645,7 @@ mod tests {
             path: std::path::PathBuf::from("/test"),
             secret_key: "".to_string(),
             pairing_token: "".to_string(),
+            credentials_locked: false,
             peers: Vec::new(),
         };
         assert!(vault.ensure_keys());

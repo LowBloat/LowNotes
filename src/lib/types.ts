@@ -86,6 +86,7 @@ export interface ImageUploadSettings {
 }
 
 export interface AppSettings {
+  credential_error?: string;
   device_name: string;
   theme: AppTheme;
   theme_palettes: ThemePalettesSettings;
@@ -238,6 +239,22 @@ export interface InitialStateResponse {
 export interface NoteReadResponse {
   content: string;
   crdt_update_base64: string;
+  note_id?: string | null;
+}
+
+export interface NoteVersion {
+  id: string; note_id: string; path: string; created_ms: number; hash: string; characters: number;
+}
+export interface TrashEntry {
+  record_id: string; note_id: string; path: string; is_dir: boolean; deleted_ms: number; items: number;
+}
+export interface RetentionPolicy { versions_days: number | null; trash_days: number | null }
+export interface CleanupReport { versions: number; archives: number; protected: number }
+export interface HistoryListing {
+  note: { note_id: string; path: string; content: string; hash: string } | null;
+  versions: NoteVersion[];
+  trash: TrashEntry[];
+  retention: RetentionPolicy;
 }
 
 export type NetworkEventPayload =

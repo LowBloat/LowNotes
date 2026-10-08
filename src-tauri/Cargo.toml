@@ -48,6 +48,8 @@ gif = "0.14"
 percent-encoding = "2.3"
 tauri-plugin-updater = "2.13.0"
 tauri-plugin-process = "2.4.0"
+keyring = { version = "=3.6.3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+pulldown-cmark = { version = "0.13.4", default-features = false }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

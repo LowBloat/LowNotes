@@ -3,7 +3,7 @@
   import { getVersion } from '@tauri-apps/api/app';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { ArrowLeft, Bot, Check, Download, Globe2, Monitor, NotebookPen, Palette, Pencil, Plus, Settings2, Sparkles, Trash2 } from 'lucide-svelte';
-  import { fetchAiModels, saveAiSettings, saveCloseToTray, saveImageUploadSettings, saveLanguage, saveLineWrapping, saveTheme, saveThemePalettes, saveUpdatePrefs, saveViewMode, saveWebSearchSettings } from '$lib/api';
+  import { fetchAiModels, retryCredentials, saveAiSettings, saveCloseToTray, saveImageUploadSettings, saveLanguage, saveLineWrapping, saveTheme, saveThemePalettes, saveUpdatePrefs, saveViewMode, saveWebSearchSettings } from '$lib/api';
   import { LOCALE_LABELS, SUPPORTED_LOCALES, t, trError, type LocaleCode } from '$lib/i18n';
   import { BUILTIN_PALETTES, DEFAULT_PALETTE_ID, TOKEN_GROUPS, applyTheme, isHexColor, newCustomPalette, resolvePalette, themeVarsStyle, type ThemeToken } from '$lib/themes';
   import type { AiProviderConfig, AiSettings, AppSettings, AppTheme, ImageUploadProvider, ThemePalette, ThemePalettesSettings, ViewMode, WebSearchSettings } from '$lib/types';
@@ -75,6 +75,17 @@
     } finally {
       busy = false;
     }
+  }
+
+  async function retryCredentialStore() {
+    busy = true; error = '';
+    try {
+      const next = await retryCredentials();
+      aiDraft = $state.snapshot(next.ai);
+      webDraft = $state.snapshot(next.web_search);
+      onChange(next);
+    } catch (reason) { error = trError(String(reason)); }
+    finally { busy = false; }
   }
 
   function changeTheme(value: AppTheme) {
@@ -396,6 +407,11 @@
             <label class="setting-row setting-toggle"><div><strong>{$t('update.autoCheck')}</strong><small>{$t('settings.updateHint')}</small></div><input type="checkbox" checked={settings.update_check} onchange={(event) => changeUpdates(event.currentTarget.checked)} /></label>
             <div class="setting-row"><div><strong>{$t('settings.device')}</strong><small>{settings.device_name}</small></div></div>
           </section>
+        {/if}
+        {#if settings.credential_error}
+          <div class="settings-error" role="alert"><p>{trError(settings.credential_error)}</p><button class="settings-primary" disabled={busy} onclick={() => void retryCredentialStore()}>{$t('credentials.retry')}</button></div>
+        {:else}
+          <p class="text-xs text-[var(--text-muted)] mt-4">{$t('credentials.protected')}</p>
         {/if}
         {#if error}<p class="settings-error" role="alert">{error}</p>{/if}
         {#if saved}<p class="settings-saved" role="status"><Check size={15} /> {$t('settings.saved')}</p>{/if}

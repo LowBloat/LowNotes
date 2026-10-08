@@ -61,6 +61,9 @@ pub fn safe_join(root: &Path, relative_wire: &str) -> anyhow::Result<PathBuf> {
 }
 
 pub fn list_vault_items(root: &Path) -> anyhow::Result<Vec<VaultItem>> {
+    crate::note_transaction::recover_all(root)?;
+    crate::structural::recover_all(root, &crate::crdt::CrdtManager::new())?;
+    crate::catalog_sync::recover_all(root, &crate::crdt::CrdtManager::new())?;
     if !root.is_dir() {
         return Ok(Vec::new());
     }
@@ -164,7 +167,7 @@ pub fn save_note(root: &Path, relative: &str, content: &str) -> anyhow::Result<(
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&target, content)?;
+    crate::storage::write_text(&target, content)?;
     Ok(())
 }
 
@@ -179,20 +182,10 @@ pub fn create_note(
         clean_relative.push_str(".md");
     }
 
-    let target = safe_join(root, &clean_relative)?;
-    if target.exists() {
-        bail!("errors.noteExists");
-    }
-
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
     let default_content = initial_content
         .map(|s| s.to_string())
         .unwrap_or_else(|| default_note_content(lang));
-    fs::write(&target, default_content)?;
-    Ok(clean_relative)
+    crate::creation::create(root, &clean_relative, Some(&default_content), &crate::crdt::CrdtManager::new(), "local")
 }
 
 /// Template written into brand-new notes when no initial content is supplied.
@@ -206,28 +199,16 @@ fn default_note_content(lang: &str) -> String {
 }
 
 pub fn create_folder(root: &Path, relative: &str) -> anyhow::Result<()> {
-    let target = safe_join(root, relative)?;
-    fs::create_dir_all(&target)?;
+    crate::creation::create(root, &relative.trim().replace('\\', "/"), None, &crate::crdt::CrdtManager::new(), "local")?;
     Ok(())
 }
 
 pub fn rename_item(root: &Path, old_relative: &str, new_relative: &str) -> anyhow::Result<()> {
-    let source = safe_join(root, old_relative)?;
-    let destination = safe_join(root, new_relative)?;
-    if !source.exists() {
-        bail!("errors.sourceNotFound");
-    }
-    if destination.exists() {
-        bail!("errors.targetExists");
-    }
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::rename(source, destination)?;
-    Ok(())
+    crate::structural::rename(root, old_relative, new_relative, &crate::crdt::CrdtManager::new(), "local")
 }
 
 pub fn delete_item(root: &Path, relative: &str) -> anyhow::Result<()> {
+    crate::note_transaction::recover_all(root)?;
     let target = safe_join(root, relative)?;
     if !target.exists() {
         return Ok(());
@@ -241,6 +222,8 @@ pub fn delete_item(root: &Path, relative: &str) -> anyhow::Result<()> {
 }
 
 pub fn build_manifest(root: &Path) -> anyhow::Result<Manifest> {
+    crate::note_transaction::recover_all(root)?;
+    crate::links::prepare_sync(root)?;
     let mut manifest = Manifest::new();
     let items = list_vault_items(root)?;
 
@@ -264,26 +247,27 @@ pub fn build_manifest(root: &Path) -> anyhow::Result<Manifest> {
     }
 
     // Include the hidden links store so P2P sync (manifest-driven) propagates it.
-    let links_rel = ".lownotes/links.json";
-    let links_file = root.join(links_rel);
-    if links_file.is_file() {
-        if let (Ok(bytes), Ok(metadata)) = (fs::read(&links_file), fs::metadata(&links_file)) {
-            let hash = blake3::hash(&bytes).to_hex().to_string();
-            let modified_ms = metadata
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-            manifest.insert(
-                links_rel.to_string(),
-                NoteMeta {
-                    path: links_rel.to_string(),
-                    modified_ms,
-                    size: metadata.len(),
-                    hash,
-                },
-            );
+    for links_rel in [crate::links::LINKS_REL_PATH, crate::link_operations::RELATIVE_PATH] {
+        let links_file = root.join(links_rel);
+        if links_file.is_file() {
+            if let (Ok(bytes), Ok(metadata)) = (fs::read(&links_file), fs::metadata(&links_file)) {
+                let hash = blake3::hash(&bytes).to_hex().to_string();
+                let modified_ms = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                manifest.insert(
+                    links_rel.to_string(),
+                    NoteMeta {
+                        path: links_rel.to_string(),
+                        modified_ms,
+                        size: metadata.len(),
+                        hash,
+                    },
+                );
+            }
         }
     }
 
@@ -295,7 +279,7 @@ pub fn build_manifest(root: &Path) -> anyhow::Result<Manifest> {
                 continue;
             }
             let relative = entry.path().strip_prefix(root)?.to_string_lossy().replace('\\', "/");
-            let bytes = fs::read(entry.path())?;
+            let bytes = crate::crdt::CrdtManager::read_state_file(root, &relative)?.context("CRDT state missing")?;
             let metadata = entry.metadata()?;
             let modified_ms = metadata.modified().ok()
                 .and_then(|time| time.duration_since(UNIX_EPOCH).ok())

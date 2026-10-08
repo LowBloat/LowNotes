@@ -15,6 +15,7 @@
   import { checkAvailableUpdate, type AvailableUpdate } from '$lib/updates';
   import {
     getAppState,
+    takeRecoveryNotices,
     getUpdatePolicy,
     listNotes,
     readNote,
@@ -45,6 +46,7 @@
   import WelcomeModal from '$lib/components/WelcomeModal.svelte';
   import UpdateModal from '$lib/components/UpdateModal.svelte';
   import SettingsView from '$lib/components/SettingsView.svelte';
+  import HistoryModal from '$lib/components/HistoryModal.svelte';
   let settings = $state<AppSettings | null>(null);
   let theme = $state<AppTheme>('light');
   let viewMode = $state<ViewMode>('split');
@@ -65,6 +67,7 @@
   let incomingRequest = $state<{ request_id: string; peer: PeerConfig } | null>(null);
   let isAiChatOpen = $state(false);
   let isSettingsOpen = $state(false);
+  let isHistoryOpen = $state(false);
   let settingsTab = $state<'general' | 'themes' | 'ai' | 'providers' | 'web' | 'about'>('general');
   let isWelcomeOpen = $state(false);
   let targetLine = $state<number | undefined>(undefined);
@@ -73,6 +76,18 @@
   let isUpdateOpen = $state(false);
   let updateCheckLocal = $state(true);
   let updateTimer: ReturnType<typeof setInterval> | undefined;
+  let recoveryTimer: ReturnType<typeof setInterval> | undefined;
+  let recoveryNotices = $state<Array<{ path: string; recovered: boolean }>>([]);
+  const seenRecoveryNotices = new Set<string>();
+
+  async function refreshRecoveryNotices() {
+    try {
+      for (const notice of await takeRecoveryNotices()) {
+        const key = `${notice.path}:${notice.recovered}`;
+        if (!seenRecoveryNotices.has(key)) { seenRecoveryNotices.add(key); recoveryNotices.push(notice); }
+      }
+    } catch (error) { console.error('Failed to read recovery notices:', error); }
+  }
   let remoteRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   let unlisteners: UnlistenFn[] = [];
 
@@ -137,6 +152,8 @@
       }
     } catch (e) {
       console.error('Failed to load initial state:', e);
+    } finally {
+      await refreshRecoveryNotices();
     }
   }
 
@@ -167,8 +184,8 @@
     }
   }
 
-  function handleOpenWikilink(token: string) {
-    const path = resolveNoteLink(items, selectedNotePath, token);
+  function handleOpenWikilink(token: string, kind: 'wiki' | 'markdown' = 'wiki') {
+    const path = resolveNoteLink(items, selectedNotePath, token, kind);
     if (path) {
       openNote(path);
     }
@@ -277,6 +294,7 @@
   });
 
   onMount(async () => {
+    recoveryTimer = setInterval(() => void refreshRecoveryNotices(), 3000);
     window.addEventListener('keydown', handleUndoDeletedItem, true);
     // Setup P2P event listeners first so no events are lost
     const u1 = await listen<NetworkEventPayload>('p2p:ready', (event) => {
@@ -383,6 +401,7 @@
   });
 
   onDestroy(() => {
+    if (recoveryTimer) clearInterval(recoveryTimer);
     window.removeEventListener('keydown', handleUndoDeletedItem, true);
     unlisteners.forEach((u) => u());
     if (updateTimer) clearInterval(updateTimer);
@@ -401,6 +420,21 @@
 </script>
 
 <div class="flex h-screen w-screen overflow-hidden bg-[var(--bg-main)] text-[var(--text-main)]">
+  {#if settings?.credential_error && !isSettingsOpen}
+    <div class="fixed top-3 right-3 z-40 max-w-lg p-4 rounded-lg border border-[var(--danger)] bg-[var(--bg-card)] shadow-lg" role="alert">
+      <p class="text-sm">{trError(settings.credential_error)}</p>
+      <button class="mt-3 text-sm underline text-[var(--accent-light)]" onclick={() => openSettings()}>{$t('credentials.openSettings')}</button>
+    </div>
+  {/if}
+  {#if recoveryNotices.length}
+    <div class="fixed top-3 right-3 z-50 max-w-lg p-4 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] shadow-lg" role="status" aria-live="polite">
+      {#each recoveryNotices as notice}
+        <p class="text-sm font-medium">{notice.recovered ? $t('storage.recovered') : $t('storage.failed')}</p>
+        <p class="text-xs text-[var(--text-muted)] break-all mt-1">{notice.path}</p>
+      {/each}
+      <button class="mt-3 text-sm underline text-[var(--accent-light)]" onclick={() => recoveryNotices = []}>{$t('app.dismissConflict')}</button>
+    </div>
+  {/if}
   {#if isSettingsOpen && settings}
     <SettingsView {settings} initialTab={settingsTab} onClose={() => void closeSettings()} onChange={handleSettingsChange} />
   {:else if !activeVault}
@@ -437,8 +471,10 @@
       {syncStatus}
       peerCount={activeVault.peers.length}
       onOpenSettings={() => openSettings()}
+      onOpenHistory={() => (isHistoryOpen = true)}
       onSelectNote={(path) => openNote(path)}
       onVaultChange={(v) => {
+        isHistoryOpen = false;
         activeVault = v;
         lastUndoableAction = 'text';
         selectedNotePath = '';
@@ -530,6 +566,13 @@
   {/if}
 
   <!-- Keep chat mounted while settings are open so pending replies and drafts survive. -->
+  {#if isHistoryOpen && activeVault}
+    {#key activeVault.id}
+      <HistoryModal vaultId={activeVault.id} vaultName={activeVault.name} initialPath={selectedNotePath} {items}
+        onClose={() => (isHistoryOpen = false)}
+        onUpdated={async (path) => { await refreshItems(); if (path) await openNote(path); }} />
+    {/key}
+  {/if}
   {#if settings && activeVault}
     <div style:display={isSettingsOpen ? 'none' : 'contents'}>
       {#key activeVault.id}

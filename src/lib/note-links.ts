@@ -1,10 +1,13 @@
 import type { VaultItem } from './types';
 
 /** Resolve a link from the current note, preferring an exact path over a title. */
-export function resolveNoteLink(items: VaultItem[], source: string, token: string): string | null {
-  const clean = token.split('|', 1)[0].split('#', 1)[0].trim()
-    .replace(/^<|>$/g, '').replaceAll('\\', '/').replace(/%20/gi, ' ');
-  if (!clean || clean.includes('://')) return null;
+export function resolveNoteLink(items: VaultItem[], source: string, token: string, kind: 'wiki' | 'markdown' = 'wiki'): string | null {
+  let clean: string;
+  try {
+    clean = decodeURIComponent(token.split('|', 1)[0].split(/[?#]/, 1)[0].trim()
+      .replace(/^<|>$/g, '').replaceAll('\\', '/'));
+  } catch { return null; }
+  if (!clean || clean.includes(':') || clean.startsWith('//')) return null;
   const parent = source.includes('/') ? source.slice(0, source.lastIndexOf('/')) : '';
   const normalize = (path: string): string | null => {
     const parts: string[] = [];
@@ -15,9 +18,9 @@ export function resolveNoteLink(items: VaultItem[], source: string, token: strin
     }
     return parts.join('/');
   };
-  const candidates = clean.startsWith('./') || clean.startsWith('../')
+  const candidates = clean.startsWith('/') ? [clean.slice(1)] : clean.startsWith('./') || clean.startsWith('../')
     ? [`${parent}/${clean}`]
-    : clean.includes('/') ? [clean, `${parent}/${clean}`] : [`${parent}/${clean}`, clean];
+    : kind === 'wiki' && clean.includes('/') ? [clean, `${parent}/${clean}`] : [`${parent}/${clean}`, clean];
   for (const candidate of candidates) {
     const path = normalize(candidate)?.toLocaleLowerCase();
     if (!path) continue;

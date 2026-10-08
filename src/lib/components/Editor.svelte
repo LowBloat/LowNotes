@@ -68,7 +68,7 @@
     onLocalEdit?: () => void;
     onOpenNote?: (path: string) => void;
     onOpenGraph?: () => void;
-    onOpenWikilink?: (title: string) => void;
+    onOpenWikilink?: (title: string, kind?: 'wiki' | 'markdown') => void;
     deviceName?: string;
     deviceId?: string;
   }>();
@@ -149,7 +149,7 @@
   }
 
   function handleFindShortcut(event: KeyboardEvent) {
-    if (event.isComposing || !editorRoot) return;
+    if (event.isComposing || !editorRoot || document.querySelector('[data-modal-backdrop]')) return;
     const modified = (event.ctrlKey || event.metaKey) && !event.altKey;
     const key = event.key.toLowerCase();
     if (modified && (key === 'f' || key === 'h')) {
@@ -295,7 +295,8 @@
     return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   }
 
-  function initEditor(content = initialContent, snapshot = crdtUpdateBase64) {
+  function initEditor(content = initialContent, snapshot = crdtUpdateBase64, noteId?: string | null) {
+    const editingVaultId = vaultId;
     if (!editorContainer) return;
     imagePaste?.destroy();
     imageUploads = [];
@@ -369,8 +370,17 @@
       if (origin !== 'remote') {
         onLocalEdit?.();
         const base64 = uint8ArrayToBase64(update);
-        crdtApplyClientUpdate(notePath, base64)
-          .catch((error) => { console.error('Failed to persist CRDT update:', error); saveStatus = 'error'; });
+        const editingDoc = yDoc;
+        crdtApplyClientUpdate(notePath, base64, noteId, editingVaultId)
+          .catch(async (error) => {
+            if (String(error) === 'errors.noteDeleted' && noteId && editingDoc) {
+              try {
+                await crdtApplyClientUpdate(notePath, uint8ArrayToBase64(Y.encodeStateAsUpdate(editingDoc)), noteId, editingVaultId, true);
+                return;
+              } catch (recoveryError) { error = recoveryError; }
+            }
+            console.error('Failed to persist CRDT update:', error); saveStatus = 'error';
+          });
       }
     });
 
@@ -452,9 +462,13 @@
     if (!link) return;
     const wikilink = link.getAttribute('data-wikilink');
     const href = link.getAttribute('href') ?? '';
-    if (wikilink !== null || /\.(?:md|markdown)(?:#[^?]*)?$/i.test(href)) {
+    if (wikilink !== null || (!/^[a-z][\w+.-]*:/i.test(href) && /\.(?:md|markdown)(?:[?#].*)?$/i.test(href))) {
       e.preventDefault();
-      onOpenWikilink?.(wikilink ?? href);
+      onOpenWikilink?.(wikilink ?? href, wikilink !== null ? 'wiki' : 'markdown');
+    } else if (/^https?:\/\//i.test(href)) {
+      e.preventDefault();
+      linkOpenFailed = false;
+      void openUrl(href).catch(() => { linkOpenFailed = true; });
     }
   }
 
@@ -525,10 +539,10 @@
 
   onMount(async () => {
     window.addEventListener('keydown', handleFindShortcut, true);
-    const stopCrdt = await listen<{ note_path: string; update: number[] }>(
+    const stopCrdt = await listen<{ note_path: string; update: number[]; vault_id?: string }>(
       'p2p:crdt-update',
       (event) => {
-        if (event.payload.note_path === notePath) {
+        if (event.payload.note_path === notePath && (!event.payload.vault_id || event.payload.vault_id === vaultId)) {
           const update = new Uint8Array(event.payload.update);
           if (yDoc) Y.applyUpdate(yDoc, update, 'remote');
           else pendingRemoteUpdates.push(update);
@@ -557,7 +571,7 @@
     try {
       const latest = await readNote(notePath);
       if (disposed) return;
-      initEditor(latest.content, latest.crdt_update_base64);
+      initEditor(latest.content, latest.crdt_update_base64, latest.note_id);
     } catch (error) {
       if (disposed) return;
       console.error('Failed to refresh note before editing:', error);

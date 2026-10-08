@@ -5,6 +5,12 @@ pub mod vault;
 pub mod commands;
 pub mod rag;
 pub mod links;
+pub mod link_operations;
+pub mod catalog;
+pub mod structural;
+pub mod catalog_sync;
+pub mod references;
+pub mod reference_sync;
 pub mod assistant;
 pub mod web_search;
 pub mod chat_history;
@@ -13,6 +19,13 @@ pub mod export_images;
 pub mod updates;
 pub mod image_upload;
 pub mod local_images;
+pub mod storage;
+pub mod note_transaction;
+pub mod creation;
+pub mod note_history;
+pub mod retention;
+pub mod history_commands;
+pub mod credentials;
 
 use std::sync::Arc;
 use parking_lot::{Mutex, RwLock};
@@ -87,6 +100,13 @@ pub fn run() {
         .manage(update_policy)
         .manage(app_state)
         .setup(move |app| {
+            let projection_app = app.handle().clone();
+            app.state::<AppState>().crdt.set_projection_observer(Arc::new(move |_root, path, state| {
+                use tauri::Emitter;
+                let _ = projection_app.emit("p2p:crdt-update", network::NetworkEventPayload::RemoteCrdtUpdate {
+                    note_path: path.into(), update: state.into(),
+                });
+            }));
             let mut s = settings.write();
             let mut saved_keys = false;
             if let Some(vault) = s.active_vault_mut() {
@@ -115,6 +135,7 @@ pub fn run() {
                 }
             }
             drop(s);
+            history_commands::start_retention(settings.clone(), app.state::<AppState>().crdt.clone());
 
             let open = MenuItem::with_id(app, "open", "Abrir LowNotes", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Sair do LowNotes", true, None::<&str>)?;
@@ -147,6 +168,15 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            commands::take_recovery_notices,
+            commands::retry_credentials,
+            history_commands::history_list,
+            history_commands::history_version,
+            history_commands::history_apply,
+            history_commands::history_trash_read,
+            history_commands::history_trash_restore,
+            history_commands::history_retention_save,
+            history_commands::history_cleanup,
             image_upload::upload_clipboard_image,
             image_upload::save_image_upload_settings,
             updates::get_update_policy,
