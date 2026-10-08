@@ -793,10 +793,11 @@ pub fn links_apply(
 ) -> Result<(), String> {
     let settings = state.settings.read();
     let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-    links::apply_operations(
+    links::apply_operations_with_manager(
         &vault.path,
         &operations,
         origin.unwrap_or(links::LinkOrigin::manual),
+        &state.crdt,
     )
     .map_err(|e| e.to_string())?;
     if let Some(net) = state.network.read().as_ref() { net.sync_now(); }

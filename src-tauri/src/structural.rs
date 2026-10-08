@@ -182,6 +182,7 @@ pub(crate) fn exclusive<T>(
         recover_inner(root, manager)?;
         crate::catalog_sync::recover_all(root, manager)?;
         crate::creation::recover_all(root, manager)?;
+        crate::links::recover_pending(root, manager)?;
     }
     action()
 }
@@ -389,6 +390,7 @@ fn rename_with_hook(
     recover_inner(root, manager)?;
     crate::catalog_sync::recover_all(root, manager)?;
     crate::creation::recover_all(root, manager)?;
+    crate::links::recover_pending(root, manager)?;
     if !valid_path(old) || !valid_path(new) || old == new {
         bail!("errors.pathEscape");
     }

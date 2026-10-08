@@ -833,7 +833,7 @@ async fn dial_sync(
         let Packet::Catalog(final_catalog) = recv_packet(&mut recv).await? else { bail!("errors.unexpectedPacketSync"); };
         changed + crate::catalog_sync::merge(&vault, &manager, &final_catalog, &endpoint.id().to_string())?
     } else { 0 };
-    let my_manifest = sync_manifest(&vault, images_supported, metadata_supported)?;
+    let my_manifest = sync_manifest(&vault, images_supported, metadata_supported, &manager)?;
     send_packet(&mut send, &Packet::Manifest(my_manifest.clone())).await?;
 
     let mut changed = changed_structure;
@@ -895,7 +895,8 @@ async fn serve_sync_core(
     metadata_supported: bool,
     structural_supported: bool,
 ) -> anyhow::Result<usize> {
-    let local_manifest = sync_manifest(vault, images_supported, metadata_supported)?;
+    let manager = app.map(|app| app.state::<AppState>().crdt.clone()).unwrap_or_default();
+    let local_manifest = sync_manifest(vault, images_supported, metadata_supported, &manager)?;
     if !images_supported && remote_manifest.keys().any(|path| crate::local_images::is_sync_image(path)) {
         bail!("errors.unexpectedPacketSync");
     }
@@ -948,7 +949,16 @@ async fn serve_sync_core(
     Ok(changed)
 }
 
-fn sync_manifest(root: &Path, images_supported: bool, metadata_supported: bool) -> anyhow::Result<Manifest> {
+fn sync_manifest(root: &Path, images_supported: bool, metadata_supported: bool, manager: &CrdtManager) -> anyhow::Result<Manifest> {
+    // Establish the same initial history at the sender before a legacy raw
+    // receipt can establish it at the receiver. Import external Markdown edits
+    // before comparing states; otherwise skipping Markdown can hide those edits.
+    crate::structural::exclusive(root, manager, || {
+        for item in vault::list_vault_items(root)?.into_iter().filter(|item| !item.is_dir) {
+            manager.get_or_create_doc(root, &item.path)?;
+        }
+        Ok(())
+    })?;
     let mut manifest = vault::build_manifest(root)?;
     if !images_supported { manifest.retain(|path, _| !crate::local_images::is_sync_image(path)); }
     if !metadata_supported { manifest.remove(crate::link_operations::RELATIVE_PATH); }
@@ -1164,8 +1174,16 @@ fn write_native_inner(vault_path: &Path, path: &str, content: &[u8], app: Option
         }
         Ok(WriteOutcome { changed: result.changed, conflict_created: result.conflict_path.is_some() })
     } else {
-        vault::save_note(vault_path, path, std::str::from_utf8(content)?)?;
-        Ok(WriteOutcome { changed: true, conflict_created: false })
+        let manager = app.map(|app| app.state::<AppState>().crdt.clone()).unwrap_or_default();
+        let result = manager.receive_note_text(vault_path, path, std::str::from_utf8(content)?)?;
+        if result.changed {
+            if let Some(app) = app {
+                let _ = app.emit("p2p:crdt-update", NetworkEventPayload::RemoteCrdtUpdate {
+                    note_path: path.into(), update: result.state,
+                });
+            }
+        }
+        Ok(WriteOutcome { changed: result.changed, conflict_created: false })
     }
 }
 
@@ -1255,7 +1273,51 @@ async fn recv_packet<T: DeserializeOwned>(stream: &mut iroh::endpoint::RecvStrea
 mod tests {
     use super::*;
     use std::fs;
-    use yrs::{Text, Transact, updates::decoder::Decode};
+    use yrs::{ReadTxn, Text, Transact, updates::decoder::Decode};
+
+    #[test]
+    fn legacy_markdown_receipt_keeps_existing_history_and_cannot_replay_old_text() {
+        let root = tempfile::tempdir().unwrap();
+        vault::save_note(root.path(), "note.md", "before").unwrap();
+        let manager = CrdtManager::new();
+        let before = manager.get_or_create_doc(root.path(), "note.md").unwrap();
+        assert!(write_sync_content(root.path(), "note.md", "received 🙂".as_bytes(), None).unwrap().changed);
+        let after = CrdtManager::new().get_or_create_doc(root.path(), "note.md").unwrap();
+        let previous = yrs::Doc::new();
+        previous.transact_mut().apply_update(yrs::Update::decode_v1(&before).unwrap()).unwrap();
+        let current = yrs::Doc::new();
+        current.transact_mut().apply_update(yrs::Update::decode_v1(&after).unwrap()).unwrap();
+        for (client, clock) in previous.transact().state_vector().iter() {
+            assert!(current.transact().state_vector().get(client) >= *clock);
+        }
+        current.transact_mut().apply_update(yrs::Update::decode_v1(&before).unwrap()).unwrap();
+        assert_eq!(current.get_or_insert_text("content").get_string(&current.transact()), "received 🙂");
+        // Retained live caches also import the durable received edit.
+        manager.apply_update(root.path(), "note.md", &after).unwrap();
+        assert_eq!(vault::read_note(root.path(), "note.md").unwrap(), "received 🙂");
+        assert!(!write_sync_content(root.path(), "note.md", "received 🙂".as_bytes(), None).unwrap().changed);
+    }
+
+    #[test]
+    fn initial_legacy_receipt_keeps_import_genesis_and_validates_before_writing() {
+        let received = tempfile::tempdir().unwrap();
+        let imported = tempfile::tempdir().unwrap();
+        assert!(write_sync_content(received.path(), "folder/note.md", b"same seed", None).unwrap().changed);
+        vault::save_note(imported.path(), "folder/note.md", "same seed").unwrap();
+        let received_state = CrdtManager::new().get_or_create_doc(received.path(), "folder/note.md").unwrap();
+        let imported_state = CrdtManager::new().get_or_create_doc(imported.path(), "folder/note.md").unwrap();
+        assert_eq!(received_state, imported_state);
+        let original = fs::read(received.path().join("folder/note.md")).unwrap();
+        let state_path = received.path().join(CrdtManager::state_relative_path("folder/note.md"));
+        let state_file = fs::read(&state_path).unwrap();
+        assert!(write_sync_content(received.path(), "folder/note.md", &[0xff], None).is_err());
+        assert!(write_sync_content(received.path(), "folder/note.md", &vec![b'a'; vault::MAX_NOTE_BYTES as usize + 1], None).is_err());
+        assert!(write_sync_content(received.path(), "settings.json", b"unknown packet", None).is_err());
+        assert!(write_sync_content(received.path(), "../outside.md", b"escape", None).is_err());
+        assert_eq!(fs::read(received.path().join("folder/note.md")).unwrap(), original);
+        assert_eq!(fs::read(state_path).unwrap(), state_file);
+        assert!(!received.path().join("settings.json").exists());
+    }
 
     fn temp_vault(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(

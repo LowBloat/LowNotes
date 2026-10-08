@@ -4,7 +4,7 @@ use std::{
     sync::OnceLock,
 };
 
-use anyhow::bail;
+use anyhow::{bail, Context};
 use serde::{Deserialize, Serialize};
 
 use crate::{link_operations::LinkChanges, vault};
@@ -406,12 +406,11 @@ fn validate_note(vault: &Path, relative: &str) -> anyhow::Result<()> {
 }
 
 /// Keep visible prose when unlinking a note from the graph.
-fn strip_links_to(vault: &Path, source: &str, content: &str, target: &str) -> Option<String> {
-    let items = vault::list_vault_items(vault).ok()?;
+fn strip_links_from_items(items: &[vault::VaultItem], source: &str, content: &str, target: &str) -> Option<String> {
     let mut replacements: Vec<(usize, usize, String)> = wikilink_spans(content)
         .into_iter()
         .filter(|(token, _, _)| {
-            resolve_from_items(&items, source, token).as_deref() == Some(target)
+            resolve_from_items(items, source, token).as_deref() == Some(target)
         })
         .map(|(token, start, end)| {
             let label = if let Some((_, alias)) = token.split_once('|') {
@@ -434,7 +433,10 @@ fn strip_links_to(vault: &Path, source: &str, content: &str, target: &str) -> Op
         markdown_link_spans(content)
             .into_iter()
             .filter(|(token, _, _, _)| {
-                resolve_from_items(&items, source, token).as_deref() == Some(target)
+                let token = if token.starts_with('/') || token.starts_with("../") || token.starts_with("./") {
+                    token.clone()
+                } else { format!("./{token}") };
+                resolve_from_items(items, source, &token).as_deref() == Some(target)
             })
             .map(|(_, start, end, label)| (start, end, label)),
     );
@@ -456,16 +458,108 @@ pub fn apply_operations(
     ops: &[LinkOperation],
     origin: LinkOrigin,
 ) -> anyhow::Result<()> {
+    apply_operations_with_manager(vault, ops, origin, &crate::crdt::CrdtManager::new())
+}
+
+const PENDING_LINKS: &str = ".lownotes/pending-links.json";
+const MAX_PENDING_BYTES: usize = 24 * 1024 * 1024;
+
+#[derive(Serialize, Deserialize)]
+struct PendingLinks {
+    version: u8,
+    history: LinkChanges,
+    removals: Vec<(String, String)>,
+}
+
+fn parse_pending(bytes: &[u8]) -> anyhow::Result<PendingLinks> {
+    if bytes.len() > MAX_PENDING_BYTES { bail!("link transaction exceeds local limit"); }
+    let pending: PendingLinks = serde_json::from_slice(bytes)?;
+    let valid_id = |id: &str| id.len() == 64 && id.bytes().all(|byte| byte.is_ascii_hexdigit());
+    if pending.version != 1 || pending.removals.len() > 10_000
+        || pending.removals.iter().any(|(source, target)| !valid_id(source) || !valid_id(target)) {
+        bail!("invalid pending link transaction");
+    }
+    pending.history.validate()?;
+    pending.history.encode()?;
+    Ok(pending)
+}
+
+/// Called by the structural coordinator after Markdown/CRDT and moves recover.
+pub(crate) fn recover_pending(vault: &Path, manager: &crate::crdt::CrdtManager) -> anyhow::Result<()> {
+    let file = vault.join(PENDING_LINKS);
+    for candidate in [&file, &crate::storage::backup_path(&file)] {
+        if fs::metadata(candidate).is_ok_and(|metadata| metadata.len() > MAX_PENDING_BYTES as u64) {
+            crate::storage::report_recovery(&file, false);
+            bail!("link transaction exceeds local limit");
+        }
+    }
+    let Some(bytes) = crate::storage::read_validated(&file, |bytes| parse_pending(bytes).is_ok())? else { return Ok(()); };
+    finish_pending(vault, &parse_pending(&bytes)?, manager, &|_| Ok(()))?;
+    crate::storage::report_recovery(&file, true);
+    Ok(())
+}
+
+fn finish_pending(vault: &Path, pending: &PendingLinks, manager: &crate::crdt::CrdtManager, hook: &impl Fn(u8) -> anyhow::Result<()>) -> anyhow::Result<()> {
+    let entries = crate::catalog::load(vault)?.resolve()?;
+    {
+        let _guard = changes_lock();
+        let (mut store, history) = read_changes(vault)?;
+        let merged = history.merged(&pending.history)?;
+        for (source, target) in &pending.removals {
+            if let (Some(source), Some(target)) = (entries.get(source), entries.get(target)) {
+                store.links.retain(|edge| edge.origin != LinkOrigin::wikilink || edge.source != source.path || edge.target != target.path);
+            }
+        }
+        persist_changes(vault, &store, &merged)?;
+    }
+    hook(1)?;
+    // Re-read the current text rather than replaying an old whole-note snapshot.
+    // This retains external edits and follows both endpoints' stable identities.
+    let items = vault::list_vault_items(vault)?;
+    for (source, target) in &pending.removals {
+        let source = entries.get(source).context("pending link source identity is unavailable")?;
+        let target = entries.get(target).context("pending link target identity is unavailable")?;
+        if source.deleted() || target.deleted() { continue; }
+        let content = vault::read_note(vault, &source.path)?;
+        if let Some(updated) = strip_links_from_items(&items, &source.path, &content, &target.path) {
+            manager.replace_note_text_with_hook(vault, &source.path, &updated, |at| hook(at + 2))?;
+        }
+        reconcile_wikilinks(vault, &source.path, &vault::read_note(vault, &source.path)?)?;
+        manager.notify_projection(vault, &source.path, &manager.get_or_create_doc(vault, &source.path)?);
+        hook(5)?;
+    }
+    hook(6)?;
+    let file = vault.join(PENDING_LINKS);
+    crate::storage::remove_file(&crate::storage::backup_path(&file))?;
+    hook(7)?;
+    crate::storage::remove_file(&file)?;
+    Ok(())
+}
+
+pub(crate) fn apply_operations_with_manager(vault: &Path, ops: &[LinkOperation], origin: LinkOrigin, manager: &crate::crdt::CrdtManager) -> anyhow::Result<()> {
+    apply_with_hook(vault, ops, origin, manager, |_| Ok(()))
+}
+
+fn apply_with_hook(vault: &Path, ops: &[LinkOperation], origin: LinkOrigin, manager: &crate::crdt::CrdtManager, hook: impl Fn(u8) -> anyhow::Result<()>) -> anyhow::Result<()> {
+    crate::structural::exclusive(vault, manager, || apply_inner(vault, ops, origin, manager, &hook))
+}
+
+fn apply_inner(vault: &Path, ops: &[LinkOperation], origin: LinkOrigin, manager: &crate::crdt::CrdtManager, hook: &impl Fn(u8) -> anyhow::Result<()>) -> anyhow::Result<()> {
+    if ops.len() > 10_000 { bail!("link transaction exceeds local limit"); }
     for op in ops {
         validate_note(vault, &op.source)?;
         validate_note(vault, &op.target)?;
     }
 
+    // Add-only batches remain usable with older metadata-only peers, which do
+    // not exchange a structural catalog. Text removals require stable identities.
+    let catalog = if ops.iter().any(|op| op.action == LinkAction::remove) {
+        crate::catalog_sync::prepare(vault, manager, "links")?
+    } else { crate::catalog::load(vault)? };
+    let entries = catalog.resolve()?;
     let mut wikilink_removals: Vec<(String, String)> = Vec::new();
     let guard = changes_lock();
     let (mut store, mut history) = read_changes(vault)?;
-    let catalog = crate::catalog::load(vault)?;
-    let entries = catalog.resolve()?;
     for op in ops {
         match op.action {
             LinkAction::add => {
@@ -488,37 +582,172 @@ pub fn apply_operations(
                 store
                     .links
                     .retain(|e| !(e.source == op.source && e.target == op.target));
-                wikilink_removals.push((op.source.clone(), op.target.clone()));
+                let source = entries.values().find(|entry| !entry.deleted() && entry.path == op.source).context("link source identity is unavailable")?;
+                let target = entries.values().find(|entry| !entry.deleted() && entry.path == op.target).context("link target identity is unavailable")?;
+                wikilink_removals.push((source.id.clone(), target.id.clone()));
             }
         }
     }
 
     history.bind_current(&catalog)?;
-    persist_changes(vault, &store, &history)?;
-    drop(guard);
-
-    for (source, target) in &wikilink_removals {
-        let Ok(content) = vault::read_note(vault, source) else {
-            continue;
-        };
-        let Some(updated) = strip_links_to(vault, source, &content, target) else {
-            continue;
-        };
-        if let Err(e) = vault::save_note(vault, source, &updated) {
-            eprintln!("apply_operations: failed to strip wikilink in {source}: {e}");
-            continue;
-        }
-        if let Err(e) = reconcile_wikilinks(vault, source, &updated) {
-            eprintln!("apply_operations: reconcile failed for {source}: {e}");
-        }
+    if wikilink_removals.is_empty() {
+        return persist_changes(vault, &store, &history);
     }
-
-    Ok(())
+    wikilink_removals.sort(); wikilink_removals.dedup();
+    let pending = PendingLinks { version: 1, history, removals: wikilink_removals };
+    let bytes = serde_json::to_vec(&pending)?;
+    crate::storage::write_validated(&vault.join(PENDING_LINKS), &bytes, |bytes| parse_pending(bytes).is_ok())?;
+    drop(guard);
+    hook(0)?;
+    finish_pending(vault, &pending, manager, hook)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crdt::CrdtManager;
+    use yrs::{updates::decoder::Decode, Doc, GetString, ReadTxn, Text, Transact, Update};
+
+    fn decode_doc(state: &[u8]) -> Doc {
+        let doc = Doc::new();
+        doc.transact_mut().apply_update(Update::decode_v1(state).unwrap()).unwrap();
+        doc
+    }
+
+    fn remove_b() -> Vec<LinkOperation> {
+        vec![LinkOperation { source: "a.md".into(), target: "b.md".into(), action: LinkAction::remove }]
+    }
+
+    fn unlink_fixture(root: &Path, manager: &CrdtManager) -> Vec<u8> {
+        fs::write(root.join("a.md"), "# A\nSee [[B|label]] and [target](b.md).\n").unwrap();
+        fs::write(root.join("b.md"), "# B\n").unwrap();
+        crate::catalog_sync::prepare(root, manager, "local").unwrap();
+        manager.get_or_create_doc(root, "a.md").unwrap()
+    }
+
+    #[test]
+    fn unlink_updates_live_crdt_preserves_history_and_unseen_peer_edits() {
+        let root = tempfile::tempdir().unwrap();
+        let manager = CrdtManager::new();
+        let before = unlink_fixture(root.path(), &manager);
+        let remote = decode_doc(&before);
+        remote.get_or_insert_text("content").push(&mut remote.transact_mut(), "Remote addition 🙂\n");
+        let observed = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let notifications = observed.clone();
+        manager.set_projection_observer(std::sync::Arc::new(move |_, path, state| {
+            notifications.lock().push((path.to_string(), state.to_vec()));
+        }));
+        apply_operations_with_manager(root.path(), &remove_b(), LinkOrigin::manual, &manager).unwrap();
+        let after = manager.get_or_create_doc(root.path(), "a.md").unwrap();
+        let doc = decode_doc(&after);
+        assert_eq!(doc.get_or_insert_text("content").get_string(&doc.transact()), "# A\nSee label and target.\n");
+        for (client, clock) in decode_doc(&before).transact().state_vector().iter() {
+            assert!(doc.transact().state_vector().get(client) >= *clock);
+        }
+        assert_eq!(observed.lock().last().unwrap().0, "a.md");
+        assert_eq!(observed.lock().last().unwrap().1, after);
+        assert!(!graph_links(root.path()).unwrap().iter().any(|edge| edge.target == "b.md"));
+        let restarted = CrdtManager::new();
+        restarted.apply_update(root.path(), "a.md", &CrdtManager::encode_state(&remote)).unwrap();
+        let text = vault::read_note(root.path(), "a.md").unwrap();
+        assert!(text.contains("See label and target."));
+        assert!(text.contains("Remote addition 🙂"));
+        assert!(!text.contains("[[B"));
+        assert!(!crate::note_history::list(root.path(), &crate::catalog::load(root.path()).unwrap().resolve().unwrap().values().find(|entry| entry.path == "a.md").unwrap().id).unwrap().is_empty());
+        assert!(!root.path().join(PENDING_LINKS).exists());
+    }
+
+    #[test]
+    fn unlink_recovers_after_actual_process_exit_at_each_commit_boundary() {
+        for phase in 0..=7 {
+            let root = tempfile::tempdir().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "links::tests::unlink_crash_worker", "--ignored", "--nocapture"])
+                .env("LOWNOTES_UNLINK_ROOT", root.path())
+                .env("LOWNOTES_UNLINK_PHASE", phase.to_string()).output().unwrap();
+            assert_eq!(output.status.code(), Some(86), "phase={phase}: {}", String::from_utf8_lossy(&output.stderr));
+            // Normal vault opening must recover without a special repair command.
+            vault::list_vault_items(root.path()).unwrap();
+            let manager = CrdtManager::new();
+            let after = manager.get_or_create_doc(root.path(), "a.md").unwrap();
+            let doc = decode_doc(&after);
+            assert_eq!(vault::read_note(root.path(), "a.md").unwrap(), "# A\nSee label and target.\n");
+            assert_eq!(doc.get_or_insert_text("content").get_string(&doc.transact()), vault::read_note(root.path(), "a.md").unwrap());
+            for (client, clock) in decode_doc(&fs::read(root.path().join(".base.bin")).unwrap()).transact().state_vector().iter() {
+                assert!(doc.transact().state_vector().get(client) >= *clock);
+            }
+            assert!(!graph_links(root.path()).unwrap().iter().any(|edge| edge.target == "b.md"));
+            assert!(!root.path().join(PENDING_LINKS).exists());
+            assert!(!crate::storage::backup_path(&root.path().join(PENDING_LINKS)).exists());
+            vault::list_vault_items(root.path()).unwrap();
+            assert_eq!(manager.get_or_create_doc(root.path(), "a.md").unwrap(), after);
+        }
+    }
+
+    #[test]
+    #[ignore = "isolated worker invoked by unlink recovery test"]
+    fn unlink_crash_worker() {
+        let root = PathBuf::from(std::env::var_os("LOWNOTES_UNLINK_ROOT").unwrap());
+        let phase: u8 = std::env::var("LOWNOTES_UNLINK_PHASE").unwrap().parse().unwrap();
+        let manager = CrdtManager::new();
+        fs::write(root.join(".base.bin"), unlink_fixture(&root, &manager)).unwrap();
+        apply_with_hook(&root, &remove_b(), LinkOrigin::manual, &manager, |at| {
+            if at == phase { std::process::exit(86); } Ok(())
+        }).unwrap();
+        panic!("unlink crash point was not reached");
+    }
+
+    #[test]
+    fn interrupted_unlink_keeps_external_text_and_reports_a_blocked_write() {
+        let root = tempfile::tempdir().unwrap();
+        let manager = CrdtManager::new();
+        unlink_fixture(root.path(), &manager);
+        let error = apply_with_hook(root.path(), &remove_b(), LinkOrigin::manual, &manager, |at| {
+            if at == 1 {
+                fs::rename(root.path().join("a.md"), root.path().join("saved-original.md"))?;
+                fs::create_dir(root.path().join("a.md"))?;
+            }
+            Ok(())
+        }).unwrap_err();
+        assert!(!error.to_string().is_empty());
+        assert!(root.path().join(PENDING_LINKS).exists());
+        assert!(fs::read_to_string(root.path().join("saved-original.md")).unwrap().contains("[[B"));
+        fs::remove_dir(root.path().join("a.md")).unwrap();
+        fs::rename(root.path().join("saved-original.md"), root.path().join("a.md")).unwrap();
+        fs::write(root.path().join("a.md"), "# A\nSee [[B|label]] and [target](b.md).\nExternal edit\n").unwrap();
+        // External tools may preserve old timestamps; recover directly from the
+        // current Markdown before importing its CRDT projection.
+        filetime::set_file_mtime(root.path().join("a.md"), filetime::FileTime::from_unix_time(1, 0)).unwrap();
+        vault::list_vault_items(root.path()).unwrap();
+        assert_eq!(vault::read_note(root.path(), "a.md").unwrap(), "# A\nSee label and target.\nExternal edit\n");
+        assert!(!root.path().join(PENDING_LINKS).exists());
+    }
+
+    #[test]
+    fn damaged_unlink_intent_recovers_a_valid_backup_and_refuses_silent_defaults() {
+        for has_backup in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let manager = CrdtManager::new();
+            unlink_fixture(root.path(), &manager);
+            assert!(apply_with_hook(root.path(), &remove_b(), LinkOrigin::manual, &manager, |at| {
+                if at == 0 { bail!("interrupted before metadata"); } Ok(())
+            }).is_err());
+            let pending = root.path().join(PENDING_LINKS);
+            if has_backup { fs::copy(&pending, crate::storage::backup_path(&pending)).unwrap(); }
+            fs::write(&pending, b"damaged pending removal").unwrap();
+            if has_backup {
+                vault::list_vault_items(root.path()).unwrap();
+                assert_eq!(vault::read_note(root.path(), "a.md").unwrap(), "# A\nSee label and target.\n");
+                assert!(!pending.exists());
+                assert!(fs::read_dir(root.path().join(".lownotes")).unwrap().any(|entry| entry.unwrap().file_name().to_string_lossy().contains("pending-links.json.corrupt-")));
+            } else {
+                assert!(vault::list_vault_items(root.path()).is_err());
+                assert_eq!(fs::read(&pending).unwrap(), b"damaged pending removal");
+                assert!(vault::read_note(root.path(), "a.md").unwrap().contains("[[B|label]]"));
+                assert!(apply_operations(root.path(), &[], LinkOrigin::manual).is_err());
+            }
+        }
+    }
 
     #[test]
     fn concurrent_local_map_actions_keep_every_link_and_journal_survives_a_stale_projection() {

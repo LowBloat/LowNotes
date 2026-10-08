@@ -34,6 +34,11 @@ impl CrdtManager {
         *self.projection_observer.write() = Some(observer);
     }
 
+    pub(crate) fn notify_projection(&self, root: &Path, path: &str, state: &[u8]) {
+        let observer = self.projection_observer.read().clone();
+        if let Some(observer) = observer { observer(root, path, state); }
+    }
+
     pub fn state_relative_path(path: &str) -> String {
         format!("{STATE_DIR}/{}.bin", blake3::hash(path.as_bytes()).to_hex())
     }
@@ -135,9 +140,25 @@ impl CrdtManager {
             Err(_) if !target.exists() => String::new(),
             Err(error) => return Err(error),
         };
-        if !docs.contains_key(&target) {
+        let was_cached = docs.contains_key(&target);
+        if !was_cached {
             let doc = Self::load_doc(vault_path, path, &file_content)?;
             docs.insert(target.clone(), doc);
+        }
+        // A recovered transaction or another native writer may have advanced
+        // disk history while this manager retained an older document. Import
+        // that history before interpreting the Markdown as an external edit.
+        if was_cached {
+            if let Some(bytes) = Self::read_state_file(vault_path, &Self::state_relative_path(path))? {
+                let saved = Self::decode_file(&Self::state_relative_path(path), &bytes)?.1;
+                let cached = Self::encode_state(docs.get(&target).expect("document inserted"));
+                if cached != saved {
+                    let candidate = Doc::new();
+                    candidate.transact_mut().apply_update(Update::decode_v1(&cached)?)?;
+                    candidate.transact_mut().apply_update(Update::decode_v1(saved)?)?;
+                    docs.insert(target.clone(), candidate);
+                }
+            }
         }
         let doc = docs.get(&target).expect("document inserted");
         let text = doc.get_or_insert_text("content");
@@ -226,23 +247,50 @@ impl CrdtManager {
     /// Explicit native saves retain the existing collaborative history and
     /// participate in the same durable Markdown/CRDT transaction as typing.
     pub fn replace_note_text(&self, root: &Path, path: &str, content: &str) -> anyhow::Result<AppliedUpdate> {
-        crate::structural::exclusive(root, self, || self.replace_note_inner(root, path, content))
+        self.replace_note_text_with_hook(root, path, content, |_| Ok(()))
     }
 
-    fn replace_note_inner(&self, root: &Path, path: &str, content: &str) -> anyhow::Result<AppliedUpdate> {
-        vault::read_note(root, path)?;
+    pub(crate) fn replace_note_text_with_hook(&self, root: &Path, path: &str, content: &str, hook: impl Fn(u8) -> anyhow::Result<()>) -> anyhow::Result<AppliedUpdate> {
+        crate::structural::exclusive(root, self, || self.replace_note_inner(root, path, content, false, &hook))
+    }
+
+    /// Legacy Markdown packets still commit text and collaborative state together.
+    /// A first receipt uses the same deterministic seed as importing a local file.
+    pub(crate) fn receive_note_text(&self, root: &Path, path: &str, content: &str) -> anyhow::Result<AppliedUpdate> {
+        crate::structural::exclusive(root, self, || self.replace_note_inner(root, path, content, true, &|_| Ok(())))
+    }
+
+    fn replace_note_inner(&self, root: &Path, path: &str, content: &str, allow_create: bool, hook: &impl Fn(u8) -> anyhow::Result<()>) -> anyhow::Result<AppliedUpdate> {
         if content.len() as u64 > vault::MAX_NOTE_BYTES { bail!("errors.noteTooLarge"); }
-        let mut docs = self.docs.lock();
+        if !vault::is_markdown(Path::new(path)) { bail!("CRDT path must be a Markdown note"); }
         let target = vault::safe_join(root, path)?;
-        let current = Self::ensure_doc(&mut docs, root, path)?;
-        let before = Self::encode_state(current);
+        let missing = !target.exists();
+        if !allow_create || !missing { vault::read_note(root, path)?; }
+        let mut docs = self.docs.lock();
+        let before = if missing {
+            if let Some(bytes) = Self::read_state_file(root, &Self::state_relative_path(path))? {
+                Self::decode_file(&Self::state_relative_path(path), &bytes)?.1.to_vec()
+            } else {
+                let mut seed = blake3::Hasher::new();
+                seed.update(path.as_bytes()); seed.update(&[0]); seed.update(content.as_bytes());
+                let client_id = u64::from_le_bytes(seed.finalize().as_bytes()[..8].try_into()?) & ((1u64 << 53) - 1);
+                let doc = Doc::with_client_id(client_id);
+                if !content.is_empty() { doc.get_or_insert_text("content").push(&mut doc.transact_mut(), content); }
+                Self::encode_state(&doc)
+            }
+        } else { Self::encode_state(Self::ensure_doc(&mut docs, root, path)?) };
         let candidate = Doc::new();
         candidate.transact_mut().apply_update(Update::decode_v1(&before)?)?;
-        let changed = Self::replace_text(&candidate, content);
+        let changed = Self::replace_text(&candidate, content) || missing;
         if !changed { return Ok(AppliedUpdate { state: before, changed: false, conflict_path: None }); }
         let state = Self::encode_state(&candidate);
-        crate::note_transaction::commit(root, path, content, &state)?;
+        if let Err(error) = crate::note_transaction::commit_with_hook(root, path, content, &state, hook) {
+            docs.remove(&target);
+            return Err(error);
+        }
         docs.insert(target, candidate);
+        drop(docs);
+        if missing { crate::catalog_sync::register_generated(root, path)?; }
         if let Err(error) = links::reconcile_wikilinks(root, path, content) { eprintln!("reconcile_wikilinks failed for {path}: {error}"); }
         Ok(AppliedUpdate { state, changed: true, conflict_path: None })
     }
@@ -526,6 +574,68 @@ mod tests {
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn legacy_receipt_recovers_creation_and_edit_after_real_process_exits() {
+        for kind in ["new", "existing"] {
+            for phase in 0..=2 {
+                let root = tempfile::tempdir().unwrap();
+                let output = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", "crdt::tests::receipt_crash_worker", "--ignored", "--nocapture"])
+                    .env("LOWNOTES_RECEIPT_ROOT", root.path())
+                    .env("LOWNOTES_RECEIPT_KIND", kind)
+                    .env("LOWNOTES_RECEIPT_PHASE", phase.to_string()).output().unwrap();
+                assert_eq!(output.status.code(), Some(86), "{kind}/{phase}: {}", String::from_utf8_lossy(&output.stderr));
+                vault::list_vault_items(root.path()).unwrap();
+                let manager = CrdtManager::new();
+                let state = manager.get_or_create_doc(root.path(), "note.md").unwrap();
+                let doc = Doc::new();
+                doc.transact_mut().apply_update(Update::decode_v1(&state).unwrap()).unwrap();
+                assert_eq!(doc.get_or_insert_text("content").get_string(&doc.transact()), "received 🙂");
+                assert_eq!(vault::read_note(root.path(), "note.md").unwrap(), "received 🙂");
+                if kind == "existing" {
+                    let old = fs::read(root.path().join(".base.bin")).unwrap();
+                    doc.transact_mut().apply_update(Update::decode_v1(&old).unwrap()).unwrap();
+                    assert_eq!(doc.get_or_insert_text("content").get_string(&doc.transact()), "received 🙂");
+                }
+                assert!(!vault::build_manifest(root.path()).unwrap().keys().any(|path| path.contains("pending")));
+            }
+        }
+    }
+
+    #[test]
+    fn native_edit_keeps_recovered_metadata_even_when_markdown_did_not_change() {
+        use yrs::Map;
+        let root = tempfile::tempdir().unwrap();
+        vault::save_note(root.path(), "note.md", "same text").unwrap();
+        let manager = CrdtManager::new();
+        let initial = manager.get_or_create_doc(root.path(), "note.md").unwrap();
+        let recovered = Doc::new();
+        recovered.transact_mut().apply_update(Update::decode_v1(&initial).unwrap()).unwrap();
+        recovered.get_or_insert_map("recovered-metadata").insert(&mut recovered.transact_mut(), "binding", "retained");
+        crate::note_transaction::commit(root.path(), "note.md", "same text", &CrdtManager::encode_state(&recovered)).unwrap();
+        let result = manager.replace_note_text(root.path(), "note.md", "same text plus local edit").unwrap();
+        let current = Doc::new();
+        current.transact_mut().apply_update(Update::decode_v1(&result.state).unwrap()).unwrap();
+        assert!(current.get_or_insert_map("recovered-metadata").get(&current.transact(), "binding").is_some());
+        assert_eq!(current.get_or_insert_text("content").get_string(&current.transact()), "same text plus local edit");
+    }
+
+    #[test]
+    #[ignore = "isolated worker invoked by legacy receipt recovery test"]
+    fn receipt_crash_worker() {
+        let root = PathBuf::from(std::env::var_os("LOWNOTES_RECEIPT_ROOT").unwrap());
+        let phase: u8 = std::env::var("LOWNOTES_RECEIPT_PHASE").unwrap().parse().unwrap();
+        let manager = CrdtManager::new();
+        if std::env::var("LOWNOTES_RECEIPT_KIND").unwrap() == "existing" {
+            vault::save_note(&root, "note.md", "before").unwrap();
+            fs::write(root.join(".base.bin"), manager.get_or_create_doc(&root, "note.md").unwrap()).unwrap();
+        }
+        crate::structural::exclusive(&root, &manager, || manager.replace_note_inner(&root, "note.md", "received 🙂", true, &|at| {
+            if at == phase { std::process::exit(86); } Ok(())
+        })).unwrap();
+        panic!("receipt crash point was not reached");
     }
 
     #[test]
