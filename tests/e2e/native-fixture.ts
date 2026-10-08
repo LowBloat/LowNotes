@@ -16,7 +16,9 @@ export async function openVault(page: Page, options: {
   text.insert(0, source);
   const errors: string[] = [];
   const openedUrls: string[] = [];
-  const saves: unknown[] = [];
+  const saves: Array<Record<string, any>> = [];
+  let deleted = false;
+  const recovered: string[] = [];
   let notices = options.notices ?? [];
   let history = { version: 1, activeConversationId: null, conversations: [], memory: '' };
   const vault = { id: 'fixture', name: 'Test vault', path: 'fixture', peers: [] };
@@ -35,8 +37,16 @@ export async function openVault(page: Page, options: {
     switch (command) {
       case 'get_app_state': return { settings, active_vault: vault, items: [item], pair_info: null };
       case 'list_notes': return [item];
-      case 'read_note': return { content: text.toString(), crdt_update_base64: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64url') };
-      case 'crdt_apply_client_update': saves.push(args); Y.applyUpdate(doc, Buffer.from(args.updateBase64, 'base64url')); return null;
+      case 'read_note': return { content: text.toString(), crdt_update_base64: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64url'), note_id: 'fixture-note-id' };
+      case 'crdt_apply_client_update': {
+        saves.push(args);
+        if (deleted) {
+          if (!args.recoveryUpdate) throw 'errors.noteDeleted';
+          const copy = new Y.Doc(); Y.applyUpdate(copy, Buffer.from(args.updateBase64, 'base64url'));
+          recovered.push(copy.getText('content').toString()); copy.destroy();
+        } else Y.applyUpdate(doc, Buffer.from(args.updateBase64, 'base64url'));
+        return null;
+      }
       case 'save_view_mode': settings.view_mode = args.viewMode; return null;
       case 'save_theme': settings.theme = args.theme; return null;
       case 'chat_history_get': return history;
@@ -74,7 +84,8 @@ export async function openVault(page: Page, options: {
   await page.goto('/');
   await expect(page.locator('.cm-content')).toBeVisible();
   return {
-    source, errors, openedUrls, saves,
+    source, errors, openedUrls, saves, recovered,
+    deleteWhileEditing() { deleted = true; },
     content: () => text.toString(),
     async remoteAppend(content: string) {
       text.insert(text.length, content);

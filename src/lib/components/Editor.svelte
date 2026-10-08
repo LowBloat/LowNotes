@@ -295,7 +295,8 @@
     return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   }
 
-  function initEditor(content = initialContent, snapshot = crdtUpdateBase64) {
+  function initEditor(content = initialContent, snapshot = crdtUpdateBase64, noteId?: string | null) {
+    const editingVaultId = vaultId;
     if (!editorContainer) return;
     imagePaste?.destroy();
     imageUploads = [];
@@ -369,8 +370,17 @@
       if (origin !== 'remote') {
         onLocalEdit?.();
         const base64 = uint8ArrayToBase64(update);
-        crdtApplyClientUpdate(notePath, base64)
-          .catch((error) => { console.error('Failed to persist CRDT update:', error); saveStatus = 'error'; });
+        const editingDoc = yDoc;
+        crdtApplyClientUpdate(notePath, base64, noteId, editingVaultId)
+          .catch(async (error) => {
+            if (String(error) === 'errors.noteDeleted' && noteId && editingDoc) {
+              try {
+                await crdtApplyClientUpdate(notePath, uint8ArrayToBase64(Y.encodeStateAsUpdate(editingDoc)), noteId, editingVaultId, true);
+                return;
+              } catch (recoveryError) { error = recoveryError; }
+            }
+            console.error('Failed to persist CRDT update:', error); saveStatus = 'error';
+          });
       }
     });
 
@@ -557,7 +567,7 @@
     try {
       const latest = await readNote(notePath);
       if (disposed) return;
-      initEditor(latest.content, latest.crdt_update_base64);
+      initEditor(latest.content, latest.crdt_update_base64, latest.note_id);
     } catch (error) {
       if (disposed) return;
       console.error('Failed to refresh note before editing:', error);

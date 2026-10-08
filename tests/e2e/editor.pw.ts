@@ -2,6 +2,18 @@ import { test, expect } from '@playwright/test';
 import { openVault } from './native-fixture';
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control';
 
+test('a stale editor sends its full recovery snapshot with the original note and vault identities', async ({ page }) => {
+  const vault = await openVault(page, { source: '# Original\n\ntext\n' });
+  try {
+    vault.deleteWhileEditing();
+    await page.locator('.cm-content').focus(); await page.keyboard.press(`${MOD}+End`); await page.keyboard.type('late edit');
+    await expect.poll(() => vault.recovered.at(-1)).toContain('late edit');
+    expect(vault.content()).toBe(vault.source);
+    expect(vault.saves.some(save => save.noteId === 'fixture-note-id' && save.vaultId === 'fixture' && save.recoveryUpdate === true)).toBe(true);
+    expect(vault.errors).toEqual([]);
+  } finally { vault.destroy(); }
+});
+
 test('task toggles persist, synchronize, and undo without undoing remote text', async ({ page }) => {
   const vault = await openVault(page, { source: '# Tasks\n\n- [ ] First task\n- [ ] Second task\n' });
   try {

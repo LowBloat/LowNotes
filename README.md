@@ -96,6 +96,10 @@ flowchart LR
 
 **Markdown stays a real file.** Notes live in the folder you chose and can be opened in other editors. The history needed for collaboration lives in `.lownotes/crdt/`; links added outside the text have an immutable add/remove history in `.lownotes/link-operations.json` and a readable projection in `.lownotes/links.json`. When backing up or moving a vault between computers, take the `.lownotes/` folder along with the `.md` files.
 
+**Deletes and moves have stable identities.** The structural history in `.lownotes/catalog.json` records creation, movement, deletion and explicit restoration. Current peers merge and apply this catalog before comparing file manifests. A missing path is therefore distinguished from a deleted note, and an update to an old name follows the original identity through a move. Creating a note at a deleted filename gives it a new identity; a delayed update to the old note cannot edit the replacement. Concurrent edits to deleted notes are preserved as review copies. Device acknowledgements are retained with the operation history.
+
+**Removed data stays recoverable locally.** Structural transactions stage every affected source before placing destinations, preserving collaborative history and files inside moved folders. A restart completes pending transactions; divergent external files remain available for review. Removed files and their original collaborative states are retained in `.lownotes/trash/`, and undoing a deletion records an explicit restore. These archives and `.lownotes/catalog-paths.json` describe local storage and are not exchanged as ordinary files. The catalog, active notes, link operations and immutable image blobs carry synchronization between devices.
+
 **Map changes merge between devices.** Distinct manual or assistant links created offline survive reconciliation regardless of file timestamps. Removing a relation records the additions already seen, so receiving a stale list cannot bring them back. A genuinely concurrent new addition remains available; a later intentional re-add uses a fresh identity. The operation history retains the origin of every addition. Both devices need this operation-capable version for full map reconciliation; older versions can exchange ordinary notes, images when supported, and legacy link lists, but cannot express durable link removals or intentional re-adds after those removals.
 
 **Live and offline edits follow different paths.** With two connected apps, editor changes are sent as CRDT updates and appear on the other device. With paired peers, a full reconciliation happens when the app opens; another periodic round recovers lost messages or disconnected periods.
@@ -114,7 +118,7 @@ flowchart LR
 
 ## P2P pairing
 
-Use the same up-to-date version on both computers to get the complete sync behavior. The current sync protocol is `lownotes/sync/4`, with `/3` fallback for notes/images and `/2` fallback for ordinary notes. Pairing codes remain `LOWNOTES2_...`; their prefix does not identify the negotiated sync protocol.
+Use the same up-to-date version on both computers to get the complete sync behavior. The current sync protocol is `lownotes/sync/5`, with `/4` fallback for map operations, `/3` for notes/images and `/2` for ordinary notes. Only `/5` peers exchange structural identities and durable deletions; older clients can retain obsolete paths until updated. LowNotes preserves ambiguous legacy changes for review instead of using them to overwrite a new note at a reused filename. Pairing codes remain `LOWNOTES2_...`; their prefix does not identify the negotiated sync protocol.
 
 1. Open LowNotes on both computers and select a vault on each.
 2. On the first one, open **Manage Connections → Share Code** and copy the `LOWNOTES2_...` code.

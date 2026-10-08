@@ -62,6 +62,8 @@ pub fn safe_join(root: &Path, relative_wire: &str) -> anyhow::Result<PathBuf> {
 
 pub fn list_vault_items(root: &Path) -> anyhow::Result<Vec<VaultItem>> {
     crate::note_transaction::recover_all(root)?;
+    crate::structural::recover_all(root, &crate::crdt::CrdtManager::new())?;
+    crate::catalog_sync::recover_all(root, &crate::crdt::CrdtManager::new())?;
     if !root.is_dir() {
         return Ok(Vec::new());
     }
@@ -193,6 +195,9 @@ pub fn create_note(
         .map(|s| s.to_string())
         .unwrap_or_else(|| default_note_content(lang));
     crate::storage::write_text(&target, &default_content)?;
+    if crate::catalog::file_path(root).exists() {
+        crate::catalog::transact(root, |catalog| { catalog.ensure_path(&clean_relative, false, "local")?; Ok(()) })?;
+    }
     Ok(clean_relative)
 }
 
@@ -209,24 +214,14 @@ fn default_note_content(lang: &str) -> String {
 pub fn create_folder(root: &Path, relative: &str) -> anyhow::Result<()> {
     let target = safe_join(root, relative)?;
     fs::create_dir_all(&target)?;
+    if crate::catalog::file_path(root).exists() {
+        crate::catalog::transact(root, |catalog| { catalog.ensure_path(relative, true, "local")?; Ok(()) })?;
+    }
     Ok(())
 }
 
 pub fn rename_item(root: &Path, old_relative: &str, new_relative: &str) -> anyhow::Result<()> {
-    crate::note_transaction::recover_all(root)?;
-    let source = safe_join(root, old_relative)?;
-    let destination = safe_join(root, new_relative)?;
-    if !source.exists() {
-        bail!("errors.sourceNotFound");
-    }
-    if destination.exists() {
-        bail!("errors.targetExists");
-    }
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::rename(source, destination)?;
-    Ok(())
+    crate::structural::rename(root, old_relative, new_relative, &crate::crdt::CrdtManager::new(), "local")
 }
 
 pub fn delete_item(root: &Path, relative: &str) -> anyhow::Result<()> {

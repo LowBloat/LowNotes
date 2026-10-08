@@ -41,7 +41,7 @@ impl CrdtManager {
         doc.transact().encode_diff_v1(&StateVector::default())
     }
 
-    fn decode_file<'a>(relative: &str, bytes: &'a [u8]) -> anyhow::Result<(String, &'a [u8])> {
+    pub(crate) fn decode_file<'a>(relative: &str, bytes: &'a [u8]) -> anyhow::Result<(String, &'a [u8])> {
         if bytes.len() < 4 {
             bail!("invalid CRDT state header");
         }
@@ -163,6 +163,7 @@ impl CrdtManager {
                 if target.exists() {
                     let copy = Self::conflict_path(path, &file_content)?;
                     vault::save_note(vault_path, &copy, &file_content)?;
+                    crate::catalog_sync::register_generated(vault_path, &copy)?;
                     crate::storage::report_recovery(&vault::safe_join(vault_path, &copy)?, true);
                 }
                 crate::note_transaction::commit(vault_path, path, &current, &Self::encode_state(doc))?;
@@ -177,6 +178,46 @@ impl CrdtManager {
         Ok(Self::encode_state(Self::ensure_doc(
             &mut docs, vault_path, path,
         )?))
+    }
+
+    pub(crate) fn invalidate_path(&self, root: &Path, path: &str) -> anyhow::Result<()> {
+        let target = vault::safe_join(root, path)?;
+        self.docs.lock().retain(|note, _| !note.starts_with(&target));
+        Ok(())
+    }
+
+    /// Explicit native saves retain the existing collaborative history and
+    /// participate in the same durable Markdown/CRDT transaction as typing.
+    pub fn replace_note_text(&self, root: &Path, path: &str, content: &str) -> anyhow::Result<AppliedUpdate> {
+        vault::read_note(root, path)?;
+        if content.len() as u64 > vault::MAX_NOTE_BYTES { bail!("errors.noteTooLarge"); }
+        let mut docs = self.docs.lock();
+        let target = vault::safe_join(root, path)?;
+        let current = Self::ensure_doc(&mut docs, root, path)?;
+        let before = Self::encode_state(current);
+        let candidate = Doc::new();
+        candidate.transact_mut().apply_update(Update::decode_v1(&before)?)?;
+        let changed = Self::replace_text(&candidate, content);
+        if !changed { return Ok(AppliedUpdate { state: before, changed: false, conflict_path: None }); }
+        let state = Self::encode_state(&candidate);
+        crate::note_transaction::commit(root, path, content, &state)?;
+        docs.insert(target, candidate);
+        if let Err(error) = links::reconcile_wikilinks(root, path, content) { eprintln!("reconcile_wikilinks failed for {path}: {error}"); }
+        Ok(AppliedUpdate { state, changed: true, conflict_path: None })
+    }
+
+    pub(crate) fn replace_text(doc: &Doc, content: &str) -> bool {
+        let text = doc.get_or_insert_text("content");
+        let before = text.get_string(&doc.transact());
+        if before == content { return false; }
+        let prefix: usize = before.chars().zip(content.chars()).take_while(|(a,b)| a == b).map(|(ch,_)| ch.len_utf8()).sum();
+        let suffix: usize = before[prefix..].chars().rev().zip(content[prefix..].chars().rev()).take_while(|(a,b)| a == b).map(|(ch,_)| ch.len_utf8()).sum();
+        let mut txn = doc.transact_mut();
+        let removed = before.len() - prefix - suffix;
+        if removed > 0 { text.remove_range(&mut txn, prefix as u32, removed as u32); }
+        let inserted = &content[prefix..content.len()-suffix];
+        if !inserted.is_empty() { text.insert(&mut txn, prefix as u32, inserted); }
+        true
     }
 
     pub fn apply_update(
@@ -283,6 +324,7 @@ impl CrdtManager {
                 }
             } else {
                 vault::save_note(vault_path, &copy_path, &loser)?;
+                crate::catalog_sync::register_generated(vault_path, &copy_path)?;
                 conflict_path = Some(copy_path);
             }
             // Both peers derive the same client ID from the two input states.

@@ -100,8 +100,8 @@ export async function undoLastDelete(): Promise<{ path: string; is_dir: boolean;
   return await invoke('undo_last_delete');
 }
 
-export async function crdtApplyClientUpdate(notePath: string, updateBase64: string): Promise<void> {
-  return await invoke('crdt_apply_client_update', { notePath, updateBase64 });
+export async function crdtApplyClientUpdate(notePath: string, updateBase64: string, noteId?: string | null, vaultId?: string, recoveryUpdate = false): Promise<void> {
+  return await invoke('crdt_apply_client_update', { notePath, updateBase64, noteId, vaultId, recoveryUpdate });
 }
 
 export async function networkSyncNow(): Promise<void> {

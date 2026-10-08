@@ -126,6 +126,8 @@
         onRefreshItems();
         if (selectedPath === oldPath) {
           onSelectNote(newName);
+        } else if (selectedPath?.startsWith(`${oldPath}/`)) {
+          onSelectNote(`${newName}${selectedPath.slice(oldPath.length)}`);
         }
       } catch (e: any) {
         alert(trError(typeof e === 'string' ? e : e.message || 'sidebar.errorRename'));

@@ -16,7 +16,7 @@ use crate::{
     links,
     network::{NetworkIdentity, NetworkService, PairInfo},
     rag::{self, ChatMessage, ChatResponse, RagChunk},
-    undo::{DeletedSnapshot, RestoredItem, UndoHistory},
+    undo::{RestoredItem, UndoHistory},
     vault::{self, VaultItem},
     web_search,
 };
@@ -26,6 +26,11 @@ pub struct AppState {
     pub crdt: CrdtManager,
     pub network: Arc<RwLock<Option<NetworkService>>>,
     pub undo: Mutex<UndoHistory>,
+}
+
+fn catalog_device(state: &AppState, vault: &VaultConfig) -> String {
+    state.network.read().as_ref().and_then(|service| service.pair_info()).map(|info| info.endpoint_id)
+        .unwrap_or_else(|| format!("local-{}", blake3::hash(vault.id.as_bytes()).to_hex()))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -40,6 +45,7 @@ pub struct InitialStateResponse {
 pub struct NoteReadResponse {
     pub content: String,
     pub crdt_update_base64: String,
+    pub note_id: Option<String>,
 }
 
 #[tauri::command]
@@ -167,6 +173,8 @@ pub fn list_notes(state: State<'_, AppState>) -> Result<Vec<VaultItem>, String> 
 pub fn read_note(path: String, state: State<'_, AppState>) -> Result<NoteReadResponse, String> {
     let settings = state.settings.read();
     let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
+    let catalog = crate::catalog_sync::prepare(&vault.path, &state.crdt, &catalog_device(&state, vault)).map_err(|e| e.to_string())?;
+    let note_id = catalog.resolve().map_err(|e| e.to_string())?.into_values().find(|entry| !entry.deleted() && !entry.is_dir && entry.path == path).map(|entry| entry.id);
     vault::read_note(&vault.path, &path).map_err(|e| e.to_string())?;
 
     let crdt_bytes = state.crdt.get_or_create_doc(&vault.path, &path).map_err(|e| e.to_string())?;
@@ -176,17 +184,20 @@ pub fn read_note(path: String, state: State<'_, AppState>) -> Result<NoteReadRes
     Ok(NoteReadResponse {
         content,
         crdt_update_base64,
+        note_id,
     })
 }
 
 #[tauri::command]
-pub fn save_note(path: String, content: String, state: State<'_, AppState>) -> Result<(), String> {
+pub fn save_note(path: String, content: String, state: State<'_, AppState>, app: AppHandle) -> Result<(), String> {
     let settings = state.settings.read();
     let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-    vault::save_note(&vault.path, &path, &content).map_err(|e| e.to_string())?;
-    state.crdt.remove_doc(&vault.path, &path).map_err(|e| e.to_string())?;
-    if let Err(e) = links::reconcile_wikilinks(&vault.path, &path, &content) {
-        eprintln!("reconcile_wikilinks failed for {path}: {e}");
+    let saved = state.crdt.replace_note_text(&vault.path, &path, &content).map_err(|e| e.to_string())?;
+    if saved.changed {
+        let _ = app.emit("p2p:crdt-update", crate::network::NetworkEventPayload::RemoteCrdtUpdate {
+            note_path: path.clone(), update: saved.state.clone(),
+        });
+        if let Some(net) = state.network.read().as_ref() { net.broadcast_crdt_update(path, saved.state); }
     }
     Ok(())
 }
@@ -260,10 +271,8 @@ pub fn rename_item(
 ) -> Result<(), String> {
     let settings = state.settings.read();
     let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-    vault::rename_item(&vault.path, &old_path, &new_path).map_err(|e| e.to_string())?;
-    state.crdt.remove_doc(&vault.path, &old_path).map_err(|e| e.to_string())?;
+    crate::structural::rename(&vault.path, &old_path, &new_path, &state.crdt, &catalog_device(&state, vault)).map_err(|e| e.to_string())?;
     if let Some(net) = state.network.read().as_ref() {
-        net.broadcast_delete(old_path);
         net.sync_now();
     }
     Ok(())
@@ -273,17 +282,10 @@ pub fn rename_item(
 pub fn delete_item(path: String, state: State<'_, AppState>) -> Result<(), String> {
     let settings = state.settings.read();
     let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-    // The undo history lives only in AppState: hiding to tray retains it, exiting clears it.
-    let mut undo = state.undo.lock();
-    let snapshot = DeletedSnapshot::capture(&vault.path, &path).map_err(|e| e.to_string())?;
-    vault::delete_item(&vault.path, &path).map_err(|e| e.to_string())?;
-    if let Err(error) = state.crdt.remove_doc(&vault.path, &path) {
-        eprintln!("Failed to remove CRDT state for {path}: {error}");
-    }
-    undo.push(vault.id.clone(), snapshot);
+    crate::catalog_sync::delete(&vault.path, &path, &state.crdt, &catalog_device(&state, vault)).map_err(|e| e.to_string())?;
 
     if let Some(net) = state.network.read().as_ref() {
-        net.broadcast_delete(path);
+        net.sync_now();
     }
 
     Ok(())
@@ -293,8 +295,10 @@ pub fn delete_item(path: String, state: State<'_, AppState>) -> Result<(), Strin
 pub fn undo_last_delete(state: State<'_, AppState>) -> Result<Option<RestoredItem>, String> {
     let settings = state.settings.read();
     let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-    let restored = state.undo.lock().undo_last_for(&vault.id, &vault.path)
-        .map_err(|e| e.to_string())?;
+    let restored = crate::catalog_sync::restore_latest(&vault.path, &state.crdt, &catalog_device(&state, vault))
+        .map_err(|e| e.to_string())?.map(|(path, is_dir)| RestoredItem {
+            path, is_dir, has_more: crate::catalog_sync::has_restorable(&vault.path).unwrap_or(false),
+        });
     if restored.is_some() {
         if let Some(net) = state.network.read().as_ref() {
             net.sync_now();
@@ -307,7 +311,11 @@ pub fn undo_last_delete(state: State<'_, AppState>) -> Result<Option<RestoredIte
 pub fn crdt_apply_client_update(
     note_path: String,
     update_base64: String,
+    note_id: Option<String>,
+    vault_id: Option<String>,
+    recovery_update: Option<bool>,
     state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<(), String> {
     let update_bytes = URL_SAFE_NO_PAD
         .decode(&update_base64)
@@ -315,6 +323,20 @@ pub fn crdt_apply_client_update(
 
     let settings = state.settings.read();
     let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
+    if vault_id.as_ref().is_some_and(|id| id != &vault.id) { return Err("ai.vaultChanged".into()); }
+    if let Some(id) = note_id {
+        let catalog = crate::catalog::load(&vault.path).and_then(|catalog| catalog.resolve()).map_err(|error| error.to_string())?;
+        let entry = catalog.get(&id).ok_or("unknown note identity")?;
+        if entry.deleted() && !recovery_update.unwrap_or(false) { return Err("errors.noteDeleted".into()); }
+        let changed = crate::network::apply_identified_update(&vault.path, &id, &note_path, &update_bytes, &state.crdt, Some(&app)).map_err(|error| error.to_string())?;
+        if changed && !entry.deleted() {
+            let full_state = state.crdt.get_or_create_doc(&vault.path, &entry.path).map_err(|error| error.to_string())?;
+            if let Some(net) = state.network.read().as_ref() { net.broadcast_crdt_update(entry.path.clone(), full_state); }
+        }
+        return Ok(());
+    }
+    // A delayed local save from a closed/deleted note must not recreate it.
+    vault::read_note(&vault.path, &note_path).map_err(|e| e.to_string())?;
     let result = state.crdt.apply_update(&vault.path, &note_path, &update_bytes)
         .map_err(|e| e.to_string())?;
 

@@ -12,6 +12,7 @@ use iroh_tickets::endpoint::EndpointTicket;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tauri::{AppHandle, Emitter, Manager};
+use yrs::{updates::decoder::Decode, GetString, Transact};
 
 use crate::{
     commands::AppState,
@@ -20,7 +21,8 @@ use crate::{
     vault::{self, Manifest, NoteMeta},
 };
 
-const ALPN: &[u8] = b"lownotes/sync/4";
+const ALPN: &[u8] = b"lownotes/sync/5";
+const METADATA_ALPN: &[u8] = b"lownotes/sync/4";
 const IMAGE_ALPN: &[u8] = b"lownotes/sync/3";
 const LEGACY_ALPN: &[u8] = b"lownotes/sync/2";
 const MAX_PACKET_BYTES: usize = 24 * 1024 * 1024;
@@ -85,6 +87,12 @@ pub enum Packet {
         responder: Option<PeerConfig>,
     },
     Manifest(Manifest),
+    Catalog(crate::catalog::Catalog),
+    IdentifiedPut {
+        entry_id: String,
+        meta: NoteMeta,
+        content_base64: String,
+    },
     Put {
         meta: NoteMeta,
         content: Vec<u8>,
@@ -103,6 +111,11 @@ pub enum Packet {
     CrdtUpdate {
         note_path: String,
         update: Vec<u8>,
+    },
+    IdentifiedCrdt {
+        entry_id: String,
+        note_path: String,
+        update_base64: String,
     },
     Awareness {
         note_path: String,
@@ -256,7 +269,7 @@ async fn run_network(
 ) -> anyhow::Result<()> {
     let endpoint = Endpoint::builder(presets::N0)
         .secret_key(identity.secret_key.clone())
-        .alpns(vec![ALPN.to_vec(), IMAGE_ALPN.to_vec(), LEGACY_ALPN.to_vec()])
+        .alpns(vec![ALPN.to_vec(), METADATA_ALPN.to_vec(), IMAGE_ALPN.to_vec(), LEGACY_ALPN.to_vec()])
         .bind()
         .await?;
 
@@ -406,13 +419,16 @@ async fn run_network(
                 }
             }
             NetworkCommand::BroadcastCrdt { note_path, update } => {
+                let snapshot = crate::catalog::load(&vault).and_then(|catalog| catalog.resolve());
+                let entry_id = snapshot.ok().and_then(|entries| entries.values().find(|entry| !entry.deleted() && !entry.is_dir && entry.path == note_path).map(|entry| entry.id.clone()));
                 let known: Vec<PeerConfig> = peers.read().clone();
                 for peer in known {
                     let ep = endpoint.clone();
                     let n_path = note_path.clone();
                     let u_bytes = update.clone();
+                    let id = entry_id.clone();
                     tokio::spawn(async move {
-                        let _ = send_crdt_to_peer(ep, peer, n_path, u_bytes).await;
+                        let _ = send_crdt_to_peer(ep, peer, n_path, u_bytes, id).await;
                     });
                 }
             }
@@ -573,7 +589,17 @@ async fn handle_incoming_connection(
             }
             connection.close(0u32.into(), b"pair complete");
         }
-        Packet::Manifest(remote_manifest) => {
+        Packet::Catalog(remote) if connection.alpn() == ALPN => {
+            let peer = peers.read().iter().find(|peer| peer.endpoint_id == remote_id.to_string()).cloned().context("errors.unauthorizedDevice")?;
+            let manager = app.state::<AppState>().crdt.clone();
+            let changed_structure = serve_catalog(&mut send, &mut recv, &vault, &remote, &manager, &endpoint.id().to_string()).await?;
+            let Packet::Manifest(remote_manifest) = recv_packet(&mut recv).await? else { bail!("errors.unexpectedPacketSync"); };
+            let changed = serve_sync_core(&mut send, &mut recv, &vault, remote_manifest, Some(&app), true, true, true).await?;
+            let direct = connection_is_direct(&connection);
+            connection.close(0u32.into(), b"sync complete");
+            let _ = app.emit("p2p:synced", NetworkEventPayload::Synced { peer: peer.name, changed: changed + changed_structure, direct });
+        }
+        Packet::Manifest(remote_manifest) if connection.alpn() != ALPN => {
             let peer = peers
                 .read()
                 .iter()
@@ -581,7 +607,7 @@ async fn handle_incoming_connection(
                 .cloned()
                 .context("errors.unauthorizedDevice")?;
 
-            let changed = serve_sync(&mut send, &mut recv, &vault, remote_manifest, Some(&app), connection.alpn() != LEGACY_ALPN, connection.alpn() == ALPN).await?;
+            let changed = serve_sync(&mut send, &mut recv, &vault, remote_manifest, Some(&app), connection.alpn() != LEGACY_ALPN, connection.alpn() == METADATA_ALPN).await?;
             connection.close(0u32.into(), b"sync complete");
 
             let direct = connection_is_direct(&connection);
@@ -594,10 +620,26 @@ async fn handle_incoming_connection(
                 },
             );
         }
+        Packet::IdentifiedCrdt { entry_id, note_path, update_base64 } if connection.alpn() == ALPN => {
+            let is_peer = peers.read().iter().any(|peer| peer.endpoint_id == remote_id.to_string());
+            if !is_peer { bail!("errors.unauthorizedDevice"); }
+            if update_base64.len() > MAX_PACKET_BYTES { bail!("errors.packetTooLarge"); }
+            let update = STANDARD.decode(update_base64)?;
+            let state = app.state::<AppState>();
+            if !crate::catalog::load(&vault)?.resolve()?.contains_key(&entry_id) {
+                if let Some(service) = state.network.read().as_ref() { service.sync_now(); }
+            } else {
+                apply_identified_update(&vault, &entry_id, &note_path, &update, &state.crdt, Some(&app))?;
+            }
+        }
         Packet::CrdtUpdate { note_path, update } => {
             let is_peer = peers.read().iter().any(|p| p.endpoint_id == remote_id.to_string());
             if is_peer {
                 let state = app.state::<AppState>();
+                if let Some(entry) = legacy_entry(&vault, &note_path)? {
+                    apply_identified_update(&vault, &entry.id, &note_path, &update, &state.crdt, Some(&app))?;
+                    return Ok(());
+                }
                 let merged = state.crdt.apply_update(&vault, &note_path, &update)?;
                 if merged.changed {
                     let _ = app.emit("p2p:crdt-update", NetworkEventPayload::RemoteCrdtUpdate {
@@ -618,10 +660,10 @@ async fn handle_incoming_connection(
         Packet::Delete { path } => {
             let is_peer = peers.read().iter().any(|p| p.endpoint_id == remote_id.to_string());
             if is_peer {
-                let _ = vault::delete_item(&vault, &path);
-                let _ = app.state::<AppState>().crdt.remove_doc(&vault, &path);
+                let manager = app.state::<AppState>().crdt.clone();
+                let changed = crate::catalog_sync::delete_legacy(&vault, &path, &manager, &endpoint.id().to_string())?;
                 let _ = app.emit("p2p:synced", NetworkEventPayload::Synced {
-                    peer: remote_id.to_string(), changed: 1, direct: None,
+                    peer: remote_id.to_string(), changed: usize::from(changed), direct: None,
                 });
             }
         }
@@ -766,30 +808,47 @@ async fn dial_sync(
     let addr = peer.endpoint_addr()?;
     let connection = match endpoint.connect(addr.clone(), ALPN).await {
         Ok(connection) => connection,
-        Err(_) => match endpoint.connect(addr.clone(), IMAGE_ALPN).await {
+        Err(_) => match endpoint.connect(addr.clone(), METADATA_ALPN).await {
             Ok(connection) => connection,
-            Err(_) => endpoint.connect(addr, LEGACY_ALPN).await?,
+            Err(_) => match endpoint.connect(addr.clone(), IMAGE_ALPN).await {
+                Ok(connection) => connection,
+                Err(_) => endpoint.connect(addr, LEGACY_ALPN).await?,
+            },
         },
     };
     let (mut send, mut recv) = connection.open_bi().await?;
 
     let images_supported = connection.alpn() != LEGACY_ALPN;
-    let metadata_supported = connection.alpn() == ALPN;
+    let structural_supported = connection.alpn() == ALPN;
+    let metadata_supported = structural_supported || connection.alpn() == METADATA_ALPN;
+    let manager = app.map(|app| app.state::<AppState>().crdt.clone()).unwrap_or_default();
+    let changed_structure = if structural_supported {
+        let catalog = crate::catalog_sync::prepare(&vault, &manager, &endpoint.id().to_string())?;
+        send_packet(&mut send, &Packet::Catalog(catalog)).await?;
+        let Packet::Catalog(remote) = recv_packet(&mut recv).await? else { bail!("errors.unexpectedPacketSync"); };
+        let changed = crate::catalog_sync::merge(&vault, &manager, &remote, &endpoint.id().to_string())?;
+        // Applying a deletion can create a review note. Share its identity
+        // before its content appears in the manifest.
+        send_packet(&mut send, &Packet::Catalog(crate::catalog::load(&vault)?)).await?;
+        let Packet::Catalog(final_catalog) = recv_packet(&mut recv).await? else { bail!("errors.unexpectedPacketSync"); };
+        changed + crate::catalog_sync::merge(&vault, &manager, &final_catalog, &endpoint.id().to_string())?
+    } else { 0 };
     let my_manifest = sync_manifest(&vault, images_supported, metadata_supported)?;
     send_packet(&mut send, &Packet::Manifest(my_manifest.clone())).await?;
 
-    let mut changed = 0;
+    let mut changed = changed_structure;
     let mut conflict_created = false;
     loop {
         let packet: Packet = recv_packet(&mut recv).await?;
         match packet {
             Packet::Request { path } => {
                 let meta = my_manifest.get(&path).context("errors.metaMissing")?;
-                send_sync_content(&mut send, &vault, meta, metadata_supported).await?;
+                send_sync_content(&mut send, &vault, meta, metadata_supported, structural_supported).await?;
             }
-            packet @ (Packet::Put { .. } | Packet::ImagePut { .. } | Packet::JsonPut { .. }) => {
-                let (meta, content) = unpack_sync_content(packet, images_supported, metadata_supported)?;
-                let outcome = write_sync_content(&vault, &meta.path, &content, app)?;
+            packet @ (Packet::Put { .. } | Packet::ImagePut { .. } | Packet::JsonPut { .. } | Packet::IdentifiedPut { .. }) => {
+                let (meta, content, entry_id) = unpack_identified_content(packet, images_supported, metadata_supported, structural_supported)?;
+                let outcome = if let Some(id) = entry_id { write_identified_content(&vault, &id, &meta.path, &content, app)? }
+                    else { write_sync_content(&vault, &meta.path, &content, app)? };
                 if outcome.changed {
                     changed += 1;
                 }
@@ -814,6 +873,28 @@ async fn serve_sync(
     images_supported: bool,
     metadata_supported: bool,
 ) -> anyhow::Result<usize> {
+    serve_sync_core(send, recv, vault, remote_manifest, app, images_supported, metadata_supported, false).await
+}
+
+async fn serve_catalog(send: &mut iroh::endpoint::SendStream, recv: &mut iroh::endpoint::RecvStream, vault: &Path, remote: &crate::catalog::Catalog, manager: &CrdtManager, device: &str) -> anyhow::Result<usize> {
+    let changed = crate::catalog_sync::merge(vault, manager, remote, device)?;
+    send_packet(send, &Packet::Catalog(crate::catalog::load(vault)?)).await?;
+    let Packet::Catalog(final_catalog) = recv_packet(recv).await? else { bail!("errors.unexpectedPacketSync"); };
+    let final_changed = crate::catalog_sync::merge(vault, manager, &final_catalog, device)?;
+    send_packet(send, &Packet::Catalog(crate::catalog::load(vault)?)).await?;
+    Ok(changed + final_changed)
+}
+
+async fn serve_sync_core(
+    send: &mut iroh::endpoint::SendStream,
+    recv: &mut iroh::endpoint::RecvStream,
+    vault: &Path,
+    remote_manifest: Manifest,
+    app: Option<&AppHandle>,
+    images_supported: bool,
+    metadata_supported: bool,
+    structural_supported: bool,
+) -> anyhow::Result<usize> {
     let local_manifest = sync_manifest(vault, images_supported, metadata_supported)?;
     if !images_supported && remote_manifest.keys().any(|path| crate::local_images::is_sync_image(path)) {
         bail!("errors.unexpectedPacketSync");
@@ -833,7 +914,7 @@ async fn serve_sync(
         };
 
         if needs_send {
-            send_sync_content(send, vault, local_meta, metadata_supported).await?;
+            send_sync_content(send, vault, local_meta, metadata_supported, structural_supported).await?;
         }
     }
 
@@ -849,9 +930,11 @@ async fn serve_sync(
         if needs_request {
             send_packet(send, &Packet::Request { path: path.clone() }).await?;
             let packet: Packet = recv_packet(recv).await?;
-            let (meta, content) = unpack_sync_content(packet, images_supported, metadata_supported)?;
+            let (meta, content, entry_id) = unpack_identified_content(packet, images_supported, metadata_supported, structural_supported)?;
             if meta.path != *path { bail!("errors.unexpectedPacketSync"); }
-            if write_sync_content(vault, &meta.path, &content, app)?.changed {
+            let outcome = if let Some(id) = entry_id { write_identified_content(vault, &id, &meta.path, &content, app)? }
+                else { write_sync_content(vault, &meta.path, &content, app)? };
+            if outcome.changed {
                 changed += 1;
             }
         }
@@ -872,14 +955,107 @@ fn sync_manifest(root: &Path, images_supported: bool, metadata_supported: bool) 
     Ok(manifest)
 }
 
-async fn send_sync_content(send: &mut iroh::endpoint::SendStream, root: &Path, meta: &NoteMeta, metadata_supported: bool) -> anyhow::Result<()> {
+async fn send_sync_content(send: &mut iroh::endpoint::SendStream, root: &Path, meta: &NoteMeta, metadata_supported: bool, structural_supported: bool) -> anyhow::Result<()> {
     let content = read_sync_content(root, &meta.path)?;
-    let packet = if metadata_supported && crate::links::is_sync_metadata(&meta.path) {
+    // Applying another packet can change a CRDT while this round is running.
+    // The integrity fields describe the bytes actually sent, not the earlier
+    // manifest snapshot.
+    let mut meta = meta.clone();
+    meta.size = content.len() as u64;
+    meta.hash = blake3::hash(&content).to_hex().to_string();
+    let note_path = if is_crdt_state(&meta.path) { Some(CrdtManager::decode_file(&meta.path, &content)?.0) }
+        else if vault::is_markdown(Path::new(&meta.path)) { Some(meta.path.clone()) } else { None };
+    let packet = if let Some(note_path) = note_path.filter(|_| structural_supported) {
+        let catalog = crate::catalog::load(root)?.resolve()?;
+        let entry = catalog.values().find(|entry| !entry.deleted() && !entry.is_dir && entry.path == note_path).context("note identity is unavailable")?;
+        Packet::IdentifiedPut { entry_id: entry.id.clone(), meta: meta.clone(), content_base64: STANDARD.encode(content) }
+    } else if metadata_supported && crate::links::is_sync_metadata(&meta.path) {
         Packet::JsonPut { meta: meta.clone(), content: serde_json::from_slice(&content)? }
     } else if crate::local_images::is_sync_image(&meta.path) {
         Packet::ImagePut { meta: meta.clone(), content_base64: STANDARD.encode(content) }
     } else { Packet::Put { meta: meta.clone(), content } };
     send_packet(send, &packet).await
+}
+
+fn unpack_identified_content(packet: Packet, images_supported: bool, metadata_supported: bool, structural_supported: bool) -> anyhow::Result<(NoteMeta, Vec<u8>, Option<String>)> {
+    if let Packet::IdentifiedPut { entry_id, meta, content_base64 } = packet {
+        if !structural_supported || entry_id.len() != 64 || !entry_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || (!is_crdt_state(&meta.path) && !vault::is_markdown(Path::new(&meta.path)))
+            || content_base64.len() > MAX_PACKET_BYTES || meta.size > (MAX_PACKET_BYTES / 4 * 3) as u64 { bail!("invalid identified note packet"); }
+        let content = STANDARD.decode(content_base64)?;
+        if content.len() as u64 != meta.size || blake3::hash(&content).to_hex().as_str() != meta.hash { bail!("invalid identified note hash"); }
+        Ok((meta, content, Some(entry_id)))
+    } else {
+        let (meta, bytes) = unpack_sync_content(packet, images_supported, metadata_supported)?;
+        if structural_supported && (is_crdt_state(&meta.path) || vault::is_markdown(Path::new(&meta.path))) { bail!("note identity is required"); }
+        Ok((meta, bytes, None))
+    }
+}
+
+fn write_identified_content(root: &Path, id: &str, path: &str, content: &[u8], app: Option<&AppHandle>) -> anyhow::Result<WriteOutcome> {
+    let resolved = crate::catalog::load(root)?.resolve()?;
+    let entry = resolved.get(id).context("unknown note identity")?;
+    if entry.is_dir { bail!("note packet belongs to a directory"); }
+    let (original_path, state, text) = if is_crdt_state(path) {
+        let (original, update) = CrdtManager::decode_file(path, content)?;
+        let doc = yrs::Doc::new();
+        doc.transact_mut().apply_update(yrs::Update::decode_v1(update)?)?;
+        let text = doc.get_or_insert_text("content").get_string(&doc.transact());
+        (original, Some(update), text)
+    } else { (path.into(), None, std::str::from_utf8(content)?.into()) };
+    if !entry.aliases.contains(&original_path) { bail!("note packet path does not belong to identity"); }
+    if entry.deleted() {
+        let copy = crate::catalog_sync::preserve_deleted(root, entry, &text, state)?;
+        if let (Some(app), Some(copy)) = (app, copy.as_ref()) {
+            let _ = app.emit("p2p:conflict", NetworkEventPayload::Conflict { note_path: original_path, conflict_path: copy.clone() });
+        }
+        return Ok(WriteOutcome { changed: copy.is_some(), conflict_created: copy.is_some() });
+    }
+    let destination = &entry.path;
+    let outcome = if let Some(update) = state {
+        let mut bytes = Vec::with_capacity(4 + destination.len() + update.len());
+        bytes.extend_from_slice(&(destination.len() as u32).to_be_bytes()); bytes.extend_from_slice(destination.as_bytes()); bytes.extend_from_slice(update);
+        write_native_content(root, &CrdtManager::state_relative_path(destination), &bytes, app)?
+    } else { write_native_content(root, destination, content, app)? };
+    let manager = app.map(|app| app.state::<AppState>().crdt.clone()).unwrap_or_default();
+    crate::structural::exclusive(root, &manager, || {
+        let mut bindings = crate::structural::load_paths(root)?;
+        bindings.paths.insert(id.into(), destination.clone());
+        crate::structural::save_paths(root, &bindings)
+    })?;
+    Ok(outcome)
+}
+
+fn legacy_entry(root: &Path, path: &str) -> anyhow::Result<Option<crate::catalog::ResolvedEntry>> {
+    if !crate::catalog::file_path(root).exists() { return Ok(None); }
+    let entries = crate::catalog::load(root)?.resolve()?;
+    let mut matching: Vec<_> = entries.into_values().filter(|entry| !entry.is_dir && entry.aliases.contains(path)).collect();
+    // A legacy packet cannot distinguish a deleted identity from a fresh note
+    // at the same name. Preserve it as a review copy instead of editing either.
+    matching.sort_by_key(|entry| (!entry.deleted(), entry.id.clone()));
+    Ok(matching.into_iter().next())
+}
+
+pub(crate) fn apply_identified_update(root: &Path, id: &str, original_path: &str, update: &[u8], manager: &CrdtManager, app: Option<&AppHandle>) -> anyhow::Result<bool> {
+    crate::structural::exclusive(root, manager, || {
+        let entries = crate::catalog::load(root)?.resolve()?;
+        let entry = entries.get(id).context("unknown note identity")?;
+        if entry.is_dir || !entry.aliases.contains(original_path) { bail!("invalid live note identity"); }
+        if entry.deleted() {
+            let doc = yrs::Doc::new();
+            if let Some(previous) = crate::catalog_sync::deleted_state(root, id)? { doc.transact_mut().apply_update(yrs::Update::decode_v1(&previous)?)?; }
+            doc.transact_mut().apply_update(yrs::Update::decode_v1(update)?)?;
+            let text = doc.get_or_insert_text("content").get_string(&doc.transact());
+            let copy = crate::catalog_sync::preserve_deleted(root, entry, &text, Some(&CrdtManager::encode_state(&doc)))?;
+            if let (Some(app), Some(copy)) = (app, copy.as_ref()) { let _ = app.emit("p2p:conflict", NetworkEventPayload::Conflict { note_path: original_path.into(), conflict_path: copy.clone() }); }
+            return Ok(copy.is_some());
+        }
+        let merged = manager.apply_update(root, &entry.path, update)?;
+        if merged.changed {
+            if let Some(app) = app { let _ = app.emit("p2p:crdt-update", NetworkEventPayload::RemoteCrdtUpdate { note_path: entry.path.clone(), update: merged.state }); }
+        }
+        Ok(merged.changed)
+    })
 }
 
 fn unpack_sync_content(packet: Packet, images_supported: bool, metadata_supported: bool) -> anyhow::Result<(NoteMeta, Vec<u8>)> {
@@ -939,6 +1115,17 @@ struct WriteOutcome {
 }
 
 fn write_sync_content(vault_path: &Path, path: &str, content: &[u8], app: Option<&AppHandle>) -> anyhow::Result<WriteOutcome> {
+    let legacy_path = if is_crdt_state(path) { Some(CrdtManager::decode_file(path, content)?.0) }
+        else if vault::is_markdown(Path::new(path)) { Some(path.into()) } else { None };
+    if let Some(entry) = legacy_path.as_ref().map(|path| legacy_entry(vault_path, path)).transpose()?.flatten() {
+        if entry.deleted() || legacy_path.as_deref() != Some(&entry.path) {
+            return write_identified_content(vault_path, &entry.id, path, content, app);
+        }
+    }
+    write_native_content(vault_path, path, content, app)
+}
+
+fn write_native_content(vault_path: &Path, path: &str, content: &[u8], app: Option<&AppHandle>) -> anyhow::Result<WriteOutcome> {
     if crate::links::is_sync_metadata(path) {
         Ok(WriteOutcome { changed: crate::links::merge_sync(vault_path, path, content)?, conflict_created: false })
     } else if crate::local_images::is_sync_image(path) {
@@ -972,11 +1159,18 @@ async fn send_crdt_to_peer(
     peer: PeerConfig,
     note_path: String,
     update: Vec<u8>,
+    entry_id: Option<String>,
 ) -> anyhow::Result<()> {
     let addr = peer.endpoint_addr()?;
-    let connection = endpoint.connect(addr, LEGACY_ALPN).await?;
+    let connection = match endpoint.connect(addr.clone(), ALPN).await {
+        Ok(connection) => connection,
+        Err(_) => endpoint.connect(addr, LEGACY_ALPN).await?,
+    };
     let (mut send, _) = connection.open_bi().await?;
-    send_packet(&mut send, &Packet::CrdtUpdate { note_path, update }).await?;
+    let packet = if connection.alpn() == ALPN {
+        Packet::IdentifiedCrdt { entry_id: entry_id.context("live note identity is unavailable")?, note_path, update_base64: STANDARD.encode(update) }
+    } else { Packet::CrdtUpdate { note_path, update } };
+    send_packet(&mut send, &packet).await?;
     send.finish()?;
     let _ = tokio::time::timeout(Duration::from_secs(2), send.stopped()).await;
     connection.close(0u32.into(), b"crdt sent");
@@ -1099,10 +1293,14 @@ mod tests {
                 let incoming = ep_accept(&accept_ep).await;
                 let connection = incoming.await.unwrap();
                 let (mut send, mut recv) = connection.accept_bi().await.unwrap();
-                let packet: Packet = recv_packet(&mut recv).await.unwrap();
+                let mut packet: Packet = recv_packet(&mut recv).await.unwrap();
+                if let Packet::Catalog(remote) = packet {
+                    serve_catalog(&mut send, &mut recv, &accept_vault, &remote, &CrdtManager::new(), &accept_ep.id().to_string()).await.unwrap();
+                    packet = recv_packet(&mut recv).await.unwrap();
+                }
                 match packet {
                     Packet::Manifest(remote_manifest) => {
-                        serve_sync(&mut send, &mut recv, &accept_vault, remote_manifest, None, true, true)
+                        serve_sync_core(&mut send, &mut recv, &accept_vault, remote_manifest, None, true, true, true)
                             .await
                             .unwrap();
                     }
@@ -1215,8 +1413,10 @@ mod tests {
             for _ in 0..2 {
                 let connection = ep_accept(&server_ep).await.await.unwrap();
                 let (mut send, mut recv) = connection.accept_bi().await.unwrap();
+                let Packet::Catalog(remote) = recv_packet(&mut recv).await.unwrap() else { panic!("Expected catalog"); };
+                serve_catalog(&mut send, &mut recv, &server_root, &remote, &CrdtManager::new(), &server_ep.id().to_string()).await.unwrap();
                 let Packet::Manifest(manifest) = recv_packet(&mut recv).await.unwrap() else { panic!("Expected manifest"); };
-                serve_sync(&mut send, &mut recv, &server_root, manifest, None, true, true).await.unwrap();
+                serve_sync_core(&mut send, &mut recv, &server_root, manifest, None, true, true, true).await.unwrap();
             }
         });
         let (changed, _, _) = dial_sync(ep_b.clone(), b.path().to_path_buf(), peer_a.clone(), None).await.unwrap();
@@ -1337,8 +1537,10 @@ mod tests {
         let responder = tokio::spawn(async move {
             let connection = ep_accept(&server_ep).await.await.unwrap();
             let (mut send, mut recv) = connection.accept_bi().await.unwrap();
+            let Packet::Catalog(remote) = recv_packet(&mut recv).await.unwrap() else { panic!("Expected catalog"); };
+            serve_catalog(&mut send, &mut recv, &root, &remote, &CrdtManager::new(), &server_ep.id().to_string()).await.unwrap();
             let Packet::Manifest(manifest) = recv_packet(&mut recv).await.unwrap() else { panic!("Expected manifest"); };
-            serve_sync(&mut send, &mut recv, &root, manifest, None, true, true).await.unwrap();
+            serve_sync_core(&mut send, &mut recv, &root, manifest, None, true, true, true).await.unwrap();
         });
         let outcome = tokio::time::timeout(Duration::from_secs(30),
             dial_sync(client.clone(), client_root.to_path_buf(), peer, None)).await.unwrap().unwrap();
@@ -1390,5 +1592,122 @@ mod tests {
 
     async fn ep_accept(endpoint: &Endpoint) -> iroh::endpoint::Incoming {
         endpoint.accept().await.expect("endpoint fechado")
+    }
+
+    #[tokio::test]
+    async fn three_real_devices_apply_offline_deletions_before_files_and_keep_concurrent_edits() {
+        let roots = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
+        let endpoints = [bind_endpoint().await, bind_endpoint().await, bind_endpoint().await];
+        for (index, root) in roots.iter().enumerate() {
+            fs::create_dir_all(root.path().join("folder")).unwrap();
+            fs::write(root.path().join("folder/task.md"), "baseline\n").unwrap();
+            crate::catalog_sync::prepare(root.path(), &CrdtManager::new(), &format!("device-{index}")).unwrap();
+            CrdtManager::new().get_or_create_doc(root.path(), "folder/task.md").unwrap();
+        }
+        let note_id = crate::catalog::load(roots[0].path()).unwrap().resolve().unwrap().values().find(|entry| !entry.is_dir).unwrap().id.clone();
+        let stale_catalog = crate::catalog::load(roots[2].path()).unwrap();
+        crate::catalog_sync::delete(roots[0].path(), "folder", &CrdtManager::new(), "device-0").unwrap();
+        CrdtManager::new().replace_note_text(roots[1].path(), "folder/task.md", "baseline\noffline edit\n").unwrap();
+        crate::structural::rename(roots[2].path(), "folder", "renamed", &CrdtManager::new(), "device-2").unwrap();
+        for _ in 0..2 {
+            sync_test_pair(&endpoints[1], roots[1].path(), &endpoints[0], roots[0].path()).await;
+            sync_test_pair(&endpoints[2], roots[2].path(), &endpoints[1], roots[1].path()).await;
+            sync_test_pair(&endpoints[0], roots[0].path(), &endpoints[2], roots[2].path()).await;
+        }
+        for (index, root) in roots.iter().enumerate() {
+            assert!(!root.path().join("folder/task.md").exists()); assert!(!root.path().join("renamed/task.md").exists());
+            let entries = crate::catalog::load(root.path()).unwrap().resolve().unwrap(); assert!(entries[&note_id].deleted());
+            let copies = vault::list_vault_items(root.path()).unwrap().into_iter().filter(|entry| !entry.is_dir).collect::<Vec<_>>();
+            assert_eq!(copies.len(), 1, "replica {index} should have one review copy");
+            assert_eq!(vault::read_note(root.path(), &copies[0].path).unwrap(), "baseline\noffline edit\n");
+            crate::catalog_sync::merge(root.path(), &CrdtManager::new(), &stale_catalog, &format!("device-{index}")).unwrap();
+            assert!(!root.path().join("folder/task.md").exists());
+            let snapshot = crate::catalog::load(root.path()).unwrap();
+            assert!(snapshot.acknowledgements.keys().filter(|id| !id.starts_with("device-")).count() >= 2);
+        }
+        // Recreating the same filename intentionally is a different identity.
+        fs::create_dir_all(roots[0].path().join("folder")).unwrap();
+        vault::create_note(roots[0].path(), "folder/task.md", Some("fresh note\n"), "en-US").unwrap();
+        for index in 1..3 { sync_test_pair(&endpoints[index], roots[index].path(), &endpoints[0], roots[0].path()).await; }
+        for root in &roots {
+            assert_eq!(vault::read_note(root.path(), "folder/task.md").unwrap(), "fresh note\n");
+            let catalog = crate::catalog::load(root.path()).unwrap().resolve().unwrap();
+            assert!(catalog[&note_id].deleted()); assert!(catalog.values().any(|entry| !entry.deleted() && entry.path == "folder/task.md" && entry.id != note_id));
+        }
+        for endpoint in endpoints { endpoint.close().await; }
+    }
+
+    #[test]
+    fn delayed_updates_route_by_identity_and_never_edit_a_recreated_filename() {
+        use yrs::{ReadTxn, StateVector, Text};
+        let root = tempfile::tempdir().unwrap(); let manager = CrdtManager::new();
+        fs::write(root.path().join("note.md"), "baseline\n").unwrap();
+        let catalog = crate::catalog_sync::prepare(root.path(), &manager, "local").unwrap();
+        let id = catalog.resolve().unwrap().values().find(|entry| !entry.is_dir).unwrap().id.clone();
+        let baseline = manager.get_or_create_doc(root.path(), "note.md").unwrap();
+        let remote = yrs::Doc::new(); remote.transact_mut().apply_update(yrs::Update::decode_v1(&baseline).unwrap()).unwrap();
+        remote.get_or_insert_text("content").push(&mut remote.transact_mut(), "late edit\n");
+        let update = remote.transact().encode_diff_v1(&StateVector::default());
+        crate::structural::rename(root.path(), "note.md", "moved.md", &manager, "local").unwrap();
+        apply_identified_update(root.path(), &id, "note.md", &update, &manager, None).unwrap();
+        assert_eq!(vault::read_note(root.path(), "moved.md").unwrap(), "baseline\nlate edit\n"); assert!(!root.path().join("note.md").exists());
+        crate::catalog_sync::delete(root.path(), "moved.md", &manager, "local").unwrap();
+        vault::create_note(root.path(), "moved.md", Some("fresh\n"), "en-US").unwrap();
+        remote.get_or_insert_text("content").push(&mut remote.transact_mut(), "later edit\n");
+        let newer = remote.transact().encode_diff_v1(&StateVector::default());
+        apply_identified_update(root.path(), &id, "note.md", &newer, &manager, None).unwrap();
+        assert_eq!(vault::read_note(root.path(), "moved.md").unwrap(), "fresh\n");
+        assert!(!crate::catalog_sync::delete_legacy(root.path(), "moved.md", &manager, "legacy peer").unwrap());
+        assert_eq!(vault::read_note(root.path(), "moved.md").unwrap(), "fresh\n");
+        let copies = vault::list_vault_items(root.path()).unwrap().into_iter().filter(|entry| entry.path.contains("deleted conflict")).collect::<Vec<_>>();
+        assert_eq!(copies.len(), 1); assert_eq!(vault::read_note(root.path(), &copies[0].path).unwrap(), "baseline\nlate edit\nlater edit\n");
+        assert!(write_identified_content(root.path(), &id, "unrelated.md", b"wrong", None).is_err());
+        let packet = Packet::IdentifiedPut { entry_id: id, meta: NoteMeta { path: "note.md".into(), modified_ms: 0, size: 2, hash: blake3::hash(b"ok").to_hex().to_string() }, content_base64: STANDARD.encode(b"bad") };
+        assert!(unpack_identified_content(packet, true, true, true).is_err());
+    }
+
+    #[tokio::test]
+    async fn two_real_devices_preserve_an_unobserved_child_of_a_deleted_folder() {
+        let a = tempfile::tempdir().unwrap(); let b = tempfile::tempdir().unwrap();
+        let ea = bind_endpoint().await; let eb = bind_endpoint().await;
+        for root in [a.path(), b.path()] {
+            fs::create_dir_all(root.join("folder")).unwrap(); fs::write(root.join("folder/baseline.md"), "baseline").unwrap();
+            crate::catalog_sync::prepare(root, &CrdtManager::new(), "local").unwrap();
+        }
+        vault::create_note(b.path(), "folder/offline.md", Some("new offline child\n"), "en-US").unwrap();
+        crate::catalog_sync::delete(a.path(), "folder", &CrdtManager::new(), "A").unwrap();
+        sync_test_pair(&eb, b.path(), &ea, a.path()).await;
+        sync_test_pair(&ea, a.path(), &eb, b.path()).await;
+        for root in [a.path(), b.path()] {
+            assert!(!root.join("folder").exists());
+            let notes = vault::list_vault_items(root).unwrap().into_iter().filter(|item| !item.is_dir).collect::<Vec<_>>();
+            assert_eq!(notes.len(), 1); assert_eq!(vault::read_note(root, &notes[0].path).unwrap(), "new offline child\n");
+            assert!(notes[0].path.contains("deleted conflict"));
+        }
+        ea.close().await; eb.close().await;
+    }
+
+    #[tokio::test]
+    async fn v4_fallback_keeps_durable_map_operations_without_structural_packets() {
+        let a = tempfile::tempdir().unwrap(); let b = tempfile::tempdir().unwrap();
+        fs::write(a.path().join("a.md"), "A").unwrap(); fs::write(a.path().join("b.md"), "B").unwrap();
+        crate::links::apply_operations(a.path(), &[crate::links::LinkOperation { source: "a.md".into(), target: "b.md".into(), action: crate::links::LinkAction::add }], crate::links::LinkOrigin::agent).unwrap();
+        let server = Endpoint::builder(presets::N0).secret_key(SecretKey::generate()).alpns(vec![METADATA_ALPN.to_vec()]).bind().await.unwrap();
+        let client = bind_endpoint().await; let peer = peer_of(&server, "v4 peer");
+        let root = a.path().to_path_buf(); let accept = server.clone();
+        let responder = tokio::spawn(async move {
+            loop {
+                let Ok(connection) = ep_accept(&accept).await.await else { continue; };
+                let (mut send, mut recv) = connection.accept_bi().await.unwrap();
+                let Packet::Manifest(manifest) = recv_packet(&mut recv).await.unwrap() else { panic!("v4 must begin with a manifest"); };
+                serve_sync(&mut send, &mut recv, &root, manifest, None, true, true).await.unwrap(); break;
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(30), dial_sync(client.clone(), b.path().to_path_buf(), peer, None)).await.unwrap().unwrap();
+        responder.await.unwrap();
+        assert_eq!(crate::links::graph_links(b.path()).unwrap().len(), 1);
+        assert!(b.path().join(crate::link_operations::RELATIVE_PATH).exists());
+        assert!(!b.path().join(crate::catalog::RELATIVE_PATH).exists());
+        server.close().await; client.close().await;
     }
 }

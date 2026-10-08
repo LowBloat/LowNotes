@@ -1,8 +1,8 @@
 # Backlog proposto para o LowNotes
 
-Investigação em 07/10/2026, sobre a base v0.3.3 (`caf91b8`) e o trabalho em `codex/p1-reliability` (`d2e3177` mais alterações locais). Priorização proposta para preservar a leveza, o funcionamento offline e o controle local dos dados.
+Investigação em 07/10/2026, sobre a base v0.3.3 (`caf91b8`) e o trabalho em `codex/p1-reliability` (`d74969b` mais alterações locais). Priorização proposta para preservar a leveza, o funcionamento offline e o controle local dos dados. Os avanços da branch e do workspace abaixo ainda não devem ser confundidos com recursos entregues na versão publicada.
 
-O levantamento foi feito por inspeção do README, frontend, backend, testes e workflows. Na execução P1 mais recente, `bun test` passou 90 testes e `cargo test --locked --lib --manifest-path src-tauri/Cargo.toml` passou 93, com 4 testes condicionais/fixtures ignorados. Não inclui medições de desempenho nem a reprodução de todos os cenários propostos. Os riscos de exclusão/renomeação abaixo são deduzidos dos fluxos do código; sua reprodução e os testes de regressão fazem parte dos respectivos itens. Evidências e conclusão de cada P1 estão em [P1-IMPLEMENTATION.md](F:/Desenv/2026/8-LOWCARB/3-lownotes/P1-IMPLEMENTATION.md).
+O levantamento foi feito por inspeção do README, frontend, backend, testes e workflows. Nesta revisão, `bun test` passou 90 testes e confirmei a conclusão da execução nativa em andamento de `cargo test --locked --lib --manifest-path src-tauri/Cargo.toml`: 109 passaram, sem falhas, com 5 testes condicionais/fixtures ignorados na execução geral. Não inclui medições de desempenho, uma nova execução dos testes de interface ou uma nova conferência do CI remoto. Os testes nativos já cobrem cenários de exclusão/edição/renomeação offline com dois e três endpoints reais, recuperação após encerramento abrupto e preservação de versões para revisão; as auditorias restantes são indicadas por item. O histórico de execução dos P1 está em [P1-IMPLEMENTATION.md](F:/Desenv/2026/8-LOWCARB/3-lownotes/P1-IMPLEMENTATION.md); esta revisão não marca itens como concluídos apenas por passarem testes isolados.
 
 Esforço relativo: **P** = mudança localizada; **M** = vários fluxos ou componentes; **G** = mudança de arquitetura, protocolo ou plataforma. As estimativas não representam prazos. **P1** = confiabilidade e sustentação; **P2** = melhorias de uso e escala; **P3** = expansão.
 
@@ -10,9 +10,13 @@ Esforço relativo: **P** = mudança localizada; **M** = vários fluxos ou compon
 
 | Item | Estado observado | O que ainda precisa ser entregue |
 | --- | --- | --- |
-| B03 | Em andamento: `storage.rs`, backups válidos, recuperação e avisos na interface | Validar a recuperação coordenada de Markdown/CRDT, falhas durante operações completas e preservação da identidade P2P |
-| B05 | Implementado localmente: união de operações, remoção durável e migração | Conferir o novo CI remoto; os cenários locais com três dispositivos passaram |
-| B07 | CI de PR/push e etapas de teste na release; Linux/macOS passaram na primeira execução | Conferir novamente Windows após o ajuste do cenário de timestamp e completar exclusão/renomeação/restauração |
+| B01 | Catálogo e comandos integrados ao protocolo `/5`; cenário real de três dispositivos passou, com exclusão/edição/renomeação offline e recriação do nome | Concluir a auditoria dos cenários adicionais e a validação multiplataforma da nova integração |
+| B02 | Movimentação recuperável e pacotes por identidade conservam histórico CRDT e arquivos da pasta | Atualizar referências escritas e vínculos do mapa e validar a convergência completa |
+| B03 | Gravação atômica, backups válidos, coordenação Markdown/CRDT e avisos na interface | Completar recuperação e testes das operações estruturais, exclusão e restauração |
+| B04 | Arquivos removidos e estados CRDT conservados em disco; desfazer usa restauração explícita e funciona após reiniciar | Interface de lixeira, retenção configurável, versões de notas e comparação/restauração de versões |
+| B05 | Concluído: união de operações, remoção durável e migração; testes locais e CI nos três sistemas passaram | Manter regressões e validar a integração futura com renomeações |
+| B06 | Sem benchmark reproduzível identificado | Medir RAM, CPU e latências por plataforma, incluindo WebView |
+| B07 | CI de PR/main e testes antes das builds de release já configurados | Completar regressões de exclusão/renomeação/restauração e conferir a execução remota mais recente |
 | B08 | Concluído: credenciais do SO, migração, proteção de identidade e retentativa | Manter as regressões nos três sistemas |
 | B27 | Ícones regenerados no workspace | Automatizar a conferência e entregar os novos ícones em uma release |
 
@@ -22,43 +26,43 @@ Os demais itens são propostas ou lacunas ainda não resolvidas. Uma base implem
 
 ### B01. Registrar exclusões para sincronizar com dispositivos offline — G
 
-O fluxo atual envia a exclusão aos peers conectados, enquanto a reconciliação solicita arquivos que faltam localmente. Não encontrei um registro persistente de exclusões no protocolo. Isso cria risco de uma nota apagada voltar quando um dispositivo que estava offline se reconectar.
+Na versão publicada, a exclusão era enviada aos peers conectados enquanto a reconciliação solicitava arquivos ausentes, criando risco de ressurreição de notas e perda de edições concorrentes. No workspace, o catálogo causal está integrado aos comandos e ao protocolo `/5`: é mesclado e aplicado antes do manifesto de arquivos, com identidade por nota e cópias para revisão. O cenário com três endpoints Iroh reais passou; a nova integração ainda precisa concluir sua auditoria e validação multiplataforma. Clientes antigos não trocam esse catálogo e precisam ser atualizados para convergir as operações estruturais.
 
 Implementar registros persistentes de exclusão, confirmação por dispositivo e regras para o conflito entre excluir e editar. Fazer esse registro funcionar também para pastas e renomeações.
 
-**Aceite:** com dois e três dispositivos, uma nota excluída enquanto um peer está offline não reaparece silenciosamente; uma edição concorrente é preservada para revisão. Base: [envio de exclusões](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/network.rs:425) e [reconciliação](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/network.rs:799).
+**Aceite:** com dois e três dispositivos, uma nota excluída enquanto um peer está offline não reaparece silenciosamente; uma edição concorrente é preservada para revisão. Base: [comando de exclusão](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/commands.rs:282), [recebimento de exclusões](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/network.rs:495), [reconciliação](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/network.rs:802) e [catálogo local em desenvolvimento](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/catalog.rs).
 
 ### B02. Renomear e mover sem perder vínculos ou histórico — G
 
-A renomeação atual move o arquivo, remove o estado CRDT do caminho antigo e transmite uma exclusão. Esse comando não atualiza as referências escritas nas outras notas nem os caminhos no mapa manual.
+Na versão publicada, a renomeação movia o arquivo e removia o estado CRDT do caminho antigo. O workspace já passa por uma movimentação recuperável que conserva histórico e identidade; a gravação nativa de texto também preserva o CRDT. O comando agora sincroniza o catálogo em vez de transmitir uma exclusão do caminho antigo, e o protocolo identifica a nota independentemente do nome. Ainda faltam as referências nas outras notas e os caminhos no mapa manual.
 
 Preservar a identidade e o histórico da nota, atualizar links relativos, wikilinks e vínculos manuais, e definir a operação correspondente no protocolo. Cobrir também a renomeação de pastas.
 
-**Aceite:** renomear uma nota ligada a outras mantém os vínculos, a edição colaborativa e a convergência de peers offline. Base: [comando de renomeação](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/commands.rs:245).
+**Aceite:** renomear uma nota ligada a outras mantém os vínculos, a edição colaborativa e a convergência de peers offline. Base: [comando de renomeação](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/commands.rs:267) e [movimentação recuperável local](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/structural.rs:332).
 
 ### B03. Gravação atômica e recuperação de arquivos locais — M
 
-Na versão publicada, Markdown, snapshots CRDT, configurações e vínculos usavam gravações diretas. No workspace, esses fluxos já estão sendo integrados a uma base de substituição atômica, backup validado, preservação de arquivos corrompidos e aviso na interface. O histórico do chat também está sendo unificado nessa base.
+Na versão publicada, Markdown, snapshots CRDT, configurações e vínculos usavam gravações diretas. Na branch, esses fluxos e o histórico do chat já usam substituição atômica, backup validado, preservação de arquivos corrompidos e aviso na interface. A intenção durável por nota coordena Markdown e CRDT e tem testes de recuperação após encerramento abrupto do processo. Movimentações recuperáveis foram acrescentadas no workspace e têm testes de interrupção por etapa; ainda falta completar todos os fluxos estruturais.
 
 Concluir essa integração e coordenar a recuperação entre Markdown e CRDT. Cobrir falhas entre a gravação do estado colaborativo e do texto, além de falhas no disco e recuperação sem backup válido. Exibir a recuperação ao usuário sem descartar silenciosamente configurações e vínculos.
 
-**Aceite:** interrupção durante uma gravação deixa uma versão válida recuperável, sem perder a identidade P2P ou substituir dados corrompidos por defaults sem aviso. Base: [gravação e recuperação](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/storage.rs), [notas](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/vault.rs:162), [CRDT](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/crdt.rs:59), [configurações](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/config.rs:460) e [vínculos](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/links.rs:72).
+**Aceite:** interrupção durante uma gravação deixa uma versão válida recuperável, sem perder a identidade P2P ou substituir dados corrompidos por defaults sem aviso. Base: [gravação e recuperação](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/storage.rs), [notas](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/vault.rs:162), [CRDT](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/crdt.rs:59), [configurações](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/config.rs:460) e [vínculos](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/links.rs:90).
 
 ### B04. Lixeira e histórico persistentes, com restauração — M/G
 
-Já existe desfazer exclusão, mas os snapshots ficam em memória, limitados a 25 entradas e 128 MB, e desaparecem ao encerrar o aplicativo. Já existem cópias de conflitos offline, mas falta uma experiência de comparação e resolução integrada.
+Na versão publicada, o desfazer usava snapshots em memória, limitados a 25 entradas e 128 MB, que desapareciam ao encerrar o aplicativo. No workspace, a projeção estrutural conserva arquivos excluídos e estados CRDT em `.lownotes/trash`; a restauração após reinício é comprovada localmente. Ainda faltam a interface da lixeira, retenção configurável e versões periódicas de notas. As cópias de conflitos já existem, mas falta comparação e resolução integrada.
 
 Adicionar lixeira em disco, retenção configurável, versões de notas e comparação antes de restaurar. Restaurar conteúdo como uma nova edição, mantendo a sincronização coerente.
 
-**Aceite:** uma exclusão pode ser revertida após reiniciar; o usuário pode comparar uma nota com sua cópia de conflito e escolher ou combinar os textos. Base: [desfazer exclusões](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/undo.rs:14).
+**Aceite:** uma exclusão pode ser revertida após reiniciar; o usuário pode comparar uma nota com sua cópia de conflito e escolher ou combinar os textos. Base: [restauração persistente](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/commands.rs:295).
 
 ### B05. Mesclar vínculos do mapa criados em dispositivos diferentes — G
 
-Na base v0.3.3, os vínculos manuais e do assistente ficam em `.lownotes/links.json` e usam hash/data de modificação. O trabalho P1 atual já adiciona o histórico imutável `.lownotes/link-operations.json`, com união de adições/remoções, proteção contra replay de listas antigas e preservação de origens. Os testes locais com três dispositivos passaram; falta validar a alteração no novo CI remoto.
+Na base v0.3.3, os vínculos manuais e do assistente ficam em `.lownotes/links.json` e usam hash/data de modificação. O trabalho P1 adicionou o histórico imutável `.lownotes/link-operations.json`, com união de adições/remoções, proteção contra replay de listas antigas e preservação de origens. Os testes locais com três dispositivos e o CI `37686376522` nos três sistemas passaram. Este item está concluído; a integração com os caminhos atualizados em renomeações continua em B02.
 
 Adotar operações de adicionar/remover vínculos com identidade e resolução de concorrência, preservando a origem de cada relação.
 
-**Aceite:** dois dispositivos criam vínculos distintos offline e ambos continuam presentes após sincronizar; remover um vínculo não é revertido por uma cópia antiga do arquivo. Base: [metadados de vínculos](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/vault.rs:243) e [recebimento da sincronização](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/network.rs:912).
+**Aceite:** dois dispositivos criam vínculos distintos offline e ambos continuam presentes após sincronizar; remover um vínculo não é revertido por uma cópia antiga do arquivo. Base: [metadados de vínculos](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/vault.rs:243) e [recebimento da sincronização](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/network.rs:888).
 
 ### B06. Medir e proteger o consumo de RAM, CPU e a latência — M
 
@@ -70,9 +74,9 @@ Medir o processo principal e o conjunto de processos do aplicativo, incluindo We
 
 ### B07. Verificações em cada PR e regressões de integração — M
 
-O workflow de release executa a checagem Svelte e os testes Bun, mas não contém uma etapa de testes Rust. Já existe no workspace um novo workflow de PR/push para frontend e Rust em Windows, Linux e macOS; ainda falta comprovar sua execução no CI e completar a cobertura dos fluxos abaixo.
+Na branch, o workflow de PR/push em `main` executa frontend, Rust, credenciais nativas e Playwright em Windows, Linux e macOS. A release também exige testes Rust antes de cada build nativa e regressões de interface na verificação inicial. Já há evidências locais e execuções remotas registradas; esta revisão não reconferiu o estado da execução remota mais recente. Falta completar a cobertura dos fluxos abaixo.
 
-Concluir e executar o CI para PRs e pushes. Automatizar os cenários de exclusão offline, renomeação, interrupção de gravação, restauração, imagens e edição concorrente. Acrescentar testes de interface para tarefas, busca, temas e atalhos. Preservar os testes existentes de colaboração, imagens e exportação, que já passaram nesta investigação.
+Automatizar os cenários completos de exclusão offline, renomeação, interrupção de gravação e restauração. Manter as regressões existentes de imagens, edição concorrente, tarefas, busca, temas, atalhos e exportação. Distinguir testes de interface com IPC simulado dos testes de persistência, credenciais e rede nativas. Se necessário, ampliar o gatilho de push para branches de desenvolvimento sem PR.
 
 **Aceite:** uma regressão do backend ou desses fluxos é detectada antes da criação de uma release. Base: [release](F:/Desenv/2026/8-LOWCARB/3-lownotes/.github/workflows/release.yml:30) e [CI em andamento](F:/Desenv/2026/8-LOWCARB/3-lownotes/.github/workflows/ci.yml:1).
 
@@ -98,7 +102,7 @@ A listagem lê notas para extrair títulos, o RAG volta a ler os arquivos a cada
 
 Criar um índice local compartilhado com atualização por arquivo alterado, limites de cache e reconstrução segura. Disponibilizar busca global pelo conteúdo, com trechos destacados e navegação até a ocorrência. Reutilizar o índice na recuperação de contexto da IA.
 
-**Aceite:** buscar uma expressão contida apenas no corpo encontra a nota; a alteração de uma nota não exige reindexar o vault inteiro. Base: [listagem](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/vault.rs:138), [RAG](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/rag.rs:76) e [filtro da sidebar](F:/Desenv/2026/8-LOWCARB/3-lownotes/src/lib/note-tree.ts:23).
+**Aceite:** buscar uma expressão contida apenas no corpo encontra a nota; a alteração de uma nota não exige reindexar o vault inteiro. Base: [listagem](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/vault.rs:63), [RAG](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/rag.rs:76) e [filtro da sidebar](F:/Desenv/2026/8-LOWCARB/3-lownotes/src/lib/note-tree.ts:23).
 
 ### B11. Melhorar a qualidade e o controle do RAG — M
 
@@ -106,7 +110,7 @@ O RAG atual é lexical, pontuando palavras, frases e títulos. A seleção usa c
 
 Criar um conjunto de perguntas e resultados esperados; tratar acentos e variações de termos; segmentar respeitando seções, listas e blocos de código; limitar contexto conforme o modelo. Permitir escolher pastas e notas, excluir conteúdo e revisar os trechos enviados. Avaliar recuperação semântica apenas como opção posterior, com medição de custo e qualidade.
 
-**Aceite:** uma bateria de consultas mostra melhora mensurável e o contexto não corta blocos relevantes arbitrariamente nem excede o limite configurado. Base: [segmentação e ranking](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/rag.rs:123) e [montagem de contexto](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/commands.rs:591).
+**Aceite:** uma bateria de consultas mostra melhora mensurável e o contexto não corta blocos relevantes arbitrariamente nem excede o limite configurado. Base: [segmentação e ranking](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/rag.rs:123) e [montagem de contexto](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/commands.rs:642).
 
 ### B12. Detectar alterações feitas por outros programas — M
 
@@ -146,7 +150,7 @@ O editor configura Markdown sem uma coleção de parsers de linguagens para os b
 
 Carregar parsers sob demanda para linguagens comuns e usar cores legíveis em todas as paletas. Manter blocos desconhecidos como texto e avaliar realce na visualização/exportação.
 
-**Aceite:** Rust, Go, Python, JavaScript e SQL têm realce adequado sem carregar todos os parsers na abertura. Base: [configuração do editor](F:/Desenv/2026/8-LOWCARB/3-lownotes/src/lib/components/Editor.svelte:393).
+**Aceite:** Rust, Go, Python, JavaScript e SQL têm realce adequado sem carregar todos os parsers na abertura. Base: [configuração do editor](F:/Desenv/2026/8-LOWCARB/3-lownotes/src/lib/components/Editor.svelte:403).
 
 ### B17. Backlinks e autocompletar links entre notas — M
 
@@ -192,7 +196,7 @@ Validar o destino efetivo das operações contra a raiz do vault, definir compor
 
 ### B28. Documentação consistente e guia de diagnóstico — P/M
 
-O README da base v0.3.3 declarava `/2` enquanto o backend usava `/3`. Essa indicação foi corrigida no trabalho P1: agora documenta `/4`, os fallbacks e o prefixo dos códigos de pareamento. A tabela inicial ainda apresenta Megumin e Rimuru sem destacar a paleta LowBloat padrão; falta também o guia de diagnóstico abaixo.
+O README da base v0.3.3 declarava `/2` enquanto o backend usava `/3`. Essa indicação foi corrigida no trabalho P1: agora documenta `/5`, os fallbacks, as limitações estruturais de clientes antigos e o prefixo dos códigos de pareamento. A tabela inicial ainda apresenta Megumin e Rimuru sem destacar a paleta LowBloat padrão; falta também o guia de diagnóstico abaixo.
 
 Revisar documentação junto às releases; explicar compatibilidade, backup completo, localização dos dados e diferenças entre RAG lexical local e modelos locais. Adicionar um guia de diagnóstico de pareamento, sincronização e atualizações com informações que possam ser compartilhadas sem chaves, códigos de pareamento ou conteúdo das notas.
 
@@ -236,9 +240,9 @@ Automatizar a geração e a conferência dos ícones a partir da logo canônica,
 
 ## Ordem sugerida
 
-1. Criar a base de medição e CI (B06 e B07), reproduzindo os cenários de confiabilidade.
-2. Corrigir gravações, exclusões e renomeações (B03, B01 e B02).
-3. Dar recuperação durável e convergência aos dados (B04, B05 e B09), incluindo proteção de credenciais (B08).
+1. Completar exclusões e renomeações sincronizadas sobre as bases locais já existentes (B01, B02 e B03), acrescentando suas regressões em B07.
+2. Entregar lixeira, versões e recuperação depois de reiniciar (B04), apoiadas nas identidades e exclusões duráveis. Conferir B05 e preservar a proteção de credenciais de B08.
+3. Criar a base de medição (B06) em paralelo e, com as gravações estabilizadas, oferecer backup consistente (B09).
 4. Melhorar busca, RAG, observação de arquivos e resposta da IA (B10–B14).
 5. Evoluir mapa, código, organização, tarefas e portabilidade (B15–B22).
 6. Implementar nuvem e novas plataformas sobre essa base (B23–B25). Modelos, automação da marca e documentação podem entrar antes como entregas menores de B26, B27 e B28.

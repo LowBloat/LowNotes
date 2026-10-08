@@ -239,6 +239,7 @@ export interface InitialStateResponse {
 export interface NoteReadResponse {
   content: string;
   crdt_update_base64: string;
+  note_id?: string | null;
 }
 
 export type NetworkEventPayload =
