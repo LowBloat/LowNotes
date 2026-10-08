@@ -242,6 +242,21 @@ export interface NoteReadResponse {
   note_id?: string | null;
 }
 
+export interface NoteVersion {
+  id: string; note_id: string; path: string; created_ms: number; hash: string; characters: number;
+}
+export interface TrashEntry {
+  record_id: string; note_id: string; path: string; is_dir: boolean; deleted_ms: number; items: number;
+}
+export interface RetentionPolicy { versions_days: number | null; trash_days: number | null }
+export interface CleanupReport { versions: number; archives: number; protected: number }
+export interface HistoryListing {
+  note: { note_id: string; path: string; content: string; hash: string } | null;
+  versions: NoteVersion[];
+  trash: TrashEntry[];
+  retention: RetentionPolicy;
+}
+
 export type NetworkEventPayload =
   | { type: 'Ready'; pair_code: string; endpoint_id: string }
   | { type: 'Syncing'; peer: string }

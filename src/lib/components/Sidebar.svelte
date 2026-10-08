@@ -2,7 +2,7 @@
   import type { VaultConfig, VaultItem } from '../types';
   import type { PresenceUser } from '$lib/presence';
   import { visibleNoteRows } from '$lib/note-tree';
-  import { ChevronDown, ChevronRight, FilePlus2, FileText, Folder, FolderOpen, FolderPlus, NotebookPen, Pencil, RefreshCw, Settings2, Trash2, X } from 'lucide-svelte';
+  import { ChevronDown, ChevronRight, Clock3, FilePlus2, FileText, Folder, FolderOpen, FolderPlus, NotebookPen, Pencil, RefreshCw, Settings2, Trash2, X } from 'lucide-svelte';
   import {
     createNote,
     createFolder,
@@ -22,6 +22,7 @@
     syncStatus = 'idle',
     peerCount = 0,
     onOpenSettings,
+    onOpenHistory,
     onSelectNote,
     onVaultChange,
     onOpenPairModal,
@@ -36,6 +37,7 @@
     syncStatus: 'idle' | 'syncing' | 'synced' | 'error';
     peerCount: number;
     onOpenSettings: () => void;
+    onOpenHistory: () => void;
     onSelectNote: (path: string) => void;
     onVaultChange: (vault: VaultConfig) => void;
     onOpenPairModal: () => void;
@@ -363,6 +365,9 @@
   {/if}
 
   <div class="px-3 py-2 border-t border-[var(--border)]">
+    <button onclick={onOpenHistory}
+      class="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--accent-light)] hover:bg-[var(--bg-hover)] transition"
+      title={$t('history.title')}><Clock3 size={17} /> {$t('history.title')}</button>
     <button onclick={onOpenSettings}
       class="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--accent-light)] hover:bg-[var(--bg-hover)] transition"
       title={$t('settings.title')}><Settings2 size={17} /> {$t('settings.title')}</button>

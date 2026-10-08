@@ -697,6 +697,7 @@ fn restore_source(root: &Path, id: &str) -> anyhow::Result<Option<(String, Item)
                 .map(|op| op.clock)
                 .max()
                 .unwrap_or(0),
+            entry.file_name().to_string_lossy().into_owned(),
         );
         if latest.as_ref().is_none_or(|(time, _, _)| *time < order) {
             latest = Some((
@@ -932,51 +933,108 @@ fn delete_with_hashes(
     merge(root, manager, &planned, device)?;
     Ok(())
 }
+#[derive(Clone, Debug, Serialize)]
+pub struct TrashEntry {
+    pub record_id: String,
+    pub note_id: String,
+    pub path: String,
+    pub is_dir: bool,
+    pub deleted_ms: u64,
+    pub items: usize,
+    #[serde(skip)]
+    clock: u64,
+}
+
+/// Only the most recent archive of each still-deleted identity is offered.
+/// A directory is one selection, with its archived descendants restored together.
+pub fn list_trash(root: &Path) -> anyhow::Result<Vec<TrashEntry>> {
+    let resolved = catalog::load(root)?.resolve()?;
+    let directory = root.join(TRASH);
+    if !directory.exists() { return Ok(Vec::new()); }
+    let mut latest: BTreeMap<String, TrashEntry> = BTreeMap::new();
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let record = entry.file_name().to_string_lossy().into_owned();
+        if !entry.file_type()?.is_dir() || !valid_id(&record) { continue; }
+        let Some(intent) = read_intent(&entry.path())? else { continue; };
+        let clock = intent.catalog.operations.values().map(|op| op.clock).max().unwrap_or(0);
+        for item in intent.items {
+            if item.new.is_some() || !resolved.get(&item.id).is_some_and(ResolvedEntry::deleted)
+                || !entry.path().join("items").join(&item.id).exists() { continue; }
+            let candidate = TrashEntry { record_id: record.clone(), note_id: item.id.clone(),
+                path: item.old, is_dir: item.is_dir, deleted_ms: intent.created_ms, items: 1, clock };
+            if latest.get(&item.id).is_none_or(|old| (old.deleted_ms, old.clock, &old.record_id)
+                < (candidate.deleted_ms, candidate.clock, &candidate.record_id)) {
+                latest.insert(item.id, candidate);
+            }
+        }
+    }
+    let mut entries: Vec<_> = latest.values().filter(|item| !latest.values().any(|parent|
+        parent.is_dir && parent.record_id == item.record_id && item.path.starts_with(&format!("{}/", parent.path))))
+        .cloned().collect();
+    for entry in &mut entries {
+        entry.items = latest.values().filter(|item| item.record_id == entry.record_id
+            && (item.note_id == entry.note_id || (entry.is_dir && item.path.starts_with(&format!("{}/", entry.path))))).count();
+    }
+    entries.sort_by(|a, b| (b.deleted_ms, b.clock, &b.record_id, &b.path).cmp(&(a.deleted_ms, a.clock, &a.record_id, &a.path)));
+    Ok(entries)
+}
+
+pub fn read_trash_note(root: &Path, record: &str, id: &str) -> anyhow::Result<String> {
+    if !valid_id(record) || !valid_id(id) { bail!("invalid trash selection"); }
+    let intent = read_intent(&root.join(TRASH).join(record))?.context("history.unavailable")?;
+    let item = intent.items.iter().find(|item| item.id == id && item.new.is_none() && !item.is_dir)
+        .context("history.unavailable")?;
+    let file = root.join(TRASH).join(record).join("items").join(id);
+    if fs::metadata(&file)?.len() > vault::MAX_NOTE_BYTES { bail!("errors.noteTooLarge"); }
+    let content = fs::read_to_string(file)?;
+    let state = storage::read_validated(&saved_state(&root.join(TRASH).join(record), id),
+        |bytes| decode_doc(&item.old, bytes).is_ok())?.context("deleted history is unavailable")?;
+    if doc_text(&decode_doc(&item.old, &state)?) != content { bail!("trash text and collaborative history differ"); }
+    Ok(content)
+}
+
 pub fn restore_latest(
     root: &Path,
     manager: &CrdtManager,
     device: &str,
 ) -> anyhow::Result<Option<(String, bool)>> {
+    structural::exclusive(root, manager, || {
+        prepare(root, manager, device)?;
+        let Some(entry) = list_trash(root)?.into_iter().next() else { return Ok(None); };
+        restore_selected(root, &entry.record_id, &entry.note_id, manager, device).map(Some)
+    })
+}
+
+pub fn restore_selected(root: &Path, record: &str, id: &str, manager: &CrdtManager, device: &str) -> anyhow::Result<(String, bool)> {
+    if !valid_id(record) || !valid_id(id) { bail!("invalid trash selection"); }
+    structural::exclusive(root, manager, || {
     prepare(root, manager, device)?;
-    let current = catalog::load(root)?;
-    let resolved = current.resolve()?;
-    let mut latest: Option<((u64, u64), Vec<Item>)> = None;
-    let directory = root.join(TRASH);
-    if !directory.exists() {
-        return Ok(None);
-    }
-    for entry in fs::read_dir(directory)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_dir() || !valid_id(&entry.file_name().to_string_lossy()) {
-            continue;
-        }
-        let Some(intent) = read_intent(&entry.path())? else {
-            continue;
-        };
-        let order = (
-            intent.created_ms,
-            intent
-                .catalog
-                .operations
-                .values()
-                .map(|op| op.clock)
-                .max()
-                .unwrap_or(0),
-        );
-        let deleted: Vec<_> = intent
-            .items
-            .into_iter()
-            .filter(|item| {
-                item.new.is_none() && resolved.get(&item.id).is_some_and(ResolvedEntry::deleted)
-            })
-            .collect();
-        if !deleted.is_empty() && latest.as_ref().is_none_or(|(time, _)| *time < order) {
-            latest = Some((order, deleted));
+    let resolved = catalog::load(root)?.resolve()?;
+    let directory = root.join(TRASH).join(record);
+    let intent = read_intent(&directory)?.context("history.unavailable")?;
+    let target = intent.items.iter().find(|item| item.id == id && item.new.is_none()
+        && resolved.get(id).is_some_and(ResolvedEntry::deleted)).context("history.unavailable")?;
+    if restore_source(root, id)?.is_none_or(|(latest, _)| latest != record) { bail!("history.unavailable"); }
+    let mut items: Vec<_> = intent.items.iter().filter(|item| item.new.is_none()
+        && resolved.get(&item.id).is_some_and(ResolvedEntry::deleted)
+        && (item.id == id || (target.is_dir && item.old.starts_with(&format!("{}/", target.old)))))
+        .cloned().collect();
+    // Restore any deleted ancestors too, without restoring unrelated siblings.
+    let mut parent = target.location.parent.clone();
+    while let Some(parent_id) = parent {
+        let ancestor = resolved.get(&parent_id).context("history.unavailable")?;
+        parent = ancestor.location.parent.clone();
+        if ancestor.deleted() && !items.iter().any(|item| item.id == parent_id) {
+            let (_, original) = restore_source(root, &parent_id)?.context("history.unavailable")?;
+            items.push(original);
         }
     }
-    let Some((_, mut items)) = latest else {
-        return Ok(None);
-    };
+    // Validate every retained Markdown/state pair before publishing a restore.
+    for item in &items {
+        let (record, _) = restore_source(root, &item.id)?.context("history.unavailable")?;
+        if !item.is_dir { read_trash_note(root, &record, &item.id)?; }
+    }
     items.sort_by_key(|item| {
         (
             item.old.matches('/').count(),
@@ -984,8 +1042,8 @@ pub fn restore_latest(
             item.old.clone(),
         )
     });
-    let root_id = items[0].id.clone();
-    let is_dir = items[0].is_dir;
+    let root_id = id.to_string();
+    let is_dir = target.is_dir;
     let mut occupied: BTreeSet<_> = resolved
         .values()
         .filter(|entry| !entry.deleted())
@@ -1018,10 +1076,11 @@ pub fn restore_latest(
         Ok(catalog.clone())
     })?;
     merge(root, manager, &planned, device)?;
-    Ok(Some((
+    Ok((
         catalog::load(root)?.resolve()?[&root_id].path.clone(),
         is_dir,
-    )))
+    ))
+    })
 }
 
 pub fn has_restorable(root: &Path) -> anyhow::Result<bool> {
@@ -1034,10 +1093,110 @@ pub fn has_restorable(root: &Path) -> anyhow::Result<bool> {
     Ok(false)
 }
 
+pub(crate) fn expire_trash(root: &Path, cutoff: Option<u64>, peers: &[String], apply: bool, report: &mut crate::retention::CleanupReport) -> anyhow::Result<()> {
+    let Some(cutoff) = cutoff else { return Ok(()); };
+    let directory = root.join(TRASH);
+    if !directory.exists() { return Ok(()); }
+    let current = catalog::load(root)?;
+    if !crate::retention::owned_path(root, &directory, false)? { report.protected += 1; return Ok(()); }
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() || !valid_id(&entry.file_name().to_string_lossy()) { continue; }
+        if !crate::retention::owned_path(root, &entry.path(), true)? { report.protected += 1; continue; }
+        let Some(intent) = read_intent(&entry.path())? else { report.protected += 1; continue; };
+        if intent.created_ms >= cutoff { continue; }
+        // External files retained during recovery have not been reviewed here.
+        if entry.path().join("external").exists() { report.protected += 1; continue; }
+        let resolved = intent.catalog.resolve()?;
+        let required: BTreeSet<_> = intent.items.iter().filter(|item| item.new.is_none())
+            .flat_map(|item| resolved[&item.id].deletions.keys().cloned()).collect();
+        if !required.is_empty() && peers.iter().any(|peer| current.acknowledgements.get(peer).is_none_or(|seen| !required.is_subset(seen))) {
+            report.protected += 1; continue;
+        }
+        let mut complete = true;
+        for item in intent.items.iter().filter(|item| item.new.is_none()) {
+            let file = entry.path().join("items").join(&item.id);
+            if !file.exists() { complete = false; break; }
+            if !item.is_dir {
+                let state = storage::read_validated(&saved_state(&entry.path(), &item.id), |bytes| decode_doc(&item.old, bytes).is_ok())?;
+                if fs::metadata(&file)?.len() > vault::MAX_NOTE_BYTES
+                    || state.as_ref().is_none_or(|bytes| decode_doc(&item.old, bytes).is_err()) {
+                    complete = false; break;
+                }
+                if doc_text(&decode_doc(&item.old, &state.unwrap())?) != fs::read_to_string(file)? { complete = false; break; }
+            }
+        }
+        if !complete { report.protected += 1; continue; }
+        report.archives += 1;
+        if apply { fs::remove_dir_all(entry.path())?; }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use yrs::{ReadTxn, StateVector, Text};
+    #[test]
+    fn selected_trash_restore_keeps_other_deletions_and_reused_filenames() {
+        let root = tempfile::tempdir().unwrap();
+        let manager = CrdtManager::new();
+        crate::creation::create(root.path(), "a.md", Some("original a"), &manager, "a").unwrap();
+        crate::creation::create(root.path(), "b.md", Some("original b"), &manager, "a").unwrap();
+        delete(root.path(), "a.md", &manager, "a").unwrap();
+        delete(root.path(), "b.md", &manager, "a").unwrap();
+        crate::creation::create(root.path(), "a.md", Some("replacement"), &manager, "a").unwrap();
+        let entries = list_trash(root.path()).unwrap();
+        let selected = entries.iter().find(|entry| entry.path == "a.md").unwrap();
+        assert_eq!(read_trash_note(root.path(), &selected.record_id, &selected.note_id).unwrap(), "original a");
+        let (path, is_dir) = restore_selected(root.path(), &selected.record_id, &selected.note_id, &CrdtManager::new(), "a").unwrap();
+        assert!(!is_dir);
+        assert_ne!(path, "a.md");
+        assert_eq!(vault::read_note(root.path(), &path).unwrap(), "original a");
+        assert_eq!(vault::read_note(root.path(), "a.md").unwrap(), "replacement");
+        assert!(!root.path().join("b.md").exists());
+        let remaining = list_trash(root.path()).unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].path, "b.md");
+    }
+    #[test]
+    fn invalid_archived_history_cannot_publish_a_restore_or_discard_its_original() {
+        let root = tempfile::tempdir().unwrap();
+        let manager = CrdtManager::new();
+        crate::creation::create(root.path(), "note.md", Some("original"), &manager, "a").unwrap();
+        delete(root.path(), "note.md", &manager, "a").unwrap();
+        let entry = list_trash(root.path()).unwrap().remove(0);
+        let directory = root.path().join(TRASH).join(&entry.record_id);
+        let state = saved_state(&directory, &entry.note_id);
+        storage::remove_file(&storage::backup_path(&state)).unwrap();
+        fs::write(&state, "damaged history").unwrap();
+        let before = catalog::load(root.path()).unwrap();
+        assert!(restore_selected(root.path(), &entry.record_id, &entry.note_id, &CrdtManager::new(), "a").is_err());
+        assert_eq!(catalog::load(root.path()).unwrap().operations, before.operations);
+        assert!(!root.path().join("note.md").exists());
+        assert_eq!(fs::read_to_string(directory.join("items").join(&entry.note_id)).unwrap(), "original");
+        assert_eq!(fs::read_to_string(state).unwrap(), "damaged history");
+    }
+    #[test]
+    fn folder_trash_selection_restores_its_children_assets_and_history_after_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let manager = CrdtManager::new();
+        crate::creation::create(root.path(), "folder/sub/note.md", Some("before"), &manager, "a").unwrap();
+        fs::write(root.path().join("folder/sub/asset.bin"), [0, 1, 255]).unwrap();
+        manager.replace_note_text(root.path(), "folder/sub/note.md", "after").unwrap();
+        let id = catalog::load(root.path()).unwrap().resolve().unwrap().into_values().find(|entry| entry.path == "folder/sub/note.md").unwrap().id;
+        delete(root.path(), "folder", &manager, "a").unwrap();
+        let entries = list_trash(root.path()).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].items, 3);
+        let manager = CrdtManager::new();
+        let restored = restore_selected(root.path(), &entries[0].record_id, &entries[0].note_id, &manager, "a").unwrap();
+        assert_eq!(restored, ("folder".into(), true));
+        assert_eq!(fs::read(root.path().join("folder/sub/asset.bin")).unwrap(), [0, 1, 255]);
+        assert_eq!(vault::read_note(root.path(), "folder/sub/note.md").unwrap(), "after");
+        assert_eq!(crate::note_history::list(root.path(), &id).unwrap().len(), 1);
+        assert!(list_trash(root.path()).unwrap().is_empty());
+    }
     #[test]
     fn empty_remote_directories_are_materialized_and_keep_identity_through_a_move() {
         let a = tempfile::tempdir().unwrap();

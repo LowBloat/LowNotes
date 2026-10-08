@@ -149,7 +149,7 @@
   }
 
   function handleFindShortcut(event: KeyboardEvent) {
-    if (event.isComposing || !editorRoot) return;
+    if (event.isComposing || !editorRoot || document.querySelector('[data-modal-backdrop]')) return;
     const modified = (event.ctrlKey || event.metaKey) && !event.altKey;
     const key = event.key.toLowerCase();
     if (modified && (key === 'f' || key === 'h')) {
@@ -539,10 +539,10 @@
 
   onMount(async () => {
     window.addEventListener('keydown', handleFindShortcut, true);
-    const stopCrdt = await listen<{ note_path: string; update: number[] }>(
+    const stopCrdt = await listen<{ note_path: string; update: number[]; vault_id?: string }>(
       'p2p:crdt-update',
       (event) => {
-        if (event.payload.note_path === notePath) {
+        if (event.payload.note_path === notePath && (!event.payload.vault_id || event.payload.vault_id === vaultId)) {
           const update = new Uint8Array(event.payload.update);
           if (yDoc) Y.applyUpdate(yDoc, update, 'remote');
           else pendingRemoteUpdates.push(update);

@@ -127,15 +127,22 @@ pub(crate) fn commit_with_hook(
     state: &[u8],
     hook: impl Fn(u8) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
+    if content.len() as u64 > vault::MAX_NOTE_BYTES {
+        anyhow::bail!("errors.noteTooLarge");
+    }
     let _guard = LOCK.get_or_init(Mutex::default).lock();
     let file = path_for(root, note);
     recover_file(root, &file)?;
     let target = vault::safe_join(root, note)?;
-    let previous_hash = match fs::read(&target) {
-        Ok(bytes) => Some(blake3::hash(&bytes).to_hex().to_string()),
+    let previous = match fs::read(&target) {
+        Ok(bytes) => Some(bytes),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(error.into()),
     };
+    let previous_hash = previous.as_ref().map(|bytes| blake3::hash(bytes).to_hex().to_string());
+    if let Some(bytes) = &previous {
+        crate::note_history::record_previous(root, note, std::str::from_utf8(bytes)?, content, false)?;
+    }
     let intent = Intent {
         version: 1,
         path: note.into(),

@@ -46,6 +46,7 @@
   import WelcomeModal from '$lib/components/WelcomeModal.svelte';
   import UpdateModal from '$lib/components/UpdateModal.svelte';
   import SettingsView from '$lib/components/SettingsView.svelte';
+  import HistoryModal from '$lib/components/HistoryModal.svelte';
   let settings = $state<AppSettings | null>(null);
   let theme = $state<AppTheme>('light');
   let viewMode = $state<ViewMode>('split');
@@ -66,6 +67,7 @@
   let incomingRequest = $state<{ request_id: string; peer: PeerConfig } | null>(null);
   let isAiChatOpen = $state(false);
   let isSettingsOpen = $state(false);
+  let isHistoryOpen = $state(false);
   let settingsTab = $state<'general' | 'themes' | 'ai' | 'providers' | 'web' | 'about'>('general');
   let isWelcomeOpen = $state(false);
   let targetLine = $state<number | undefined>(undefined);
@@ -469,8 +471,10 @@
       {syncStatus}
       peerCount={activeVault.peers.length}
       onOpenSettings={() => openSettings()}
+      onOpenHistory={() => (isHistoryOpen = true)}
       onSelectNote={(path) => openNote(path)}
       onVaultChange={(v) => {
+        isHistoryOpen = false;
         activeVault = v;
         lastUndoableAction = 'text';
         selectedNotePath = '';
@@ -562,6 +566,13 @@
   {/if}
 
   <!-- Keep chat mounted while settings are open so pending replies and drafts survive. -->
+  {#if isHistoryOpen && activeVault}
+    {#key activeVault.id}
+      <HistoryModal vaultId={activeVault.id} vaultName={activeVault.name} initialPath={selectedNotePath} {items}
+        onClose={() => (isHistoryOpen = false)}
+        onUpdated={async (path) => { await refreshItems(); if (path) await openNote(path); }} />
+    {/key}
+  {/if}
   {#if settings && activeVault}
     <div style:display={isSettingsOpen ? 'none' : 'contents'}>
       {#key activeVault.id}

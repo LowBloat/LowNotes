@@ -1,10 +1,10 @@
 # Backlog proposto para o LowNotes
 
-Investigação iniciada em 07/10/2026 e revisada em 08/10/2026. Base: versão v0.3.3 (`caf91b8`) e etapas de referências e criação durável da branch `codex/p1-reliability`. Priorização proposta para preservar a leveza, o funcionamento offline e o controle local dos dados. Os avanços da branch e do workspace abaixo ainda não devem ser confundidos com recursos entregues na versão publicada. A execução autorizada se limita aos oito P1 originais (B01–B08).
+Investigação iniciada em 07/10/2026 e revisada em 08/10/2026. Base: versão v0.3.3 (`caf91b8`), etapas de referências e criação durável da branch `codex/p1-reliability` (`7b7a797`) e etapa de lixeira/versões/retenção. Priorização proposta para preservar a leveza, o funcionamento offline e o controle local dos dados. Os avanços da branch e do workspace abaixo ainda não devem ser confundidos com recursos entregues na versão publicada. A execução autorizada se limita aos oito P1 originais (B01–B08).
 
 Evidências existentes da etapa de referências: 130 testes nativos passaram no Windows, com 6 fixtures/testes condicionais ignorados na execução geral; 92 testes do frontend, verificações Svelte/TypeScript, build e 13 cenários de interface passaram. As evidências adicionais e pendências estão registradas no acompanhamento P1.
 
-O levantamento foi feito por inspeção do README, frontend, backend, testes, empacotamento e workflows. A revisão passou **92 testes do frontend, sem falhas**. O [CI da etapa de referências](https://github.com/LowBloat/LowNotes/actions/runs/37722631096) concluiu com sucesso em Windows, Linux e macOS. A etapa posterior de criação passou **138 testes nativos no Windows**, sem falhas, com 7 fixtures/testes condicionais ignorados na execução geral, e ainda precisa de sua matriz remota. Não há novas medições de desempenho. Os testes nativos já cobrem exclusão/edição/renomeação offline com dois e três endpoints reais, recuperação após encerramento abrupto e preservação de cópias para revisão. O histórico e os critérios ainda pendentes estão em [P1-IMPLEMENTATION.md](F:/Desenv/2026/8-LOWCARB/3-lownotes/P1-IMPLEMENTATION.md).
+O levantamento foi feito por inspeção do README, frontend, backend, testes, empacotamento e workflows. Nesta etapa, **92 testes do frontend passaram, sem falhas**, e as verificações Svelte/TypeScript terminaram sem erros nem avisos. O [CI da criação durável](https://github.com/LowBloat/LowNotes/actions/runs/37780774528), sobre `7b7a797`, concluiu com sucesso na matriz Windows, Linux e macOS. A etapa posterior de lixeira e versões passou **150 testes nativos no Windows**, sem falhas, com 7 fixtures/testes condicionais ignorados na execução geral, além de **19 cenários de interface** e build de produção; ainda precisa de sua própria matriz remota. Não há novas medições de desempenho. Os testes nativos já cobrem exclusão/edição/renomeação offline com dois e três endpoints reais, recuperação após encerramento abrupto, restauração colaborativa, retenção e preservação de cópias para revisão. O histórico e os critérios ainda pendentes estão em [P1-IMPLEMENTATION.md](F:/Desenv/2026/8-LOWCARB/3-lownotes/P1-IMPLEMENTATION.md).
 
 Esforço relativo: **P** = mudança localizada; **M** = vários fluxos ou componentes; **G** = mudança de arquitetura, protocolo ou plataforma. As estimativas não representam prazos. **P1** = confiabilidade e sustentação; **P2** = melhorias de uso e escala; **P3** = expansão.
 
@@ -12,13 +12,13 @@ Esforço relativo: **P** = mudança localizada; **M** = vários fluxos ou compon
 
 | Item | Estado observado | O que ainda precisa ser entregue |
 | --- | --- | --- |
-| B01 | Catálogo e comandos integrados ao protocolo `/5`; cenário real de três dispositivos passou, com exclusão/edição/renomeação offline e recriação do nome; criação agora recuperável | Concluir a coordenação das mutações restantes e a validação remota da criação |
+| B01 | Concluído: catálogo durável, peers offline, confirmações, conflitos, pastas e criação recuperável; CI `37780774528` passou nos três sistemas | Manter as regressões; os fluxos de texto restantes continuam em B03 |
 | B02 | Concluído: identidade, histórico, referências e mapa acompanham os movimentos; cenários offline reais e CI nos três sistemas passaram | Manter as regressões nas próximas etapas |
-| B03 | Gravação atômica, backups válidos, coordenação Markdown/CRDT e avisos; 21 interrupções reais de criação passaram | Concluir a coordenação das mutações restantes e a validação remota |
-| B04 | Arquivos removidos e estados CRDT conservados em disco; desfazer usa restauração explícita e funciona após reiniciar | Interface de lixeira, retenção configurável, versões de notas e comparação/restauração de versões |
-| B05 | Concluído: união de operações, remoção durável e migração; testes locais e CI nos três sistemas passaram | Manter regressões e validar a integração futura com renomeações |
+| B03 | Gravação atômica, backups válidos, coordenação Markdown/CRDT e avisos; 21 interrupções reais de criação passaram, com CI nos três sistemas | Concluir a coordenação das mutações restantes, incluindo remoção de referências escritas ao remover vínculos |
+| B04 | Lixeira selecionável, versões por identidade, comparação/combinação e restauração como nova edição; retenção configurável com proteção de peers e arquivos externos; testes locais passaram | Validar esta etapa na matriz remota antes de marcar concluído |
+| B05 | Concluído: união de operações, remoção durável e migração; testes locais e CI nos três sistemas passaram | Manter as regressões, incluindo a associação por identidade implementada em B02 |
 | B06 | Sem benchmark reproduzível identificado | Medir RAM, CPU e latências por plataforma, incluindo WebView |
-| B07 | CI de PR/main e testes antes das builds de release já configurados | Completar regressões de exclusão/renomeação/restauração e conferir a execução remota mais recente |
+| B07 | CI de PR/main e testes antes das builds de release configurados; criação durável passou na matriz remota | Acrescentar e validar as regressões das etapas ainda pendentes, especialmente interface de recuperação e histórico |
 | B08 | Concluído: credenciais do SO, migração, proteção de identidade e retentativa | Manter as regressões nos três sistemas |
 | B27 | Ícones regenerados no workspace | Automatizar a conferência e entregar os novos ícones em uma release |
 
@@ -37,7 +37,7 @@ Os demais itens são propostas ou lacunas ainda não resolvidas. Uma base implem
 | 7 | Mapa escalável, backlinks e tarefas consolidadas (B15/B17/B18) | Ajudar a navegar e acompanhar um vault crescente | M/G |
 | 8 | Adaptadores de nuvem e canais Linux mantidos (B23/B24) | Expandir sincronização e simplificar instalação/atualização | G |
 
-B02, B05 e B08 já têm implementação e evidências; entram na manutenção das regressões. B01, B03, B04 e B07 têm bases em andamento. B06 continua sem relatório reproduzível. As propostas de expansão devem usar a mesma semântica de identidade, exclusão e conflito já adotada no P2P.
+B01, B02, B05 e B08 já têm implementação e evidências; entram na manutenção das regressões. B03 e B07 continuam em andamento, e B04 aguarda sua matriz remota. B06 continua sem relatório reproduzível. As propostas de expansão devem usar a mesma semântica de identidade, exclusão e conflito já adotada no P2P.
 
 ## P1 — Confiabilidade e sustentação
 
@@ -47,7 +47,7 @@ Na versão publicada, a exclusão era enviada aos peers conectados enquanto a re
 
 Implementar registros persistentes de exclusão, confirmação por dispositivo e regras para o conflito entre excluir e editar. Fazer esse registro funcionar também para pastas e renomeações.
 
-A lacuna identificada na revisão foi corrigida na etapa seguinte: notas, pastas e rascunhos do assistente registram intenção durável antes de publicar identidade e conteúdo. Interrupções, reutilização de nome excluído, movimentos/exclusões recebidos durante a criação e uma gravação concorrente com movimento têm regressões nativas. A etapa de criação passou 138 testes locais; sua validação remota e a coordenação das demais mutações continuam pendentes.
+A lacuna identificada na revisão foi corrigida na etapa seguinte: notas, pastas e rascunhos do assistente registram intenção durável antes de publicar identidade e conteúdo. Interrupções, reutilização de nome excluído, movimentos/exclusões recebidos durante a criação e uma gravação concorrente com movimento têm regressões nativas. A etapa de criação passou 138 testes locais e seu CI nos três sistemas. A coordenação dos demais fluxos de escrita continua em B03.
 
 **Aceite:** com dois e três dispositivos, uma nota excluída enquanto um peer está offline não reaparece silenciosamente; uma edição concorrente é preservada para revisão. Base: [comando de exclusão](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/commands.rs:282), [recebimento de exclusões](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/network.rs:495), [reconciliação](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/network.rs:802) e [catálogo local em desenvolvimento](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/catalog.rs).
 
@@ -65,13 +65,13 @@ Na versão publicada, Markdown, snapshots CRDT, configurações e vínculos usav
 
 Concluir essa integração e coordenar a recuperação entre Markdown e CRDT. Cobrir falhas entre a gravação do estado colaborativo e do texto, além de falhas no disco e recuperação sem backup válido. Exibir a recuperação ao usuário sem descartar silenciosamente configurações e vínculos.
 
-A criação comum e os rascunhos da IA agora usam uma criação durável compartilhada. Os testes encerram processos reais em 21 pontos, incluindo a intenção de criação e as gravações do catálogo, Markdown e CRDT; conferem também destino bloqueado, conteúdo externo e restauração de uma criação excluída. Os comandos nativos de documentos e recebimentos de conteúdo estão coordenados com movimentações. Ainda é necessário concluir as demais mutações, como a remoção de referências escritas ao remover vínculos, e validar remotamente a nova etapa antes de considerar B03 concluído.
+A criação comum e os rascunhos da IA agora usam uma criação durável compartilhada. Os testes encerram processos reais em 21 pontos, incluindo a intenção de criação e as gravações do catálogo, Markdown e CRDT; conferem também destino bloqueado, conteúdo externo e restauração de uma criação excluída. Os comandos nativos de documentos e recebimentos de conteúdo estão coordenados com movimentações, e essa etapa passou no CI dos três sistemas. Ainda é necessário concluir as demais mutações, como a remoção de referências escritas ao remover vínculos, antes de considerar B03 concluído.
 
 **Aceite:** interrupção durante gravação, criação de nota/pasta ou salvamento de rascunho deixa uma versão válida recuperável e identidade coerente. Falta de espaço ou destino bloqueado preservam os dados anteriores e exibem erro. A recuperação não perde a identidade P2P nem substitui dados corrompidos por defaults sem aviso. Base: [gravação e recuperação](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/storage.rs), [criação de notas](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/vault.rs:174), [rascunhos do assistente](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/assistant.rs:241), [CRDT](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/crdt.rs:59), [configurações](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/config.rs:460) e [vínculos](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/links.rs:90).
 
 ### B04. Lixeira e histórico persistentes, com restauração — M/G
 
-Na versão publicada, o desfazer usava snapshots em memória, limitados a 25 entradas e 128 MB, que desapareciam ao encerrar o aplicativo. No workspace, a projeção estrutural conserva arquivos excluídos e estados CRDT em `.lownotes/trash`; a restauração após reinício é comprovada localmente. Ainda faltam a interface da lixeira, retenção configurável e versões periódicas de notas. As cópias de conflitos já existem, mas falta comparação e resolução integrada.
+Na versão publicada, o desfazer usava snapshots em memória, limitados a 25 entradas e 128 MB, que desapareciam ao encerrar o aplicativo. A etapa P1 conserva excluídos e seus estados CRDT em `.lownotes/trash`, oferece seleção na interface e restaura após reinício sem sobrescrever uma nota nova. Versões em `.lownotes/versions` seguem a identidade, agrupam digitação por minuto e são restauradas como novas edições. A interface compara versões ou cópias de conflito e permite escolher/combinar/editar o resultado; alterações concorrentes desde a comparação são recusadas sem descartar o resultado digitado. Retenção é configurável, com padrão infinito, limpeza periódica/prévia/manual e proteção de peers sem confirmação, arquivos externos e junctions/symlinks. A execução local final passou 150 testes Rust e 19 cenários de interface; falta o CI desta etapa nos três sistemas. Bases: [histórico](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/note_history.rs), [retenção](F:/Desenv/2026/8-LOWCARB/3-lownotes/src-tauri/src/retention.rs) e [interface](F:/Desenv/2026/8-LOWCARB/3-lownotes/src/lib/components/HistoryModal.svelte).
 
 Adicionar lixeira em disco, retenção configurável, versões de notas e comparação antes de restaurar. Restaurar conteúdo como uma nova edição, mantendo a sincronização coerente.
 
@@ -95,7 +95,7 @@ Medir o processo principal e o conjunto de processos do aplicativo, incluindo We
 
 ### B07. Verificações em cada PR e regressões de integração — M
 
-Na branch, o workflow de PR/push em `main` executa frontend, Rust, credenciais nativas e Playwright em Windows, Linux e macOS. A release também exige testes Rust antes de cada build nativa e regressões de interface na verificação inicial. Já há evidências locais e execuções remotas registradas; o CI `37717262436` sobre `e43e5e6` foi conferido e passou nos três sistemas. O CI `37719161090` sobre `efe5fa7`, com mapa e fila de catálogo, também passou nos três sistemas. A etapa posterior de referências precisa de sua própria matriz. Falta completar a cobertura dos fluxos abaixo.
+Na branch, o workflow de PR/push em `main` executa frontend, Rust, credenciais nativas e Playwright em Windows, Linux e macOS. A release também exige testes Rust antes de cada build nativa e regressões de interface na verificação inicial. As etapas de referências (`37722631096`, sobre `5b4aec3`) e criação durável (`37780774528`, sobre `7b7a797`) passaram na matriz dos três sistemas. Falta completar a cobertura das etapas ainda em desenvolvimento, incluindo lixeira e histórico na interface.
 
 Automatizar os cenários completos de exclusão offline, renomeação, interrupção de gravação e restauração. Manter as regressões existentes de imagens, edição concorrente, tarefas, busca, temas, atalhos e exportação. Distinguir testes de interface com IPC simulado dos testes de persistência, credenciais e rede nativas. Se necessário, ampliar o gatilho de push para branches de desenvolvimento sem PR.
 
@@ -261,7 +261,7 @@ Automatizar a geração e a conferência dos ícones a partir da logo canônica,
 
 ## Ordem sugerida
 
-1. Completar exclusões e renomeações sincronizadas sobre as bases locais já existentes (B01, B02 e B03), acrescentando suas regressões em B07.
+1. Completar a coordenação dos fluxos de escrita restantes (B03), acrescentando suas regressões em B07 e mantendo as já concluídas de B01/B02.
 2. Entregar lixeira, versões e recuperação depois de reiniciar (B04), apoiadas nas identidades e exclusões duráveis. Conferir B05 e preservar a proteção de credenciais de B08.
 3. Criar a base de medição (B06) em paralelo e, com as gravações estabilizadas, oferecer backup consistente (B09).
 4. Melhorar busca, RAG, observação de arquivos e resposta da IA (B10–B14).

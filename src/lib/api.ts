@@ -25,6 +25,7 @@ import type {
   ImageUploadProvider,
   ImageUploadSettings,
   NoteEdit,
+  HistoryListing, NoteVersion, RetentionPolicy, CleanupReport,
 } from './types';
 
 export async function uploadClipboardImage(bytes: Uint8Array, provider: ImageUploadProvider, vaultId = ''): Promise<string> {
@@ -98,6 +99,28 @@ export async function deleteItem(path: string): Promise<void> {
 
 export async function undoLastDelete(): Promise<{ path: string; is_dir: boolean; has_more: boolean } | null> {
   return await invoke('undo_last_delete');
+}
+
+export function historyList(vaultId: string, path?: string): Promise<HistoryListing> {
+  return invoke('history_list', { vaultId, path: path || null });
+}
+export function historyVersion(vaultId: string, noteId: string, versionId: string): Promise<{ summary: NoteVersion; content: string }> {
+  return invoke('history_version', { vaultId, noteId, versionId });
+}
+export function historyApply(vaultId: string, noteId: string, expectedHash: string, action: { versionId?: string; content?: string }): Promise<string> {
+  return invoke('history_apply', { vaultId, noteId, expectedHash, versionId: action.versionId ?? null, content: action.content ?? null });
+}
+export function historyTrashRead(vaultId: string, entry: { record_id: string; note_id: string }): Promise<string> {
+  return invoke('history_trash_read', { vaultId, recordId: entry.record_id, noteId: entry.note_id });
+}
+export function historyTrashRestore(vaultId: string, entry: { record_id: string; note_id: string }): Promise<{ path: string; is_dir: boolean }> {
+  return invoke('history_trash_restore', { vaultId, recordId: entry.record_id, noteId: entry.note_id });
+}
+export function historyRetentionSave(vaultId: string, policy: RetentionPolicy): Promise<void> {
+  return invoke('history_retention_save', { vaultId, policy });
+}
+export function historyCleanup(vaultId: string, apply: boolean): Promise<CleanupReport> {
+  return invoke('history_cleanup', { vaultId, apply });
 }
 
 export async function crdtApplyClientUpdate(notePath: string, updateBase64: string, noteId?: string | null, vaultId?: string, recoveryUpdate = false): Promise<void> {

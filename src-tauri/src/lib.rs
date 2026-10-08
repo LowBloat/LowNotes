@@ -22,6 +22,9 @@ pub mod local_images;
 pub mod storage;
 pub mod note_transaction;
 pub mod creation;
+pub mod note_history;
+pub mod retention;
+pub mod history_commands;
 pub mod credentials;
 
 use std::sync::Arc;
@@ -132,6 +135,7 @@ pub fn run() {
                 }
             }
             drop(s);
+            history_commands::start_retention(settings.clone(), app.state::<AppState>().crdt.clone());
 
             let open = MenuItem::with_id(app, "open", "Abrir LowNotes", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Sair do LowNotes", true, None::<&str>)?;
@@ -166,6 +170,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::take_recovery_notices,
             commands::retry_credentials,
+            history_commands::history_list,
+            history_commands::history_version,
+            history_commands::history_apply,
+            history_commands::history_trash_read,
+            history_commands::history_trash_restore,
+            history_commands::history_retention_save,
+            history_commands::history_cleanup,
             image_upload::upload_clipboard_image,
             image_upload::save_image_upload_settings,
             updates::get_update_policy,

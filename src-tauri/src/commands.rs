@@ -28,7 +28,7 @@ pub struct AppState {
     pub undo: Mutex<UndoHistory>,
 }
 
-fn catalog_device(state: &AppState, vault: &VaultConfig) -> String {
+pub(crate) fn catalog_device(state: &AppState, vault: &VaultConfig) -> String {
     state.network.read().as_ref().and_then(|service| service.pair_info()).map(|info| info.endpoint_id)
         .unwrap_or_else(|| format!("local-{}", blake3::hash(vault.id.as_bytes()).to_hex()))
 }
