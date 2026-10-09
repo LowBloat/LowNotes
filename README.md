@@ -5,20 +5,40 @@
 <h1 align="center">LowNotes</h1>
 
 <p align="center">
-  Your Markdown notes, on your computer.<br>
-  P2P collaborative editing whenever you want.
+  Local-first Markdown notes. Real-time P2P collaboration.<br>
+  Your files, on your computer. Optional AI, on your terms.
+</p>
+
+<p align="center">
+  <a href="https://github.com/LowBloat/LowNotes/releases/latest"><img src="https://img.shields.io/github/v/release/LowBloat/LowNotes" alt="Latest release"></a>
+  <a href="https://github.com/LowBloat/LowNotes/actions/workflows/ci.yml"><img src="https://github.com/LowBloat/LowNotes/actions/workflows/ci.yml/badge.svg" alt="Build and tests"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue" alt="License: AGPL-3.0-only"></a>
 </p>
 
 <p align="center">
   <a href="https://github.com/LowBloat/LowNotes/releases/latest">Download the app</a>
   · <a href="#get-started">Get started</a>
   · <a href="#how-it-works">How it works</a>
-  · <a href="#development">Development</a>
+  · <a href="CONTRIBUTING.md">Contribute</a>
+  · <a href="https://lowbloat.app/en/produtos/lownotes/">Website</a>
 </p>
 
 ---
 
-LowNotes is a desktop editor for people who want **readable Markdown files**, a comfortable interface, and collaboration between devices without hosting a notes server. You can work with local files only; P2P pairing and the AI assistant are optional.
+LowNotes is an **open-source, local-first Markdown note-taking app** for Windows, Linux and macOS. Write offline, organize a personal knowledge base with linked notes, and collaborate in real time through encrypted peer-to-peer connections without hosting a notes server. Your notes stay readable `.md` files in a folder you control; P2P pairing and the AI assistant are optional.
+
+![LowNotes on Windows with the note sidebar, Markdown editor and rendered preview](assets/screenshots/lownotes-desktop.png)
+
+*LowNotes in Split view: edit Markdown and see the rendered result side by side.*
+
+## Why LowNotes?
+
+- **Start with a folder.** Open existing Markdown notes and keep using them in other editors.
+- **Write offline.** Local editing needs no account, cloud storage or AI provider.
+- **Connect your computers.** Pair devices for encrypted P2P sync and real-time collaborative editing.
+- **Build a knowledge base.** Use folders, search, wikilinks, a connection map and Mermaid diagrams.
+- **Choose your assistant.** Use local models through Ollama or LM Studio, or configure a remote provider. Remote requests send the prompt and selected context to that provider.
+- **Recover and share your work.** Review local history and trash, then export notes to Word or PDF.
 
 | Day to day | When you need more |
 | --- | --- |
@@ -28,6 +48,20 @@ LowNotes is a desktop editor for people who want **readable Markdown files**, a 
 | `.md` notes that open in other editors | Conflict copies to review divergent offline edits |
 
 ## Get started
+
+### Download
+
+The [latest release](https://github.com/LowBloat/LowNotes/releases/latest) includes these builds:
+
+| Platform | Available formats |
+| --- | --- |
+| Windows x64 | Setup `.exe`, `.msi`, portable `.zip` |
+| Linux x64 | `.AppImage`, `.deb`, `.rpm`, Arch `.pkg.tar.zst`, portable `.tar.gz` |
+| macOS (Apple Silicon and Intel) | Universal `.dmg` |
+
+Release assets include `.sha256` checksums. Choose the package that matches your operating system; the release page always points to the current version.
+
+### Open your first vault
 
 1. Download the Windows, Linux or macOS build from [Releases](https://github.com/LowBloat/LowNotes/releases/latest).
 2. Open LowNotes and pick a folder for your **vault**. You can use a folder that already contains `.md` files.
@@ -146,7 +180,9 @@ After that, edits to open notes can arrive in real time. Changes made while a de
 - System dependencies required by Tauri on your platform; on Linux, see the libraries installed in [`.github/workflows/release.yml`](.github/workflows/release.yml)
 
 ```bash
-bun install
+git clone https://github.com/LowBloat/LowNotes.git
+cd LowNotes
+bun install --frozen-lockfile
 bun run tauri dev
 ```
 
@@ -160,8 +196,10 @@ To verify changes:
 
 ```bash
 bun run check
+bun run check:e2e
 bun test
-cargo test --lib --manifest-path src-tauri/Cargo.toml
+python .github/scripts/test_update_manifest.py
+cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
 bun run build
 bunx playwright install chromium
 bun run test:e2e
@@ -170,6 +208,16 @@ bun run test:e2e
 The frontend uses **Svelte 5, TypeScript, Tailwind CSS v4, CodeMirror 6 and Yjs**. The backend uses **Tauri v2, Rust, Yrs and Iroh**. The Markdown renderer is based on `markdown-it` with extensions and Mermaid. Multi-platform publishing is done by the [release workflow](.github/workflows/release.yml), which generates installers, signatures and the updater's `latest.json`.
 
 The [verification workflow](.github/workflows/ci.yml) runs on pushes and pull requests across Windows, Linux and macOS. Browser tests exercise the real frontend with an isolated native IPC adapter; Rust tests cover persistence, crash recovery, credentials and synchronization. Native credential-store tests use a synthetic entry that is deleted afterward; Linux CI creates an isolated Secret Service session.
+
+## Contribute and support the project
+
+Bug reports, documentation improvements, translations of the app interface, reproducible tests and focused code changes are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks and pull request guidance.
+
+- [Report a bug](https://github.com/LowBloat/LowNotes/issues/new?template=bug_report.yml) with your app version and steps to reproduce.
+- [Suggest a feature](https://github.com/LowBloat/LowNotes/issues/new?template=feature_request.yml) with the problem you want to solve.
+- Star the repository to bookmark it and help others discover LowNotes.
+- Share [LowNotes](https://github.com/LowBloat/LowNotes) with people who use Markdown, local-first tools or personal knowledge management apps.
+- Watch **Releases** on GitHub to follow new versions.
 
 ## License
 

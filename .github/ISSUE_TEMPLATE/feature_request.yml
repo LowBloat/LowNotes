@@ -1,0 +1,30 @@
+name: Feature request
+description: Describe a problem you would like LowNotes to solve.
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: Please write in English and search existing requests before submitting.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe your workflow and who would benefit.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Explain how the feature would work from a user's perspective.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or workarounds
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Optional examples or sketches. Remove private content before attaching files.

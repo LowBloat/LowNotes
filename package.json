@@ -1,7 +1,20 @@
 {
   "name": "lownotes",
   "version": "0.3.4",
-  "description": "",
+  "description": "Local-first Markdown note-taking app with encrypted P2P sync, real-time collaboration and optional AI for Windows, Linux and macOS.",
+  "homepage": "https://lowbloat.app/en/produtos/lownotes/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LowBloat/LowNotes.git"
+  },
+  "bugs": {
+    "url": "https://github.com/LowBloat/LowNotes/issues"
+  },
+  "keywords": [
+    "markdown", "note-taking", "local-first", "offline-first",
+    "personal-knowledge-management", "p2p", "collaborative-editing",
+    "tauri", "svelte", "rust", "ollama"
+  ],
   "type": "module",
   "scripts": {
     "dev": "vite dev",
