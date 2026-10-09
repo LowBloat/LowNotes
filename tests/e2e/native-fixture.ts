@@ -108,7 +108,7 @@ export async function openVault(page: Page, options: {
       case 'links_get': return [];
       case 'retry_credentials': settings.credential_error = ''; return settings;
       case 'get_update_policy': return { channel: 'windows', can_install: true, updater_target: null };
-      case 'plugin:app|version': return '0.3.3';
+      case 'plugin:app|version': return '0.3.4';
       case 'plugin:opener|open_url': openedUrls.push(args.url); return null;
       default: return null;
     }
