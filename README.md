@@ -192,6 +192,8 @@ To build the app:
 bun run tauri build
 ```
 
+The app, installer, tray and favicon icons come from `assets/brand/lownotes_logo.png`. Tauri development and production builds regenerate the platform icons automatically. After replacing the logo, run `bun run icons` and commit the updated files in `src-tauri/icons/` and `static/favicon.png`. Cargo also watches the icon directory so incremental Windows builds refresh the embedded executable icon.
+
 To verify changes:
 
 ```bash

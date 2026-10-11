@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "LowNotes",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "identifier": "dev.lowbloat.lownotes",
   "build": {
-    "beforeDevCommand": "bun run dev",
+    "beforeDevCommand": "bun run icons && bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build",
+    "beforeBuildCommand": "bun run icons && bun run build",
     "frontendDist": "../build"
   },
   "app": {
@@ -35,7 +35,13 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico"
+      }
+    }
   },
   "plugins": {
     "updater": {
