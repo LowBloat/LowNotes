@@ -35,8 +35,38 @@ pub(crate) fn report_recovery(path: &Path, recovered: bool) {
     }
 }
 
+/// Windows scanners, indexers and sync clients can briefly hold a handle
+/// without FILE_SHARE_DELETE, so renames and removals fail with "access
+/// denied" (5) or a sharing/lock violation (32, 33). Retry those for up to
+/// about 300 ms; any other error, and every error elsewhere, is returned as is.
+pub(crate) fn retry_transient<T>(
+    mut operation: impl FnMut() -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    let mut attempt = 0;
+    loop {
+        match operation() {
+            Ok(value) => return Ok(value),
+            Err(error)
+                if cfg!(windows)
+                    && attempt < 6
+                    && matches!(error.raw_os_error(), Some(5 | 32 | 33)) =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(5 << attempt));
+                attempt += 1;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// `fs::rename` with the Windows transient-lock retry.
+pub(crate) fn rename(from: impl AsRef<Path>, to: impl AsRef<Path>) -> std::io::Result<()> {
+    let (from, to) = (from.as_ref(), to.as_ref());
+    retry_transient(|| fs::rename(from, to))
+}
+
 pub(crate) fn remove_file(path: &Path) -> anyhow::Result<()> {
-    match fs::remove_file(path) {
+    match retry_transient(|| fs::remove_file(path)) {
         Ok(()) => {
             #[cfg(unix)]
             if let Some(parent) = path.parent() {
@@ -228,6 +258,32 @@ fn quarantine(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn transient_windows_locks_are_retried_and_other_errors_are_not() {
+        let mut calls = 0;
+        let result = super::retry_transient(|| {
+            calls += 1;
+            if calls < 3 {
+                Err(std::io::Error::from_raw_os_error(32))
+            } else {
+                Ok(calls)
+            }
+        });
+        if cfg!(windows) {
+            assert_eq!(result.unwrap(), 3);
+        } else {
+            assert!(result.is_err());
+            assert_eq!(calls, 1);
+        }
+        let mut calls = 0;
+        let missing = super::retry_transient(|| -> std::io::Result<()> {
+            calls += 1;
+            Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+        });
+        assert!(missing.is_err());
+        assert_eq!(calls, 1, "permanent errors are not retried");
+    }
+
     use super::*;
     fn json(bytes: &[u8]) -> bool {
         serde_json::from_slice::<serde_json::Value>(bytes).is_ok()
