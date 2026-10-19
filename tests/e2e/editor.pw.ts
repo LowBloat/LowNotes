@@ -191,3 +191,33 @@ test('an unavailable credential store explains the issue and can be retried whil
     expect(vault.errors).toEqual([]);
   } finally { vault.destroy(); }
 });
+
+test('typing sends merged updates in a few calls and the note is read once', async ({ page }) => {
+  const vault = await openVault(page, { source: '# Batch\n\n' });
+  try {
+    expect(vault.reads.filter((path) => path === 'Lista.md')).toHaveLength(1);
+    await page.locator('.cm-content').focus();
+    await page.keyboard.press(`${MOD}+End`);
+    const sentence = 'Typing a whole sentence should not cost one native call per key.';
+    await page.keyboard.type(sentence);
+    await expect.poll(vault.content).toContain(sentence);
+    expect(vault.saves.length).toBeGreaterThan(0);
+    expect(vault.saves.length).toBeLessThan(sentence.length / 3);
+    await expect(page.locator('article')).toContainText(sentence);
+    expect(vault.errors).toEqual([]);
+  } finally { vault.destroy(); }
+});
+
+test('edits typed right before switching notes are still saved', async ({ page }) => {
+  const other = { path: 'Other.md', name: 'Other.md', title: 'Other', is_dir: false, size: 0, modified_ms: 1 };
+  const vault = await openVault(page, { source: '# Switch\n\n', otherNotes: [other] });
+  try {
+    await page.locator('.cm-content').focus();
+    await page.keyboard.press(`${MOD}+End`);
+    await page.keyboard.type('last words');
+    await page.getByRole('button', { name: 'Other (Other.md)' }).click();
+    await expect.poll(() => vault.reads.at(-1)).toBe('Other.md');
+    await expect.poll(vault.content).toContain('last words');
+    expect(vault.errors).toEqual([]);
+  } finally { vault.destroy(); }
+});
