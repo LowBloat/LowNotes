@@ -48,6 +48,19 @@
 
   let searchQuery = $state('');
   let isVaultDropdownOpen = $state(false);
+  let vaultSwitcher = $state<HTMLElement | null>(null);
+  let vaultToggle = $state<HTMLButtonElement | null>(null);
+
+  // The vault menu closes on a click outside it or on Escape, like other menus.
+  function closeVaultMenuOnOutside(event: PointerEvent) {
+    if (isVaultDropdownOpen && vaultSwitcher && !vaultSwitcher.contains(event.target as Node)) isVaultDropdownOpen = false;
+  }
+  function closeVaultMenuOnEscape(event: KeyboardEvent) {
+    if (!isVaultDropdownOpen || event.key !== 'Escape' || document.querySelector('[data-modal-backdrop]')) return;
+    event.preventDefault();
+    isVaultDropdownOpen = false;
+    vaultToggle?.focus();
+  }
   let isCreatingNote = $state(false);
   let newNoteName = $state('');
   let isCreatingFolder = $state(false);
@@ -139,12 +152,16 @@
 
 </script>
 
+<svelte:window onpointerdown={closeVaultMenuOnOutside} onkeydown={closeVaultMenuOnEscape} />
+
 <aside class="w-64 h-full flex flex-col border-r border-[var(--border)] bg-[var(--bg-sidebar)] select-none">
   <!-- Vault Switcher Header -->
-  <div class="app-topbar relative flex items-center border-b border-[var(--border)] px-3">
+  <div class="app-topbar relative flex items-center border-b border-[var(--border)] px-3" bind:this={vaultSwitcher}>
     <button
+      bind:this={vaultToggle}
       onclick={() => (isVaultDropdownOpen = !isVaultDropdownOpen)}
       aria-expanded={isVaultDropdownOpen}
+      aria-haspopup="true"
       class="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-[var(--bg-hover)] text-left transition group"
     >
       <div class="flex items-center gap-2 overflow-hidden">
@@ -294,16 +311,18 @@
     {:else}
       {#each visibleRows as { item, depth } (item.path)}
         <div
-          role="button"
-          tabindex="0"
-          onclick={() => item.is_dir ? toggleFolder(item.path) : onSelectNote(item.path)}
-          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); item.is_dir ? toggleFolder(item.path) : onSelectNote(item.path); } }}
-          aria-expanded={item.is_dir ? !collapsedFolders.has(item.path) : undefined}
-          aria-label={`${item.title} (${item.path})`}
-          class="group w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs text-left cursor-pointer transition {selectedPath === item.path ? 'bg-[var(--bg-active)] text-[var(--accent-light)] font-medium' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-main)]'}"
-          style:padding-left={`${10 + depth * 16}px`}
+          class="group w-full flex items-center justify-between pr-2.5 rounded-md text-xs text-left transition {selectedPath === item.path ? 'bg-[var(--bg-active)] text-[var(--accent-light)] font-medium' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-main)]'}"
         >
-          <div class="flex items-center gap-2 overflow-hidden flex-1">
+          <!-- The row action is a real button; rename/delete are sibling buttons, never nested. -->
+          <button
+            type="button"
+            onclick={() => item.is_dir ? toggleFolder(item.path) : onSelectNote(item.path)}
+            aria-expanded={item.is_dir ? !collapsedFolders.has(item.path) : undefined}
+            aria-current={selectedPath === item.path ? 'page' : undefined}
+            aria-label={`${item.title} (${item.path})`}
+            class="flex items-center gap-2 overflow-hidden flex-1 min-w-0 py-1.5 text-left cursor-pointer bg-transparent rounded-md focus-visible:outline focus-visible:outline-1 focus-visible:outline-[var(--accent)]"
+            style:padding-left={`${10 + depth * 16}px`}
+          >
             {#if item.is_dir}
               {#if collapsedFolders.has(item.path) && !searchQuery.trim()}
                 <ChevronRight size={12} class="shrink-0 text-[var(--text-dim)]" />
@@ -316,13 +335,13 @@
               <FileText size={14} class="shrink-0 text-[var(--text-dim)]" />
             {/if}
             <span class="truncate" title={item.path}>{item.is_dir ? item.name : item.title}</span>
-          </div>
+          </button>
 
           <!-- Hover actions -->
-          <div class="hidden group-hover:flex group-focus-within:flex items-center gap-1 opacity-80">
+          <div role="group" aria-label={item.is_dir ? item.name : item.title} class="hidden group-hover:flex group-focus-within:flex items-center gap-1 opacity-80">
             {#if item.is_dir}
               <button
-                onclick={(e) => { e.stopPropagation(); newNoteName = `${item.path}/`; isCreatingNote = true; }}
+                onclick={() => { newNoteName = `${item.path}/`; isCreatingNote = true; }}
                 class="w-4 h-4 flex items-center justify-center text-[10px] text-[var(--text-dim)] hover:text-[var(--text-main)]"
                 title={$t('sidebar.newNote')}
                 aria-label={$t('sidebar.newNote')}
