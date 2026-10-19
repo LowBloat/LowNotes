@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { VaultConfig, VaultItem } from '../types';
+  import type { InitialStateResponse, VaultConfig, VaultItem } from '../types';
   import type { PresenceUser } from '$lib/presence';
   import { visibleNoteRows } from '$lib/note-tree';
   import { ChevronDown, ChevronRight, Clock3, FilePlus2, FileText, Folder, FolderOpen, FolderPlus, NotebookPen, Pencil, RefreshCw, Settings2, Trash2, X } from 'lucide-svelte';
@@ -10,6 +10,7 @@
     renameItem,
     pickVaultDirectory,
     selectVault,
+    forgetVault,
     networkSyncNow,
   } from '../api';
   import { t, trError, ts } from '$lib/i18n';
@@ -25,6 +26,7 @@
     onOpenHistory,
     onSelectNote,
     onVaultChange,
+    onVaultsChange,
     onOpenPairModal,
     presence = [],
     onRefreshItems,
@@ -40,6 +42,8 @@
     onOpenHistory: () => void;
     onSelectNote: (path: string) => void;
     onVaultChange: (vault: VaultConfig) => void;
+    /** A vault was removed from the list; the response holds the new state. */
+    onVaultsChange?: (state: InitialStateResponse) => void;
     onOpenPairModal: () => void;
     onRefreshItems: () => void;
     onItemDeleted?: () => void;
@@ -83,6 +87,20 @@
       if (res.active_vault) {
         onVaultChange(res.active_vault);
       }
+    }
+  }
+
+  let confirmingVaultId = $state<string | null>(null);
+  let vaultError = $state('');
+  async function handleForgetVault(v: VaultConfig) {
+    vaultError = '';
+    try {
+      const state = await forgetVault(v.id);
+      confirmingVaultId = null;
+      isVaultDropdownOpen = false;
+      onVaultsChange?.(state);
+    } catch (error) {
+      vaultError = trError(String(error));
     }
   }
 
@@ -179,16 +197,39 @@
         <div class="px-3 py-1 text-[10px] font-semibold text-[var(--text-dim)] uppercase tracking-wider">
           {$t('sidebar.yourVaults')}
         </div>
-        {#each vaults as v}
-          <button
-            onclick={() => handleSelectVault(v)}
-            class="w-full flex items-center justify-between px-3 py-1.5 text-xs text-left text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-hover)] transition {activeVault?.id === v.id ? 'text-[var(--accent-light)] font-medium' : ''}"
-          >
-            <span class="truncate">{v.name}</span>
-            {#if activeVault?.id === v.id}
-              <span class="text-[10px] text-[var(--accent-light)]">{$t('sidebar.active')}</span>
-            {/if}
-          </button>
+        {#each vaults as v (v.id)}
+          {#if confirmingVaultId === v.id}
+            <div class="px-3 py-2 text-xs text-[var(--text-muted)] flex flex-col gap-2" role="group" aria-label={$t('sidebar.removeVault')}>
+              <span>{$t('sidebar.removeVaultConfirm', { name: v.name })}</span>
+              <div class="flex gap-2 justify-end">
+                <button class="px-2 py-1 rounded hover:bg-[var(--bg-hover)]" onclick={() => { confirmingVaultId = null; vaultError = ''; }}>{$t('ai.cancel')}</button>
+                <button class="px-2 py-1 rounded bg-[var(--danger)] text-white" onclick={() => void handleForgetVault(v)}>{$t('sidebar.removeVaultAction')}</button>
+              </div>
+              {#if vaultError}<span role="alert" class="text-red-400">{vaultError}</span>{/if}
+            </div>
+          {:else}
+            <div class="group/vault flex items-center hover:bg-[var(--bg-hover)] transition">
+              <button
+                onclick={() => handleSelectVault(v)}
+                disabled={v.missing}
+                title={v.missing ? `${$t('sidebar.vaultMissing')}: ${v.path}` : v.path}
+                class="flex-1 min-w-0 flex items-center justify-between px-3 py-1.5 text-xs text-left text-[var(--text-muted)] hover:text-[var(--text-main)] disabled:opacity-60 disabled:cursor-not-allowed {activeVault?.id === v.id ? 'text-[var(--accent-light)] font-medium' : ''}"
+              >
+                <span class="truncate">{v.name}</span>
+                {#if v.missing}
+                  <span class="text-[10px] text-[var(--danger)] shrink-0 ml-2">{$t('sidebar.vaultMissing')}</span>
+                {:else if activeVault?.id === v.id}
+                  <span class="text-[10px] text-[var(--accent-light)] shrink-0 ml-2">{$t('sidebar.active')}</span>
+                {/if}
+              </button>
+              <button
+                onclick={() => { confirmingVaultId = v.id; vaultError = ''; }}
+                class="shrink-0 mr-2 p-1 rounded text-[var(--text-dim)] hover:text-[var(--danger)] opacity-60 group-hover/vault:opacity-100 focus-visible:opacity-100"
+                title={$t('sidebar.removeVault')}
+                aria-label={`${$t('sidebar.removeVault')}: ${v.name}`}
+              ><X size={12} /></button>
+            </div>
+          {/if}
         {/each}
         <div class="h-[1px] bg-[var(--border)] my-1"></div>
         <button

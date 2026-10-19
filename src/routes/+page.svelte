@@ -504,6 +504,22 @@
           }
         });
       }}
+      onVaultsChange={(state) => {
+        const switched = state.active_vault?.id !== activeVault?.id;
+        settings = state.settings;
+        vaults = state.settings.vaults;
+        items = state.items;
+        if (switched) {
+          isHistoryOpen = false;
+          isGraphOpen = false;
+          selectedNotePath = '';
+          currentNoteContent = '';
+          currentCrdtBase64 = '';
+          pairCode = state.pair_info?.pair_code ?? '';
+          endpointId = state.pair_info?.endpoint_id ?? '';
+        }
+        activeVault = state.active_vault;
+      }}
       onOpenPairModal={() => (isPairModalOpen = true)}
       onRefreshItems={refreshItems}
       onItemDeleted={() => (lastUndoableAction = 'delete')}

@@ -14,6 +14,7 @@ export async function openVault(page: Page, options: {
   credentialError?: string;
   notices?: Array<{ path: string; recovered: boolean }>;
   notePath?: string; otherNotes?: VaultItem[];
+  extraVaults?: Array<{ id: string; name: string; path: string; peers: never[]; missing?: boolean }>;
   history?: { versionContent?: string; comparison?: { path: string; content: string }; trashContent?: string; folderTrash?: boolean };
 } = {}) {
   const source = options.source ?? '# Search\n\n[Title](https://visible.example)\n\n**hello** world\n\n- [ ] needle task\n\n'
@@ -28,6 +29,7 @@ export async function openVault(page: Page, options: {
   const historyActions: Array<{ command: string; args: Record<string, any> }> = [];
   let deleted = false;
   const recovered: string[] = [];
+  const forgotten: string[] = [];
   let notices = options.notices ?? [];
   let history = { version: 1, activeConversationId: null, conversations: [], memory: '' };
   const vault = { id: 'fixture', name: 'Test vault', path: 'fixture', peers: [] };
@@ -51,7 +53,7 @@ export async function openVault(page: Page, options: {
     device_name: 'Test device', theme: options.theme ?? 'light',
     theme_palettes: { active_palette_id: options.palette ?? 'lowbloat', custom_palettes: [] },
     view_mode: 'split', line_wrapping: true, language: 'en-US', update_check: false, close_to_tray: true,
-    skipped_version: '', active_vault_id: vault.id, vaults: [vault], has_seen_welcome: true,
+    skipped_version: '', active_vault_id: vault.id as string | null, vaults: [vault, ...(options.extraVaults ?? [])] as Array<Record<string, any>>, has_seen_welcome: true,
     ai: { active_provider_id: 'ollama', providers: [{ id: 'ollama', name: 'Ollama', base_url: 'http://localhost:11434/v1', selected_model: 'fixture', api_key: '', is_custom: false }], auto_link_notes: false },
     web_search: { sources: [] }, image_upload: { provider: 'local', imgur_client_id: '', local_default_applied: true },
   };
@@ -61,6 +63,13 @@ export async function openVault(page: Page, options: {
     switch (command) {
       case 'get_app_state': return { settings, active_vault: vault, items, pair_info: null };
       case 'list_notes': return items;
+      case 'forget_vault': {
+        forgotten.push(args.vaultId);
+        settings.vaults = settings.vaults.filter((entry) => entry.id !== args.vaultId);
+        if (settings.active_vault_id === args.vaultId) settings.active_vault_id = settings.vaults[0]?.id ?? null;
+        const active = settings.vaults.find((entry) => entry.id === settings.active_vault_id) ?? null;
+        return { settings, active_vault: active, items: active ? items : [], pair_info: null };
+      }
       case 'read_note': {
         reads.push(args.path); const selected = documents.get(args.path) ?? doc;
         return { content: selected.getText('content').toString(), crdt_update_base64: Buffer.from(Y.encodeStateAsUpdate(selected)).toString('base64url'), note_id: 'fixture-note-id' };
@@ -140,7 +149,7 @@ export async function openVault(page: Page, options: {
   await page.goto('/');
   await expect(page.locator('.cm-content')).toBeVisible();
   return {
-    source, errors, openedUrls, saves, recovered, reads, historyActions,
+    source, errors, openedUrls, saves, recovered, reads, historyActions, forgotten,
     deleteWhileEditing() { deleted = true; },
     content: () => text.toString(),
     async remoteAppend(content: string) {

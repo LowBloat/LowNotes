@@ -66,6 +66,11 @@ export async function selectVault(path: string): Promise<InitialStateResponse> {
   return await invoke('select_vault', { pathStr: path });
 }
 
+/** Removes a vault from the app's list. Its folder and notes stay on disk. */
+export async function forgetVault(vaultId: string): Promise<InitialStateResponse> {
+  return await invoke('forget_vault', { vaultId });
+}
+
 export async function createVault(path: string, name?: string): Promise<InitialStateResponse> {
   return await invoke('create_vault', { pathStr: path, name });
 }

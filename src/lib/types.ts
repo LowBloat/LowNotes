@@ -33,6 +33,8 @@ export interface VaultConfig {
   name: string;
   path: string;
   peers: PeerConfig[];
+  /** The folder no longer exists (computed when settings reach the interface). */
+  missing?: boolean;
 }
 
 export type LinkOrigin = 'wikilink' | 'manual' | 'agent';

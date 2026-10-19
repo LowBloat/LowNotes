@@ -39,3 +39,27 @@ test('the vault menu closes on Escape and outside clicks, and note rows are plai
     expect(vault.errors).toEqual([]);
   } finally { vault.destroy(); }
 });
+
+test('a vault can be removed from the list after confirming, and missing folders are flagged', async ({ page }) => {
+  const vault = await openVault(page, { extraVaults: [
+    { id: 'old', name: 'Old vault', path: 'old', peers: [] },
+    { id: 'gone', name: 'Gone vault', path: 'gone', peers: [], missing: true },
+  ] });
+  try {
+    await page.getByRole('button', { name: 'Test vault' }).click();
+    await expect(page.getByRole('button', { name: /^Gone vault/ })).toBeDisabled();
+    await expect(page.getByText('Folder not found')).toBeVisible();
+    await page.getByRole('button', { name: 'Remove from list: Old vault' }).click();
+    const confirm = page.getByRole('group', { name: 'Remove from list' });
+    await expect(confirm).toContainText('stay on disk');
+    await confirm.getByRole('button', { name: 'Cancel' }).click();
+    expect(vault.forgotten).toEqual([]);
+    await page.getByRole('button', { name: 'Remove from list: Old vault' }).click();
+    await page.getByRole('group', { name: 'Remove from list' }).getByRole('button', { name: 'Remove', exact: true }).click();
+    await expect.poll(() => vault.forgotten).toEqual(['old']);
+    await page.getByRole('button', { name: 'Test vault' }).click();
+    await expect(page.getByRole('button', { name: /Old vault/ })).toHaveCount(0);
+    await expect(page.locator('.cm-content')).toBeVisible();
+    expect(vault.errors).toEqual([]);
+  } finally { vault.destroy(); }
+});

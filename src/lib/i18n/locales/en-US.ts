@@ -79,6 +79,7 @@ const enUS = {
   sidebar: {
     selectVault: 'Select Vault',
     yourVaults: 'Your Vaults',
+    removeVault: 'Remove from list', removeVaultConfirm: 'Remove "{name}" from LowNotes? The folder and its notes stay on disk. Adding it again creates a new device identity, so paired devices must pair again.', removeVaultAction: 'Remove', vaultMissing: 'Folder not found',
     active: 'active',
     openComputerFolder: 'Open Computer Folder',
     searchPlaceholder: 'Search notes...',

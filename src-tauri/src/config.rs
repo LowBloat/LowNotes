@@ -57,6 +57,9 @@ pub struct VaultConfig {
     pub credentials_locked: bool,
     #[serde(default)]
     pub peers: Vec<PeerConfig>,
+    /// Only set on copies sent to the interface: the folder no longer exists.
+    #[serde(default, skip_deserializing, skip_serializing_if = "std::ops::Not::not")]
+    pub missing: bool,
 }
 
 impl VaultConfig {
@@ -77,6 +80,7 @@ impl VaultConfig {
             pairing_token: new_pairing_token(),
             peers: Vec::new(),
             credentials_locked: false,
+            missing: false,
         }
     }
 
@@ -116,7 +120,7 @@ impl VaultConfig {
     /// Copy safe to hand to the webview: the private P2P identity and the
     /// pairing token stay in the Rust process.
     pub fn for_frontend(&self) -> Self {
-        Self { secret_key: String::new(), pairing_token: String::new(), ..self.clone() }
+        Self { secret_key: String::new(), pairing_token: String::new(), missing: !self.path.is_dir(), ..self.clone() }
     }
 }
 
@@ -580,6 +584,17 @@ impl AppSettings {
         self.vaults.iter_mut().find(|v| v.id == id)
     }
 
+    /// Removes a vault from the app's list; its folder is not touched. When it
+    /// was the active vault, the next remaining vault becomes active.
+    pub fn forget_vault(&mut self, vault_id: &str) -> Option<VaultConfig> {
+        let index = self.vaults.iter().position(|vault| vault.id == vault_id)?;
+        let removed = self.vaults.remove(index);
+        if self.active_vault_id.as_deref() == Some(vault_id) {
+            self.active_vault_id = self.vaults.first().map(|vault| vault.id.clone());
+        }
+        Some(removed)
+    }
+
     /// Copy safe to hand to the webview. Provider and search keys are replaced
     /// by `has_api_key`; vault identities and pairing tokens are blanked.
     pub fn for_frontend(&self) -> Self {
@@ -740,6 +755,7 @@ mod tests {
             pairing_token: "".to_string(),
             credentials_locked: false,
             peers: Vec::new(),
+            missing: false,
         };
         assert!(vault.ensure_keys());
         assert!(!vault.secret_key.is_empty());
@@ -934,5 +950,29 @@ mod tests {
         }
         let reloaded = AppSettings::from_saved_value(chosen).unwrap();
         assert!(reloaded.web_search.source("searxng").unwrap().enabled);
+    }
+
+    #[test]
+    fn forgetting_a_vault_keeps_its_folder_and_picks_the_next_active_vault() {
+        let root = tempfile::tempdir().unwrap();
+        let mut settings = AppSettings::default();
+        let first = super::VaultConfig::new(root.path().join("one"), Some("One".into()));
+        let second = super::VaultConfig::new(root.path().join("two"), Some("Two".into()));
+        std::fs::create_dir_all(&first.path).unwrap();
+        settings.vaults = vec![first.clone(), second.clone()];
+        settings.active_vault_id = Some(first.id.clone());
+
+        assert!(settings.forget_vault("unknown").is_none());
+        let removed = settings.forget_vault(&first.id).unwrap();
+        assert_eq!(removed.id, first.id);
+        assert!(first.path.is_dir(), "the folder must stay on disk");
+        assert_eq!(settings.active_vault_id.as_deref(), Some(second.id.as_str()));
+        // A vault whose folder disappeared is flagged for the interface.
+        assert!(settings.for_frontend().vaults[0].missing);
+        assert!(!serde_json::to_string(&settings).unwrap().contains("missing"));
+
+        settings.forget_vault(&second.id).unwrap();
+        assert!(settings.vaults.is_empty());
+        assert_eq!(settings.active_vault_id, None);
     }
 }

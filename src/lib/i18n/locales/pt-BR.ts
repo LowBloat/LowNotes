@@ -81,6 +81,7 @@ const ptBR: Dictionary = {
   sidebar: {
     selectVault: 'Selecionar Vault',
     yourVaults: 'Seus Vaults',
+    removeVault: 'Remover da lista', removeVaultConfirm: 'Remover "{name}" do LowNotes? A pasta e as notas continuam no disco. Ao adicioná-la de novo, uma nova identidade é criada e os dispositivos precisam parear outra vez.', removeVaultAction: 'Remover', vaultMissing: 'Pasta não encontrada',
     active: 'ativo',
     openComputerFolder: 'Abrir Pasta do Computador',
     searchPlaceholder: 'Buscar notas...',
