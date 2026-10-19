@@ -215,16 +215,21 @@
     }
     activeEditors = [...byDevice.values()];
   }
+  // The editor reads the note itself once its listeners are ready, so the
+  // page no longer reads it a second time. If that read fails, the previous
+  // note is shown again.
+  let previousNotePath = '';
   async function openNote(path: string) {
-    try {
-      const res = await readNote(path);
-      currentNoteContent = res.content;
-      currentCrdtBase64 = res.crdt_update_base64;
-      selectedNotePath = path;
-      isGraphOpen = false;
-    } catch (e) {
-      console.error('Failed to open note:', e);
-    }
+    if (path !== selectedNotePath) previousNotePath = selectedNotePath;
+    currentNoteContent = '';
+    currentCrdtBase64 = '';
+    selectedNotePath = path;
+    isGraphOpen = false;
+  }
+  function handleNoteLoadFailed(path: string) {
+    if (selectedNotePath !== path) return;
+    selectedNotePath = previousNotePath !== path ? previousNotePath : '';
+    previousNotePath = '';
   }
 
   async function handleNavigateToSource(path: string, line: number) {
@@ -350,7 +355,7 @@
 
     const u7 = await listen<NetworkEventPayload>('p2p:crdt-update', () => {
       if (remoteRefreshTimer) clearTimeout(remoteRefreshTimer);
-      remoteRefreshTimer = setTimeout(refreshItems, 300);
+      remoteRefreshTimer = setTimeout(refreshItems, 1500);
     });
 
     const u8 = await listen<NetworkEventPayload>('p2p:conflict', (event) => {
@@ -536,6 +541,7 @@
           {viewMode}
           lineWrapping={settings?.line_wrapping ?? true}
           loadRemoteImages={settings?.load_remote_images === true}
+          onLoadFailed={handleNoteLoadFailed}
           imageUploadProvider={settings?.image_upload?.provider ?? 'local'}
           vaultId={settings?.active_vault_id ?? ''}
           onViewModeChange={handleViewModeChange}

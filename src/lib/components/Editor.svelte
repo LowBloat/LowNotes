@@ -41,6 +41,7 @@
     viewMode,
     lineWrapping = true,
     loadRemoteImages = false,
+    onLoadFailed,
     imageUploadProvider = 'local',
     vaultId = '',
     onViewModeChange,
@@ -62,6 +63,8 @@
     viewMode: ViewMode;
     lineWrapping?: boolean;
     loadRemoteImages?: boolean;
+    /** The note could not be read; the page decides what to show instead. */
+    onLoadFailed?: (path: string, error: unknown) => void;
     imageUploadProvider?: ImageUploadProvider;
     vaultId?: string;
     onViewModeChange: (mode: ViewMode) => void;
@@ -102,6 +105,25 @@
   let linkOpenFailed = $state(false);
   let currentContent = $state('');
   let contentRevision = $state(0);
+  // The preview follows the text with a short delay: rebuilding its HTML on
+  // every keystroke is the most expensive part of typing in split view.
+  const PREVIEW_DELAY_MS = 120;
+  let previewContent = $state('');
+  let previewRevision = $state(0);
+  let previewTimer: ReturnType<typeof setTimeout> | null = null;
+  function schedulePreview(immediate = false) {
+    if (previewTimer) clearTimeout(previewTimer);
+    previewTimer = null;
+    const publish = () => { previewTimer = null; previewContent = currentContent; previewRevision = contentRevision; };
+    if (immediate) publish();
+    else previewTimer = setTimeout(publish, PREVIEW_DELAY_MS);
+  }
+  // Local edits are merged and sent to the native side in small batches
+  // instead of one IPC call (and one durable save) per keystroke.
+  const SEND_DELAY_MS = 150;
+  let pendingLocal: Uint8Array[] = [];
+  let sendTimer: ReturnType<typeof setTimeout> | null = null;
+  let flushLocal: () => void = () => {};
   let wordCount = $derived(
     currentContent.trim() ? currentContent.trim().split(/\s+/).length : 0
   );
@@ -301,6 +323,7 @@
   function initEditor(content = initialContent, snapshot = crdtUpdateBase64, noteId?: string | null) {
     const editingVaultId = vaultId;
     if (!editorContainer) return;
+    flushLocal();
     imagePaste?.destroy();
     imageUploads = [];
 
@@ -334,6 +357,7 @@
 
     currentContent = yText.toString();
     contentRevision++;
+    schedulePreview(true);
 
     if (awareness) {
       awareness.destroy();
@@ -363,27 +387,41 @@
     });
     refreshRemoteUsers();
 
+    const editingDoc = yDoc;
+    const send = (update: Uint8Array) => {
+      crdtApplyClientUpdate(notePath, uint8ArrayToBase64(update), noteId, editingVaultId)
+        .catch(async (error) => {
+          if (String(error) === 'errors.noteDeleted' && noteId && editingDoc) {
+            try {
+              await crdtApplyClientUpdate(notePath, uint8ArrayToBase64(Y.encodeStateAsUpdate(editingDoc)), noteId, editingVaultId, true);
+              return;
+            } catch (recoveryError) { error = recoveryError; }
+          }
+          console.error('Failed to persist CRDT update:', error); saveStatus = 'error';
+        });
+    };
+    // Bound to this document: a later initEditor flushes it before replacing the doc.
+    flushLocal = () => {
+      if (sendTimer) clearTimeout(sendTimer);
+      sendTimer = null;
+      if (pendingLocal.length === 0) return;
+      const merged = pendingLocal.length === 1 ? pendingLocal[0] : Y.mergeUpdates(pendingLocal);
+      pendingLocal = [];
+      send(merged);
+    };
+
     // Listen to Yjs local edits to broadcast and autosave
     yDoc.on('update', (update: Uint8Array, origin: any) => {
       const text = yText.toString();
       currentContent = text;
       contentRevision++;
+      schedulePreview(origin === 'remote' && pendingLocal.length === 0);
       onContentChange?.(notePath, text);
 
       if (origin !== 'remote') {
         onLocalEdit?.();
-        const base64 = uint8ArrayToBase64(update);
-        const editingDoc = yDoc;
-        crdtApplyClientUpdate(notePath, base64, noteId, editingVaultId)
-          .catch(async (error) => {
-            if (String(error) === 'errors.noteDeleted' && noteId && editingDoc) {
-              try {
-                await crdtApplyClientUpdate(notePath, uint8ArrayToBase64(Y.encodeStateAsUpdate(editingDoc)), noteId, editingVaultId, true);
-                return;
-              } catch (recoveryError) { error = recoveryError; }
-            }
-            console.error('Failed to persist CRDT update:', error); saveStatus = 'error';
-          });
+        pendingLocal.push(update);
+        if (!sendTimer) sendTimer = setTimeout(flushLocal, SEND_DELAY_MS);
       }
     });
 
@@ -492,7 +530,7 @@
     if (!(input instanceof HTMLInputElement) || !input.matches('input[data-task-offset]') || !editorView) return;
     const wasChecked = input.dataset.taskChecked === 'true';
     const offset = Number(input.dataset.taskOffset);
-    const change = input.dataset.taskRevision === String(contentRevision)
+    const change = input.dataset.taskRevision === String(contentRevision) && previewRevision === contentRevision
       ? taskCheckboxChange(editorView.state.doc.toString(), offset, wasChecked, input.checked) : null;
     if (!change) { input.checked = wasChecked; return; }
     const restoreFocus = document.activeElement === input;
@@ -589,7 +627,8 @@
       initEditor(latest.content, latest.crdt_update_base64, latest.note_id);
     } catch (error) {
       if (disposed) return;
-      console.error('Failed to refresh note before editing:', error);
+      console.error('Failed to open note:', error);
+      if (onLoadFailed) { onLoadFailed(notePath, error); return; }
       initEditor();
     }
     for (const update of pendingRemoteUpdates) {
@@ -604,6 +643,10 @@
     window.removeEventListener('keydown', handleFindShortcut, true);
     findRefresh++;
     imagePaste?.destroy();
+    // Send edits typed in the last moments before closing the note.
+    flushLocal();
+    if (previewTimer) clearTimeout(previewTimer);
+    if (mermaidDebounce) clearTimeout(mermaidDebounce);
     disposed = true;
     if (editorView) editorView.destroy();
     if (undoManager) undoManager.destroy();
@@ -624,8 +667,12 @@
     }
   });
 
+  let findMarksShown = false;
   $effect(() => {
-    currentContent; contentRevision; viewMode; previewContainer; findOpen; findText; findCase; findRegex; findWord; imageRevision; theme; previewRenderRevision;
+    previewContent; previewRevision; viewMode; previewContainer; findOpen; findText; findCase; findRegex; findWord; imageRevision; theme; previewRenderRevision;
+    // Nothing to highlight or clear while the find panel stays closed.
+    if (!findOpen && !findMarksShown) return;
+    findMarksShown = findOpen;
     const revision = ++findRefresh;
     void tick().then(() => { if (!disposed && revision === findRefresh) refreshFind(); });
   });
@@ -638,7 +685,7 @@
   });
 
   $effect(() => {
-    if ((viewMode === 'split' || viewMode === 'preview') && previewContainer && currentContent) {
+    if ((viewMode === 'split' || viewMode === 'preview') && previewContainer && previewContent) {
       imageRevision;
       const activeTheme = theme;
       if (mermaidDebounce) clearTimeout(mermaidDebounce);
@@ -848,7 +895,7 @@
         class="min-w-0 h-full overflow-y-auto px-8 py-6 select-text {viewMode === 'preview' ? 'w-full max-w-4xl mx-auto' : 'w-1/2'}"
       >
         <article tabindex="-1" class="prose max-w-none text-[var(--text-main)]">
-          {@html renderMarkdown(currentContent, (src) => localImageUrl(src, vaultId, imageRevision), { interactiveTasks: true, taskRevision: contentRevision, sourceMap: 'editor', remoteImages: loadRemoteImages, allowRemoteImage: (src) => allowedRemoteImages.includes(src), remoteImageLabel: $t('preview.remoteImageBlocked') })}
+          {@html renderMarkdown(previewContent, (src) => localImageUrl(src, vaultId, imageRevision), { interactiveTasks: true, taskRevision: previewRevision, sourceMap: 'editor', remoteImages: loadRemoteImages, allowRemoteImage: (src) => allowedRemoteImages.includes(src), remoteImageLabel: $t('preview.remoteImageBlocked') })}
         </article>
       </div>
     {/if}
