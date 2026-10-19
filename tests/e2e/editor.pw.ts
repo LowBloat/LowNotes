@@ -110,6 +110,26 @@ test('preview resolves encoded relative Markdown paths and vault wikilinks while
   } finally { vault.destroy(); }
 });
 
+test('preview keeps the app in place for mail, relative files and footnotes', async ({ page }) => {
+  const vault = await openVault(page, {
+    source: '# Links\n\n[mail](mailto:user@example.org) [file](./report.pdf) [ftp](ftp://example.org/a) text[^1]\n\n'
+      + 'filler\n\n'.repeat(80) + '[^1]: The footnote.\n',
+  });
+  try {
+    const url = page.url();
+    await page.getByRole('link', { name: 'mail', exact: true }).click();
+    await expect.poll(() => vault.openedUrls).toEqual(['mailto:user@example.org']);
+    await page.getByRole('link', { name: 'file', exact: true }).click();
+    await page.getByRole('link', { name: 'ftp', exact: true }).click();
+    await page.locator('article sup a').first().click();
+    await expect(page.locator('article .footnotes')).toBeInViewport();
+    expect(page.url()).toBe(url);
+    expect(vault.openedUrls).toEqual(['mailto:user@example.org']);
+    await expect(page.locator('article h1')).toHaveText('Links');
+    expect(vault.content()).toBe(vault.source); expect(vault.errors).toEqual([]);
+  } finally { vault.destroy(); }
+});
+
 for (const palette of ['lowbloat', 'megumin', 'rimuru']) {
   for (const theme of ['light', 'dark'] as const) {
     test(`links and code language labels remain readable in ${palette}/${theme}`, async ({ page }) => {
