@@ -1,0 +1,29 @@
+# cargo-deny configuration, found next to Cargo.toml: `cargo deny --manifest-path src-tauri/Cargo.toml check advisories bans sources`
+# Run weekly and on dependency changes by .github/workflows/security.yml.
+
+[graph]
+all-features = false
+
+[advisories]
+# Known vulnerabilities always fail. Unmaintained notices are reported only for
+# crates we depend on directly; transitive ones (gtk/zbus stacks pulled in by
+# Tauri, iroh internals) are tracked through upstream updates.
+unmaintained = "workspace"
+yanked = "warn"
+ignore = [
+  # zip <9: extraction issues (SUID bits, symlinks). zip is only used by
+  # tauri-plugin-updater, which unpacks minisign-verified update bundles; no
+  # tauri-plugin-updater 2.x release depends on zip >= 9 yet. Revisit on each
+  # updater bump.
+  { id = "RUSTSEC-2026-0367", reason = "zip via tauri-plugin-updater; signed bundles only; no compatible fix" },
+  { id = "RUSTSEC-2026-0368", reason = "zip via tauri-plugin-updater; signed bundles only; no compatible fix" },
+  { id = "RUSTSEC-2026-0369", reason = "zip via tauri-plugin-updater; signed bundles only; no compatible fix" },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

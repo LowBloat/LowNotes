@@ -200,7 +200,7 @@ To verify changes:
 bun run check
 bun run check:e2e
 bun test
-python .github/scripts/test_update_manifest.py
+python -m unittest discover -s .github/scripts -p "test_*.py"
 cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
 bun run build
 bunx playwright install chromium

@@ -16,7 +16,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
@@ -34,34 +34,16 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Baixar código
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.source_ref || env.RELEASE_TAG }}
 
+      - name: Instalar Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
       - name: Conferir versões do aplicativo
         id: version
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' src-tauri/Cargo.toml | head -n 1)"
-          if [[ -z "$version" ]]; then
-            echo "Não foi possível ler a versão do src-tauri/Cargo.toml." >&2
-            exit 1
-          fi
-          if [[ "$RELEASE_TAG" != "v$version" ]]; then
-            echo "A tag $RELEASE_TAG não corresponde à versão $version do Cargo.toml." >&2
-            exit 1
-          fi
-          frontend_version="$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')"
-          tauri_version="$(python3 -c 'import json; print(json.load(open("src-tauri/tauri.conf.json"))["version"])')"
-          if [[ "$frontend_version" != "$version" || "$tauri_version" != "$version" ]]; then
-            echo "As versões de package.json, tauri.conf.json e Cargo.toml devem coincidir." >&2
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Instalar Bun
-        uses: oven-sh/setup-bun@v2
+        run: bun scripts/check-version.mjs "$RELEASE_TAG"
 
       - name: Instalar dependências do frontend
         run: bun install --frozen-lockfile
@@ -71,7 +53,7 @@ jobs:
           bun run check
           bun run check:e2e
           bun test
-          python3 .github/scripts/test_update_manifest.py
+          python3 -m unittest discover -s .github/scripts -p "test_*.py"
 
       - name: Verificar interface antes de publicar
         run: |
@@ -88,16 +70,14 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
     steps:
       - name: Baixar código
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.source_ref || env.RELEASE_TAG }}
 
       - name: Instalar Bun
-        uses: oven-sh/setup-bun@v2
-
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
       - name: Instalar Rust
-        uses: dtolnay/rust-toolchain@stable
-
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - name: Instalar dependências do frontend
         run: bun install --frozen-lockfile
 
@@ -152,7 +132,7 @@ jobs:
           }
 
       - name: Guardar artefatos
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: lownotes-windows
           path: dist/*.*
@@ -167,7 +147,7 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
     steps:
       - name: Baixar código
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.source_ref || env.RELEASE_TAG }}
 
@@ -184,11 +164,9 @@ jobs:
             libsoup-3.0-dev
 
       - name: Instalar Bun
-        uses: oven-sh/setup-bun@v2
-
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
       - name: Instalar Rust
-        uses: dtolnay/rust-toolchain@stable
-
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - name: Instalar dependências do frontend
         run: bun install --frozen-lockfile
 
@@ -253,7 +231,15 @@ jobs:
             cp "src-tauri/target/release/lownotes" "$arch_build/lownotes"
             cp "src-tauri/icons/128x128.png" "$arch_build/lownotes.png"
             cp "packaging/arch/lownotes.desktop" "$arch_build/lownotes.desktop"
-            sed "s/__VERSION__/${VERSION}/g" packaging/arch/PKGBUILD.ci > "$arch_build/PKGBUILD"
+            sed -e "s/__VERSION__/${VERSION}/g" \
+              -e "s/__SHA256_BIN__/$(sha256sum "$arch_build/lownotes" | cut -d' ' -f1)/" \
+              -e "s/__SHA256_DESKTOP__/$(sha256sum "$arch_build/lownotes.desktop" | cut -d' ' -f1)/" \
+              -e "s/__SHA256_ICON__/$(sha256sum "$arch_build/lownotes.png" | cut -d' ' -f1)/" \
+              packaging/arch/PKGBUILD.ci > "$arch_build/PKGBUILD"
+            if grep -q "SKIP\|__SHA256" "$arch_build/PKGBUILD"; then
+              echo "PKGBUILD checksums were not rendered." >&2
+              exit 1
+            fi
             docker run --rm -v "$PWD/$arch_build":/workspace -w /workspace archlinux:base-devel bash -c "
               useradd -m builder && \
               chown -R builder:builder /workspace && \
@@ -269,7 +255,7 @@ jobs:
           fi
 
       - name: Guardar artefatos
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: lownotes-linux
           path: dist/*
@@ -283,15 +269,14 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
     steps:
       - name: Baixar código
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.source_ref || env.RELEASE_TAG }}
 
       - name: Instalar Bun
-        uses: oven-sh/setup-bun@v2
-
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
       - name: Instalar Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
@@ -330,7 +315,7 @@ jobs:
           fi
 
       - name: Guardar artefatos
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: lownotes-macos
           path: dist/*
@@ -340,14 +325,16 @@ jobs:
     name: Publicar no GitHub Releases
     needs: [verify, windows, linux, macos]
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     steps:
       - name: Baixar código
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.source_ref || env.RELEASE_TAG }}
 
       - name: Baixar todos os artefatos
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: release-assets
           merge-multiple: true
@@ -363,24 +350,24 @@ jobs:
           VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -euo pipefail
+          # Create the release as a draft first so its generated notes exist
+          # before latest.json is built from them; publish only at the end.
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --generate-notes \
+              --draft \
+              --title "LowNotes $VERSION"
+          fi
           python3 .github/scripts/update_manifest.py
+          python3 .github/scripts/render_pkgbuild.py "$VERSION" release-assets
           mapfile -t files < <(find release-assets -maxdepth 1 -type f)
           if [[ ${#files[@]} -eq 0 ]]; then
             echo "Nenhum arquivo encontrado em release-assets." >&2
             exit 1
           fi
-
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "${files[@]}" \
-              --repo "$GITHUB_REPOSITORY" \
-              --clobber
-          else
-            gh release create "$RELEASE_TAG" "${files[@]}" \
-              --repo "$GITHUB_REPOSITORY" \
-              --verify-tag \
-              --generate-notes \
-              --title "LowNotes $VERSION"
-          fi
-
-          # Garante que a release esteja publicada (tags recriadas podem deixar draft)
-          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false || true
+          gh release upload "$RELEASE_TAG" "${files[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false

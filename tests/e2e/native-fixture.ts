@@ -1,7 +1,10 @@
 import { expect, type Page } from '@playwright/test';
 import * as Y from 'yjs';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import type { VaultItem } from '../../src/lib/types';
+
+const APP_VERSION: string = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
 
 /** Exercise the real frontend and IPC arguments against an isolated native adapter.
  * Native persistence/protocol behavior is covered by the Rust integration suite.
@@ -108,7 +111,7 @@ export async function openVault(page: Page, options: {
       case 'links_get': return [];
       case 'retry_credentials': settings.credential_error = ''; return settings;
       case 'get_update_policy': return { channel: 'windows', can_install: true, updater_target: null };
-      case 'plugin:app|version': return '0.3.5';
+      case 'plugin:app|version': return APP_VERSION;
       case 'plugin:opener|open_url': openedUrls.push(args.url); return null;
       default: return null;
     }

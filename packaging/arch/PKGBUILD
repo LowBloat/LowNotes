@@ -1,6 +1,8 @@
 # Maintainer: LowBloat <contato@fabioharaujo.com.br>
+# Template: each release publishes a rendered PKGBUILD asset with the real version
+# and checksums (see .github/scripts/render_pkgbuild.py). Do not edit the placeholders.
 pkgname=lownotes-bin
-pkgver=0.3.5
+pkgver=__VERSION__
 pkgrel=1
 pkgdesc="Local-first Markdown notes with serverless P2P sync and real-time collaboration"
 arch=('x86_64')
@@ -15,7 +17,7 @@ source=(
     "lownotes.desktop"
     "lownotes.png::https://raw.githubusercontent.com/LowBloat/LowNotes/v${pkgver}/src-tauri/icons/128x128.png"
 )
-sha256sums=('SKIP' 'SKIP' 'SKIP')
+sha256sums=('__SHA256_PORTABLE__' '__SHA256_DESKTOP__' '__SHA256_ICON__')
 
 package() {
     install -Dm755 "${srcdir}/LowNotes" "${pkgdir}/usr/bin/lownotes"
