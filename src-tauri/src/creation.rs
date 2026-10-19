@@ -245,7 +245,7 @@ fn finish(
         }
         storage::remove_file(&storage::backup_path(file))?;
         storage::remove_file(file)?;
-        fs::remove_dir(file.parent().context("missing journal directory")?)?;
+        storage::remove_dir(file.parent().context("missing journal directory")?)?;
         storage::report_recovery(&root.join(crate::catalog_sync::TRASH), true);
         return Ok(entry.path);
     }
@@ -352,7 +352,7 @@ fn finish(
     storage::remove_file(&storage::backup_path(file))?;
     storage::remove_file(file)?;
     hook(4)?;
-    fs::remove_dir(file.parent().context("missing journal directory")?)?;
+    storage::remove_dir(file.parent().context("missing journal directory")?)?;
     if recovered {
         storage::report_recovery(&target, true);
     }
@@ -384,7 +384,7 @@ pub fn recover_all(root: &Path, manager: &CrdtManager) -> anyhow::Result<()> {
                     storage::report_recovery(&entry.path(), false);
                     bail!("creation recovery data has no valid intent");
                 }
-                fs::remove_dir(entry.path())?;
+                storage::remove_dir(entry.path())?;
                 continue;
             };
             let intent = parse(&bytes)?;
