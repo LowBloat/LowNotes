@@ -7,7 +7,7 @@
   import { LOCALE_LABELS, SUPPORTED_LOCALES, t, trError, type LocaleCode } from '$lib/i18n';
   import { BUILTIN_PALETTES, DEFAULT_PALETTE_ID, TOKEN_GROUPS, applyTheme, isHexColor, newCustomPalette, resolvePalette, themeVarsStyle, type ThemeToken } from '$lib/themes';
   import type { AiProviderConfig, AiSettings, AppSettings, AppTheme, ImageUploadProvider, ThemePalette, ThemePalettesSettings, ViewMode, WebSearchSettings } from '$lib/types';
-  import { version as packageVersion } from '../../../package.json';
+
 
   type Tab = 'general' | 'themes' | 'ai' | 'providers' | 'web' | 'about';
   let { settings, initialTab = 'general', onClose, onChange } = $props<{
@@ -33,7 +33,7 @@
   };
   let selectedProviderId = $state(untrack(() => settings.ai.active_provider_id || settings.ai.providers[0]?.id || ''));
   let provider = $derived(aiDraft.providers.find((item) => item.id === selectedProviderId));
-  let version = $state(packageVersion);
+  let version = $state(__APP_VERSION__);
   let error = $state('');
   let saved = $state(false);
   let busy = $state(false);
@@ -340,8 +340,8 @@
                     <div class="palette-demo-body">
                       <div class="palette-demo-side">
                         <span class="palette-demo-item active">{$t('settings.demoNote')}</span>
-                        <span class="palette-demo-item">Explosion!</span>
-                        <span class="palette-demo-item">Slime</span>
+                        <span class="palette-demo-item">{$t('settings.paletteDemoItemA')}</span>
+                        <span class="palette-demo-item">{$t('settings.paletteDemoItemB')}</span>
                       </div>
                       <div class="palette-demo-main">
                         <div class="palette-demo-note">

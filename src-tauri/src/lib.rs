@@ -38,6 +38,33 @@ use network::{NetworkIdentity, NetworkService};
 use commands::AppState;
 use undo::UndoHistory;
 
+/// Tray menu labels for the interface language. An empty or unknown code
+/// (automatic detection happens in the interface) falls back to English until
+/// the interface reports its resolved language.
+pub fn tray_labels(language: &str) -> (&'static str, &'static str) {
+    match language {
+        "pt-BR" => ("Abrir LowNotes", "Sair do LowNotes"),
+        "es-ES" => ("Abrir LowNotes", "Salir de LowNotes"),
+        _ => ("Open LowNotes", "Quit LowNotes"),
+    }
+}
+
+struct TrayMenu {
+    open: MenuItem<tauri::Wry>,
+    quit: MenuItem<tauri::Wry>,
+}
+
+/// Called by the interface whenever its resolved language changes.
+#[tauri::command]
+fn set_tray_language(language: String, app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(menu) = app.try_state::<TrayMenu>() {
+        let (open, quit) = tray_labels(&language);
+        menu.open.set_text(open).map_err(|e| e.to_string())?;
+        menu.quit.set_text(quit).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -138,9 +165,11 @@ pub fn run() {
             drop(s);
             history_commands::start_retention(settings.clone(), app.state::<AppState>().crdt.clone());
 
-            let open = MenuItem::with_id(app, "open", "Abrir LowNotes", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Sair do LowNotes", true, None::<&str>)?;
+            let (open_label, quit_label) = tray_labels(&settings.read().language);
+            let open = MenuItem::with_id(app, "open", open_label, true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", quit_label, true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &quit])?;
+            app.manage(TrayMenu { open: open.clone(), quit: quit.clone() });
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().expect("ícone do aplicativo").clone())
                 .menu(&menu)
@@ -169,6 +198,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            set_tray_language,
             commands::take_recovery_notices,
             commands::retry_credentials,
             history_commands::history_list,
@@ -228,4 +258,17 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("erro ao executar o aplicativo LowNotes");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tray_labels;
+
+    #[test]
+    fn tray_labels_follow_the_interface_language() {
+        assert_eq!(tray_labels("pt-BR"), ("Abrir LowNotes", "Sair do LowNotes"));
+        assert_eq!(tray_labels("es-ES"), ("Abrir LowNotes", "Salir de LowNotes"));
+        assert_eq!(tray_labels("en-US"), ("Open LowNotes", "Quit LowNotes"));
+        assert_eq!(tray_labels(""), ("Open LowNotes", "Quit LowNotes"));
+    }
 }

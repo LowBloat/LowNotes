@@ -1,5 +1,6 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
+import { ts } from './i18n';
 import type {
   AiSettings,
   AppSettings,
@@ -184,7 +185,7 @@ export async function pickVaultDirectory(): Promise<string | null> {
   const selected = await open({
     directory: true,
     multiple: false,
-    title: 'Selecione a pasta para o Vault',
+    title: ts('app.chooseVaultFolder'),
   });
   if (typeof selected === 'string') {
     return selected;
@@ -218,6 +219,10 @@ export async function saveLineWrapping(lineWrapping: boolean): Promise<void> {
 
 export async function saveRemoteImages(loadRemoteImages: boolean): Promise<void> {
   return await invoke('save_remote_images', { loadRemoteImages });
+}
+
+export async function setTrayLanguage(language: string): Promise<void> {
+  await invoke('set_tray_language', { language });
 }
 
 export async function fetchAiModels(

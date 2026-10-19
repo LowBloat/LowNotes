@@ -42,12 +42,28 @@ function lookup(dict: Dictionary, key: string): string | undefined {
   return typeof node === 'string' ? node : undefined;
 }
 
+const pluralRules = new Map<LocaleCode, Intl.PluralRules>();
+
+/** Plural variant key such as `editor.words_one`. Zero uses the general form
+ * in every supported language ("0 palavras", not "0 palavra"). */
+function pluralKey(localeCode: LocaleCode, key: string, count: number): string {
+  let rules = pluralRules.get(localeCode);
+  if (!rules) pluralRules.set(localeCode, rules = new Intl.PluralRules(localeCode));
+  return `${key}_${count === 0 ? 'other' : rules.select(count)}`;
+}
+
+function lookupCounted(localeCode: LocaleCode, key: string, count: unknown): string | undefined {
+  const dictionary = dictionaries[localeCode];
+  const variant = typeof count === 'number' ? lookup(dictionary, pluralKey(localeCode, key, count)) : undefined;
+  return variant ?? lookup(dictionary, key);
+}
+
 export function translate(
   localeCode: LocaleCode,
   key: TKey | string,
   params?: TranslateParams,
 ): string {
-  let text = lookup(dictionaries[localeCode], key) ?? lookup(dictionaries['en-US'], key) ?? key;
+  let text = lookupCounted(localeCode, key, params?.count) ?? lookupCounted('en-US', key, params?.count) ?? key;
   if (params) {
     for (const [name, value] of Object.entries(params)) {
       text = text.replaceAll(`{${name}}`, String(value));

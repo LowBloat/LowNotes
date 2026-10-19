@@ -62,3 +62,15 @@ test('translate interpola parametros e cai para en-US', () => {
   expect(translate('pt-BR', 'errors.noteExists')).toBe('uma nota com este nome já existe');
   expect(translate('pt-BR', 'chave.inexistente')).toBe('chave.inexistente');
 });
+
+test('counts pick singular and plural forms, with zero using the plural', () => {
+  expect(translate('en-US', 'editor.words', { count: 1 })).toBe('1 word');
+  expect(translate('en-US', 'editor.words', { count: 2 })).toBe('2 words');
+  expect(translate('en-US', 'editor.words', { count: 0 })).toBe('0 words');
+  expect(translate('pt-BR', 'editor.words', { count: 1 })).toBe('1 palavra');
+  expect(translate('pt-BR', 'editor.words', { count: 0 })).toBe('0 palavras');
+  expect(translate('es-ES', 'ai.drafts', { count: 1 })).toBe('1 documento listo');
+  expect(translate('es-ES', 'ai.drafts', { count: 3 })).toBe('3 documentos listos');
+  // Keys without plural variants keep working.
+  expect(translate('en-US', 'sidebar.pairedMany', { count: 1 })).toBe('1 paired devices');
+});

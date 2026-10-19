@@ -28,6 +28,7 @@
   } from '$lib/api';
   import { locale, resolveLocale, t, trError } from '$lib/i18n';
   import { configureRemoteImages } from '$lib/markdown';
+  import { setTrayLanguage } from '$lib/api';
   import { resolveNoteLink } from '$lib/note-links';
   import { DEFAULT_PALETTE_ID, applyTheme } from '$lib/themes';
   import Sidebar from '$lib/components/Sidebar.svelte';
@@ -53,6 +54,8 @@
   $effect(() => {
     configureRemoteImages({ load: settings?.load_remote_images === true, label: $t('preview.remoteImageBlocked') });
   });
+  // The tray menu lives in the native process; keep its labels in the interface language.
+  $effect(() => { void setTrayLanguage($locale).catch(() => {}); });
   let theme = $state<AppTheme>('light');
   let viewMode = $state<ViewMode>('split');
   let isGraphOpen = $state(false);
