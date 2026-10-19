@@ -303,7 +303,7 @@ pub async fn upload_clipboard_image(
     if let Some(hash) = &image.deletehash {
         // Keep anonymous deletion credentials locally, outside notes and P2P sync.
         if let Err(error) = remember_imgur_upload(&image.link, hash) {
-            eprintln!("Could not save Imgur upload deletion record: {error}");
+            tracing::warn!("could not save Imgur upload deletion record: {error}");
         }
     }
     Ok(image.link)

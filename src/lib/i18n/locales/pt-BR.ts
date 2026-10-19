@@ -441,6 +441,7 @@ const ptBR: Dictionary = {
     savedKey: 'Chave salva. Digite para substituir.', removeKey: 'Remover chave salva',
     keyless: 'Sem chave', requiresKey: 'Requer chave de API', optionalKey: 'Chave de API opcional', apiKey: 'Chave de API', getKey: 'Obter chave', publicInstance: 'URL da instância pública', publicInstanceHint: 'Instâncias públicas podem limitar acessos ou desativar resultados JSON.', saveWeb: 'Salvar busca web',
     aboutHint: 'Informações do aplicativo e atualizações.', version: 'Versão', updateHint: 'Procurar novas versões automaticamente.', device: 'Nome do dispositivo', saved: 'Alterações salvas',
+    logs: 'Log de diagnóstico', logsHint: 'Erros e nomes de arquivos que ajudam a investigar sincronização e armazenamento. Nunca contém o conteúdo das notas, chaves ou códigos de pareamento.', openLogs: 'Abrir pasta de logs',
   },
   errors: {
     imageTooLarge: 'A imagem ultrapassa o limite de 200 MB.',

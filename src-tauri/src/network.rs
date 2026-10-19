@@ -265,7 +265,7 @@ impl NetworkService {
                             app.clone(),
                             worker_settings,
                         )) {
-                            eprintln!("[p2p] network unavailable: {err:#}");
+                            tracing::error!("[p2p] network unavailable: {err:#}");
                             let _ = app.emit(
                                 "p2p:error",
                                 NetworkEventPayload::Error {
@@ -276,7 +276,7 @@ impl NetworkService {
                         }
                     }
                     Err(err) => {
-                        eprintln!("[p2p] failed to create network runtime: {err}");
+                        tracing::error!("[p2p] failed to create network runtime: {err}");
                         let _ = app.emit(
                             "p2p:error",
                             NetworkEventPayload::Error {
@@ -454,7 +454,7 @@ async fn run_network(
                 )
                 .await;
                 if let Err(e) = res {
-                    eprintln!("[p2p accept error]: {e}");
+                    tracing::debug!("[p2p] incoming connection ended: {e:#}");
                 }
             });
         }
@@ -503,7 +503,7 @@ async fn run_network(
                     let res = dial_pair(ep, invite, my_ident, my_peers.clone(), my_app.clone(), my_vault, my_settings, my_sync).await;
                     in_flight.lock().remove(&target_id);
                     if let Err(e) = res {
-                        eprintln!("[p2p] pair failed: {e:#}");
+                        tracing::warn!("[p2p] pair failed: {e:#}");
                         let _ = my_app.emit(
                             "p2p:error",
                             NetworkEventPayload::Error {
@@ -881,7 +881,10 @@ fn persist_peer(settings: &Arc<RwLock<AppSettings>>, vault_id: &str, peer: &Peer
     if let Some(vault) = s.vaults.iter_mut().find(|v| v.id == vault_id) {
         if !vault.peers.iter().any(|p| p.endpoint_id == peer.endpoint_id) {
             vault.peers.push(peer.clone());
-            let _ = s.save();
+            if let Err(error) = s.save() {
+                // The peer stays in memory for this session; it must pair again after a restart.
+                tracing::error!("[p2p] could not save paired device {}: {error:#}", peer.name);
+            }
         }
     }
 }
@@ -933,7 +936,7 @@ fn spawn_sync(
                 }
             }
             Err(e) => {
-                eprintln!("[p2p] sync with {} failed: {e:#}", peer.name);
+                tracing::warn!("[p2p] sync with {} failed: {e:#}", peer.name);
                 if in_flight.failed(&target, std::time::Instant::now()) {
                     let _ = app.emit(
                         "p2p:error",
@@ -1471,7 +1474,7 @@ pub(crate) fn rotate_pairing_token(settings: &Arc<RwLock<AppSettings>>, vault_id
     let previous = std::mem::replace(&mut vault.pairing_token, crate::config::new_pairing_token());
     let next = vault.pairing_token.clone();
     if let Err(error) = s.save() {
-        eprintln!("[p2p] could not persist a rotated pairing token: {error:#}");
+        tracing::error!("[p2p] could not persist a rotated pairing token: {error:#}");
         if let Some(vault) = s.vaults.iter_mut().find(|v| v.id == vault_id) {
             vault.pairing_token = previous;
         }

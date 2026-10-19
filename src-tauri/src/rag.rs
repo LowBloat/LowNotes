@@ -241,11 +241,16 @@ pub async fn fetch_models(
         req = req.header("Authorization", format!("Bearer {}", api_key.trim()));
     }
 
-    let resp = req.send().await.context("falha ao conectar ao provedor de IA")?;
+    let resp = req.send().await.map_err(|error| {
+        tracing::warn!("listing models failed: {error}");
+        anyhow::anyhow!(if error.is_timeout() { "ai.providerTimeout" } else { "ai.providerConnectionFailed" })
+    })?;
     if !resp.status().is_success() {
+        // The provider's response body stays in the log; the interface gets a stable key.
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        bail!("erro do provedor (status {status}): {body}");
+        let body: String = resp.text().await.unwrap_or_default().chars().take(500).collect();
+        tracing::warn!("listing models returned {status}: {body}");
+        bail!("ai.providerRejected");
     }
 
     let body: OpenAiModelsResponse = resp

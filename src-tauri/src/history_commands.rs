@@ -259,7 +259,7 @@ pub fn start_retention(
                     &vault.path.join(".lownotes/history-settings.json"),
                     false,
                 );
-                eprintln!("history retention: {error}");
+                tracing::warn!("history retention: {error}");
             }
         }
     });

@@ -18,6 +18,7 @@ pub mod chat_history;
 pub mod export_images;
 pub mod export_target;
 pub mod http;
+pub mod logging;
 pub mod updates;
 pub mod image_upload;
 pub mod local_images;
@@ -83,6 +84,8 @@ pub fn run() {
         }
     }
 
+    logging::init();
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), "LowNotes starting");
     let settings = Arc::new(RwLock::new(AppSettings::load()));
     let crdt = CrdtManager::new();
     let network = Arc::new(RwLock::new(None::<NetworkService>));
@@ -141,10 +144,18 @@ pub fn run() {
             if let Some(vault) = s.active_vault_mut() {
                 saved_keys = vault.ensure_keys();
             }
+            // A freshly generated identity that cannot be saved would be replaced
+            // by another one on the next start, breaking every pairing. Do not
+            // go online with it; Settings shows the credential error and Retry.
+            let mut identity_unsaved = false;
             if saved_keys {
-                let _ = s.save();
+                if let Err(error) = s.save() {
+                    tracing::error!("could not save the vault identity: {error:#}");
+                    s.credential_error = "credentials.unavailable".into();
+                    identity_unsaved = true;
+                }
             }
-            if let Some(vault) = s.active_vault() {
+            if let Some(vault) = s.active_vault().filter(|_| !identity_unsaved) {
                 if let Ok(secret) = vault.secret_key() {
                     let identity = NetworkIdentity {
                         device_name: s.device_name.clone(),
@@ -257,6 +268,7 @@ pub fn run() {
             commands::ai_suggest_links,
             commands::save_update_prefs,
             commands::save_close_to_tray,
+            commands::open_log_folder,
         ])
         .run(tauri::generate_context!())
         .expect("erro ao executar o aplicativo LowNotes");
