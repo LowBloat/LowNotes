@@ -422,6 +422,7 @@ const esES: Dictionary = {
     aiHint: 'Configura el modelo predeterminado y el comportamiento de las notas.', activeProvider: 'Proveedor activo', activeProviderHint: 'Se usa en el chat y las sugerencias.', saveAi: 'Guardar ajustes de IA',
     providersHint: 'Conecta servicios de IA locales o en la nube.', addProvider: 'Agregar proveedor', customProvider: 'Proveedor personalizado', builtInProvider: 'Proveedor integrado', removeProvider: 'Eliminar proveedor', chooseModel: 'Elegir modelo', useProvider: 'Usar como proveedor activo', saveProviders: 'Guardar proveedores',
     webSearchHint: 'Elige qué buscadores públicos puede usar el asistente.', webRouteHint: 'LowNotes alterna entre las fuentes activadas y prueba la siguiente si una búsqueda falla. Solo se envían los términos.',
+    savedKey: 'Clave guardada. Escribe para reemplazarla.', removeKey: 'Quitar clave guardada',
     keyless: 'Sin clave', requiresKey: 'Requiere clave de API', optionalKey: 'Clave de API opcional', apiKey: 'Clave de API', getKey: 'Obtener clave', publicInstance: 'URL de la instancia pública', publicInstanceHint: 'Las instancias públicas pueden limitar solicitudes o desactivar resultados JSON.', saveWeb: 'Guardar búsqueda web',
     aboutHint: 'Información de la aplicación y actualizaciones.', version: 'Versión', updateHint: 'Buscar nuevas versiones automáticamente.', device: 'Nombre del dispositivo', saved: 'Cambios guardados',
   },

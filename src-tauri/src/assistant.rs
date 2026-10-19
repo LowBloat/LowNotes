@@ -471,6 +471,7 @@ mod tests {
             api_key: String::new(),
             selected_model: "fixture-model".into(),
             is_custom: true,
+            has_api_key: false,
         };
         let messages = build_messages(
             AssistantSkill::Auto,
