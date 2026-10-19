@@ -182,11 +182,13 @@ async fn upload_to(
         Provider::Imgur => Form::new().text("type", "file").part("image", part),
     };
     static UPLOAD_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-    let client = crate::http::cached(&UPLOAD_CLIENT, |builder| builder
-        // Catbox closes upload connections when the client has no User-Agent.
-        .user_agent(concat!("LowNotes/", env!("CARGO_PKG_VERSION")))
-        .timeout(Duration::from_secs(300))
-        .redirect(reqwest::redirect::Policy::none()));
+    let client = crate::http::cached(&UPLOAD_CLIENT, |builder| {
+        builder
+            // Catbox closes upload connections when the client has no User-Agent.
+            .user_agent(concat!("LowNotes/", env!("CARGO_PKG_VERSION")))
+            .timeout(Duration::from_secs(300))
+            .redirect(reqwest::redirect::Policy::none())
+    });
     let mut request = client.post(endpoint).multipart(form);
     if provider == Provider::Imgur {
         request = request.header(
@@ -213,8 +215,7 @@ async fn upload_to(
             }
             429 => provider.error("RateLimit"),
             _ => provider.error("Upload"),
-        }
-        .into());
+        });
     }
     let mut body = Vec::new();
     while let Some(chunk) = response
@@ -329,7 +330,9 @@ pub fn save_image_upload_settings(
     Provider::parse(&settings.provider)?;
     settings.local_default_applied = true;
     settings.imgur_client_id = settings.imgur_client_id.trim().into();
-    if settings.provider == "imgur" { client_id(&settings.imgur_client_id)?; }
+    if settings.provider == "imgur" {
+        client_id(&settings.imgur_client_id)?;
+    }
     let mut app = state.settings.write();
     let previous = std::mem::replace(&mut app.image_upload, settings);
     if let Err(error) = app.save() {

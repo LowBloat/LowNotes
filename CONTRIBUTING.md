@@ -42,6 +42,8 @@ bun run check
 bun run check:e2e
 bun test
 python -m unittest discover -s .github/scripts -p "test_*.py"
+cargo fmt --check --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml --lib --tests -- -D warnings
 cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
 bun run build
 bunx playwright install chromium

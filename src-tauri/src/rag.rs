@@ -1,11 +1,6 @@
-use std::{
-    collections::HashSet,
-    fs,
-    path::Path,
-    time::Duration,
-};
+use std::{collections::HashSet, fs, path::Path, time::Duration};
 
-use anyhow::{Context, bail};
+use anyhow::{bail, Context};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -115,7 +110,11 @@ pub fn index_and_search_vault(
         }
     }
 
-    all_chunks.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    all_chunks.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     all_chunks.truncate(limit);
     Ok(all_chunks)
 }
@@ -144,10 +143,7 @@ fn chunk_markdown(note_path: &str, note_title: &str, content: &str) -> Vec<RagCh
                 current_lines.clear();
             }
 
-            current_section = trimmed
-                .trim_start_matches('#')
-                .trim()
-                .to_string();
+            current_section = trimmed.trim_start_matches('#').trim().to_string();
             chunk_start_line = line_num;
             current_lines.push(line.to_string());
         } else if trimmed.is_empty() && current_lines.len() >= 12 {
@@ -225,10 +221,7 @@ fn score_chunk(chunk: &RagChunk, full_query: &str, query_terms: &HashSet<&str>) 
 }
 
 /// Fetch list of models from any OpenAI-compatible provider
-pub async fn fetch_models(
-    base_url: &str,
-    api_key: &str,
-) -> anyhow::Result<Vec<String>> {
+pub async fn fetch_models(base_url: &str, api_key: &str) -> anyhow::Result<Vec<String>> {
     let client = crate::http::client();
 
     let mut url = base_url.trim().trim_end_matches('/').to_string();
@@ -243,20 +236,27 @@ pub async fn fetch_models(
 
     let resp = req.send().await.map_err(|error| {
         tracing::warn!("listing models failed: {error}");
-        anyhow::anyhow!(if error.is_timeout() { "ai.providerTimeout" } else { "ai.providerConnectionFailed" })
+        anyhow::anyhow!(if error.is_timeout() {
+            "ai.providerTimeout"
+        } else {
+            "ai.providerConnectionFailed"
+        })
     })?;
     if !resp.status().is_success() {
         // The provider's response body stays in the log; the interface gets a stable key.
         let status = resp.status();
-        let body: String = resp.text().await.unwrap_or_default().chars().take(500).collect();
+        let body: String = resp
+            .text()
+            .await
+            .unwrap_or_default()
+            .chars()
+            .take(500)
+            .collect();
         tracing::warn!("listing models returned {status}: {body}");
         bail!("ai.providerRejected");
     }
 
-    let body: OpenAiModelsResponse = resp
-        .json()
-        .await
-        .context("errors.invalidModelsResponse")?;
+    let body: OpenAiModelsResponse = resp.json().await.context("errors.invalidModelsResponse")?;
 
     let mut models: Vec<String> = body.data.into_iter().map(|m| m.id).collect();
     models.sort();
@@ -288,9 +288,15 @@ pub async fn generate_chat_completion(
         temperature,
     };
 
-    let mut req = client.post(&url).json(&payload).timeout(Duration::from_secs(180));
+    let mut req = client
+        .post(&url)
+        .json(&payload)
+        .timeout(Duration::from_secs(180));
     if !provider.api_key.trim().is_empty() {
-        req = req.header("Authorization", format!("Bearer {}", provider.api_key.trim()));
+        req = req.header(
+            "Authorization",
+            format!("Bearer {}", provider.api_key.trim()),
+        );
     }
 
     let resp = req.send().await.map_err(|error| {
@@ -316,7 +322,11 @@ pub async fn generate_chat_completion(
     }
 
     let result: OpenAiChatResponse = resp.json().await.map_err(|error: reqwest::Error| {
-        anyhow::anyhow!(if error.is_timeout() { "ai.providerTimeout" } else { "errors.invalidAiResponse" })
+        anyhow::anyhow!(if error.is_timeout() {
+            "ai.providerTimeout"
+        } else {
+            "errors.invalidAiResponse"
+        })
     })?;
 
     let choice = result

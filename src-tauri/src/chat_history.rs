@@ -100,8 +100,11 @@ pub fn path_for_vault(vault_id: &str) -> anyhow::Result<PathBuf> {
 }
 
 fn read_at(path: &Path) -> anyhow::Result<ChatHistory> {
-    let valid = |bytes: &[u8]| bytes.len() <= MAX_FILE_BYTES && serde_json::from_slice::<ChatHistory>(bytes)
-        .is_ok_and(|history| validate(&history).is_ok());
+    let valid = |bytes: &[u8]| {
+        bytes.len() <= MAX_FILE_BYTES
+            && serde_json::from_slice::<ChatHistory>(bytes)
+                .is_ok_and(|history| validate(&history).is_ok())
+    };
     // Migrate the legacy .bak filename before asking the shared recovery layer to restore it.
     if !fs::read(path).is_ok_and(|bytes| valid(&bytes)) {
         let legacy = path.with_extension("bak");
@@ -114,8 +117,12 @@ fn read_at(path: &Path) -> anyhow::Result<ChatHistory> {
             }
         }
     }
-    let bytes = crate::storage::read_validated(path, valid).map_err(|_| anyhow::anyhow!("ai.historyCorrupt"))?;
-    match bytes { Some(bytes) => Ok(serde_json::from_slice(&bytes)?), None => Ok(ChatHistory::default()) }
+    let bytes = crate::storage::read_validated(path, valid)
+        .map_err(|_| anyhow::anyhow!("ai.historyCorrupt"))?;
+    match bytes {
+        Some(bytes) => Ok(serde_json::from_slice(&bytes)?),
+        None => Ok(ChatHistory::default()),
+    }
 }
 
 pub fn load(vault_id: &str) -> anyhow::Result<ChatHistory> {
@@ -146,7 +153,9 @@ fn validate(history: &ChatHistory) -> anyhow::Result<Vec<u8>> {
                 || entry.content.len() > 1024 * 1024
                 || entry.drafts.len() > 20
                 || entry.edits.len() > 20
-                || entry.edits.iter().any(|edit| edit.edit.old_text.len() > 256 * 1024 || edit.edit.new_text.len() > 256 * 1024)
+                || entry.edits.iter().any(|edit| {
+                    edit.edit.old_text.len() > 256 * 1024 || edit.edit.new_text.len() > 256 * 1024
+                })
                 || entry
                     .drafts
                     .iter()
@@ -188,9 +197,11 @@ mod tests {
             std::env::temp_dir().join(format!("lownotes-chat-history-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let path = dir.join("chat.json");
-        let mut history = ChatHistory::default();
-        history.memory = "Prefiro respostas em português.".into();
-        history.active_conversation_id = Some("chat-1".into());
+        let mut history = ChatHistory {
+            memory: "Prefiro respostas em português.".into(),
+            active_conversation_id: Some("chat-1".into()),
+            ..Default::default()
+        };
         history.conversations.push(ChatConversation {
             id: "chat-1".into(),
             title: "Aprender Python".into(),
@@ -209,7 +220,11 @@ mod tests {
                 }],
                 warnings: vec![],
                 edits: vec![ChatEdit {
-                    edit: crate::assistant::NoteEdit { path: "Python/Plano.md".into(), old_text: "- [ ] Estudar".into(), new_text: "- [x] Estudar".into() },
+                    edit: crate::assistant::NoteEdit {
+                        path: "Python/Plano.md".into(),
+                        old_text: "- [ ] Estudar".into(),
+                        new_text: "- [x] Estudar".into(),
+                    },
                     applied_path: Some("Python/Plano.md".into()),
                 }],
                 vault_id: None,
@@ -221,8 +236,16 @@ mod tests {
         save_at(&path, &history).unwrap();
         let value = serde_json::to_value(&history).unwrap();
         assert_eq!(value["activeConversationId"], "chat-1");
-        assert_eq!(value["conversations"][0]["messages"][0]["edits"][0]["old_text"], "- [ ] Estudar");
-        assert_eq!(read_at(&path).unwrap().conversations[0].messages[0].edits[0].applied_path.as_deref(), Some("Python/Plano.md"));
+        assert_eq!(
+            value["conversations"][0]["messages"][0]["edits"][0]["old_text"],
+            "- [ ] Estudar"
+        );
+        assert_eq!(
+            read_at(&path).unwrap().conversations[0].messages[0].edits[0]
+                .applied_path
+                .as_deref(),
+            Some("Python/Plano.md")
+        );
         assert_eq!(
             read_at(&path).unwrap().conversations[0].messages[0].content,
             "Olá"

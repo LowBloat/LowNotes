@@ -49,10 +49,16 @@ impl Scope {
         BUSY.with(|busy| {
             let mut busy = busy.borrow_mut();
             if busy.iter().any(|held| held == key) {
-                Self { key: None, nested: true }
+                Self {
+                    key: None,
+                    nested: true,
+                }
             } else {
                 busy.push(key.to_path_buf());
-                Self { key: Some(key.to_path_buf()), nested: false }
+                Self {
+                    key: Some(key.to_path_buf()),
+                    nested: false,
+                }
             }
         })
     }
@@ -537,7 +543,8 @@ mod tests {
                 super::exclusive(&other, &crate::crdt::CrdtManager::new(), || Ok(())).unwrap();
                 tx.send(()).unwrap();
             });
-            rx.recv_timeout(std::time::Duration::from_secs(10)).expect("vault B waited on vault A");
+            rx.recv_timeout(std::time::Duration::from_secs(10))
+                .expect("vault B waited on vault A");
             handle.join().unwrap();
             // Same thread, same vault: reentrant.
             super::exclusive(a.path(), &manager, || Ok(()))
@@ -552,11 +559,24 @@ mod tests {
     #[ignore = "Isolated child process for abrupt-exit reference move regression"]
     fn reference_move_crash_worker() {
         let root = PathBuf::from(std::env::var_os("LOWNOTES_REFERENCE_CRASH_ROOT").unwrap());
-        let phase: u8 = std::env::var("LOWNOTES_REFERENCE_CRASH_PHASE").unwrap().parse().unwrap();
-        rename_with_hook(&root, "folder", "moved", &CrdtManager::new(), "worker", |step| {
-            if step == phase { std::process::exit(86); }
-            Ok(())
-        }).unwrap();
+        let phase: u8 = std::env::var("LOWNOTES_REFERENCE_CRASH_PHASE")
+            .unwrap()
+            .parse()
+            .unwrap();
+        rename_with_hook(
+            &root,
+            "folder",
+            "moved",
+            &CrdtManager::new(),
+            "worker",
+            |step| {
+                if step == phase {
+                    std::process::exit(86);
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
         panic!("crash phase was not reached");
     }
 
@@ -565,22 +585,55 @@ mod tests {
         for phase in 0..=4 {
             let root = tempfile::tempdir().unwrap();
             fs::create_dir_all(root.path().join("folder")).unwrap();
-            fs::write(root.path().join("folder/source.md"), "É 🙂 [destino](target.md#seção \"título\")\n[[folder/target|alias]]\n").unwrap();
+            fs::write(
+                root.path().join("folder/source.md"),
+                "É 🙂 [destino](target.md#seção \"título\")\n[[folder/target|alias]]\n",
+            )
+            .unwrap();
             fs::write(root.path().join("folder/target.md"), "# Destino\n").unwrap();
-            fs::write(root.path().join("index.md"), "[origem](folder/source.md)\n[[folder/source|alias]]\n").unwrap();
+            fs::write(
+                root.path().join("index.md"),
+                "[origem](folder/source.md)\n[[folder/source|alias]]\n",
+            )
+            .unwrap();
             let child = std::process::Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "structural::tests::reference_move_crash_worker", "--ignored", "--nocapture"])
-                .env("LOWNOTES_REFERENCE_CRASH_ROOT", root.path()).env("LOWNOTES_REFERENCE_CRASH_PHASE", phase.to_string())
-                .output().unwrap();
-            assert_eq!(child.status.code(), Some(86), "phase {phase}: {}", String::from_utf8_lossy(&child.stderr));
+                .args([
+                    "--exact",
+                    "structural::tests::reference_move_crash_worker",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env("LOWNOTES_REFERENCE_CRASH_ROOT", root.path())
+                .env("LOWNOTES_REFERENCE_CRASH_PHASE", phase.to_string())
+                .output()
+                .unwrap();
+            assert_eq!(
+                child.status.code(),
+                Some(86),
+                "phase {phase}: {}",
+                String::from_utf8_lossy(&child.stderr)
+            );
             let manager = CrdtManager::new();
             recover_all(root.path(), &manager).unwrap();
-            assert_eq!(vault::read_note(root.path(), "moved/source.md").unwrap(), "É 🙂 [destino](target.md#seção \"título\")\n[[moved/target|alias]]\n");
-            assert_eq!(vault::read_note(root.path(), "index.md").unwrap(), "[origem](moved/source.md)\n[[moved/source|alias]]\n");
+            assert_eq!(
+                vault::read_note(root.path(), "moved/source.md").unwrap(),
+                "É 🙂 [destino](target.md#seção \"título\")\n[[moved/target|alias]]\n"
+            );
+            assert_eq!(
+                vault::read_note(root.path(), "index.md").unwrap(),
+                "[origem](moved/source.md)\n[[moved/source|alias]]\n"
+            );
             for path in ["moved/source.md", "moved/target.md", "index.md"] {
                 let state = manager.get_or_create_doc(root.path(), path).unwrap();
-                let doc = Doc::new(); doc.transact_mut().apply_update(Update::decode_v1(&state).unwrap()).unwrap();
-                assert_eq!(doc.get_or_insert_text("content").get_string(&doc.transact()), vault::read_note(root.path(), path).unwrap());
+                let doc = Doc::new();
+                doc.transact_mut()
+                    .apply_update(Update::decode_v1(&state).unwrap())
+                    .unwrap();
+                assert_eq!(
+                    doc.get_or_insert_text("content")
+                        .get_string(&doc.transact()),
+                    vault::read_note(root.path(), path).unwrap()
+                );
             }
             recover_all(root.path(), &manager).unwrap();
             assert!(!root.path().join("folder").exists());
