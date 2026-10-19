@@ -110,25 +110,16 @@
       if (apply) { await reload(); preview = result; notice = ts('history.cleaned', { versions: result.versions, archives: result.archives }); }
     });
   }
-  function trap(event: KeyboardEvent) {
-    if (event.key !== 'Tab' || !panel) return;
-    const elements = [...panel.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)')]
-      .filter(element => element.getClientRects().length);
-    const first = elements[0], last = elements.at(-1);
-    if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) { event.preventDefault(); last?.focus(); }
-    else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panel)) { event.preventDefault(); first?.focus(); }
-  }
+  // Focus trap and focus restoration come from `dismissibleModal`.
   onMount(() => {
-    const before = document.activeElement;
     panel?.focus();
     void run(() => reload(initialPath));
-    return () => { if (before instanceof HTMLElement && before.isConnected) before.focus(); };
   });
   onDestroy(() => { alive = false; });
 </script>
 
 <div class="history-backdrop" use:dismissibleModal={() => { if (!busy) onClose(); }}>
-  <div class="history-dialog" role="dialog" aria-modal="true" aria-labelledby="history-title" aria-busy={busy} tabindex="-1" bind:this={panel} onkeydown={trap}>
+  <div class="history-dialog" role="dialog" aria-modal="true" aria-labelledby="history-title" aria-busy={busy} tabindex="-1" bind:this={panel}>
     <header>
       <div><h2 id="history-title"><Clock3 size={19} /> {$t('history.title')}</h2><p>{vaultName} · {$t('history.localOnly')}</p></div>
       <button class="icon-button" onclick={onClose} disabled={busy} aria-label={$t('history.close')}><X size={19} /></button>
