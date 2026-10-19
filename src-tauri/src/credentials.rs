@@ -16,6 +16,8 @@ const UNAVAILABLE: &str = "credentials.unavailable";
 trait Store {
     fn get(&mut self, reference: &str) -> anyhow::Result<String>;
     fn put(&mut self, reference: &str, secret: &str) -> anyhow::Result<()>;
+    /// Best effort; a missing entry is not an error.
+    fn delete(&mut self, reference: &str) -> anyhow::Result<()>;
 }
 
 #[derive(Default)]
@@ -39,6 +41,13 @@ impl Store for NativeStore {
         }
         self.cache.insert(reference.into(), secret.into());
         Ok(())
+    }
+    fn delete(&mut self, reference: &str) -> anyhow::Result<()> {
+        self.cache.remove(reference);
+        match keyring::Entry::new(SERVICE, reference)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(error.into()),
+        }
     }
 }
 static NATIVE: OnceLock<Mutex<NativeStore>> = OnceLock::new();
@@ -112,6 +121,16 @@ pub fn export_value(settings: &AppSettings) -> anyhow::Result<serde_json::Value>
     Ok(value)
 }
 
+/// Credential references named by a settings file, or none if it is unreadable.
+fn references_in(path: &Path) -> BTreeSet<String> {
+    fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|value| value.get("credential_refs").and_then(|refs| refs.as_object()).cloned())
+        .map(|refs| refs.values().filter_map(|v| v.as_str()).filter(|r| r.starts_with("v1-")).map(String::from).collect())
+        .unwrap_or_default()
+}
+
 fn save_at(
     path: &Path,
     settings: &AppSettings,
@@ -119,6 +138,9 @@ fn save_at(
 ) -> anyhow::Result<AppSettings> {
     // Never replace an unrecoverable settings file with defaults.
     storage::read_validated(path, AppSettings::valid_saved_bytes)?;
+    // The backup about to be replaced may name the only copies of references
+    // that neither the new primary nor the new backup will use.
+    let superseded = references_in(&storage::backup_path(path));
     let mut next = settings.clone();
     let mut references = BTreeMap::new();
     let mut error = None;
@@ -176,6 +198,15 @@ fn save_at(
                 }
             }
         }
+    }
+    // Each changed secret gets a new immutable reference. Keep the ones named by
+    // the primary or its backup (recovery may need either) and remove the rest,
+    // so replaced secrets do not pile up in the operating system store.
+    let mut keep = references_in(path);
+    keep.extend(references_in(&backup));
+    keep.extend(next.credential_refs.values().cloned());
+    for reference in superseded.difference(&keep) {
+        let _ = store.delete(reference);
     }
     Ok(next)
 }
@@ -266,6 +297,13 @@ mod tests {
             );
             Ok(())
         }
+        fn delete(&mut self, reference: &str) -> anyhow::Result<()> {
+            if self.locked {
+                bail!("locked");
+            }
+            self.values.remove(reference);
+            Ok(())
+        }
     }
     fn legacy(path: &Path) -> AppSettings {
         let mut settings = AppSettings::default();
@@ -277,6 +315,34 @@ mod tests {
         fs::write(path, serde_json::to_vec(&settings).unwrap()).unwrap();
         settings
     }
+    #[test]
+    fn replaced_secrets_are_removed_once_no_settings_file_can_need_them() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("settings.json");
+        legacy(&path);
+        let mut store = FakeStore::default();
+        let mut settings = load_at(&path, &mut store).unwrap();
+        let slot = format!("ai:{}", settings.ai.providers[0].id);
+        let first = settings.credential_refs[&slot].clone();
+
+        settings.ai.providers[0].api_key = "second".into();
+        settings = save_at(&path, &settings, &mut store).unwrap();
+        let second = settings.credential_refs[&slot].clone();
+        assert_ne!(first, second);
+        // The backup still names the first reference: it must survive.
+        assert!(store.values.contains_key(&first));
+
+        settings.ai.providers[0].api_key = "third".into();
+        settings = save_at(&path, &settings, &mut store).unwrap();
+        let third = settings.credential_refs[&slot].clone();
+        assert!(!store.values.contains_key(&first), "orphaned reference was kept");
+        assert_eq!(store.values.get(&second).map(String::as_str), Some("second"));
+        assert_eq!(store.values.get(&third).map(String::as_str), Some("third"));
+        // Unchanged secrets keep their reference and value.
+        let identity = settings.credential_refs[&format!("vault:{}:identity", settings.vaults[0].id)].clone();
+        assert!(store.values.contains_key(&identity));
+    }
+
     #[test]
     fn migration_round_trips_keys_and_identity_without_plaintext_in_primary_backup_or_export() {
         let root = tempfile::tempdir().unwrap();

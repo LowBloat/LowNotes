@@ -229,16 +229,14 @@ pub async fn fetch_models(
     base_url: &str,
     api_key: &str,
 ) -> anyhow::Result<Vec<String>> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(12))
-        .build()?;
+    let client = crate::http::client();
 
     let mut url = base_url.trim().trim_end_matches('/').to_string();
     if !url.ends_with("/models") {
         url.push_str("/models");
     }
 
-    let mut req = client.get(&url);
+    let mut req = client.get(&url).timeout(Duration::from_secs(12));
     if !api_key.trim().is_empty() {
         req = req.header("Authorization", format!("Bearer {}", api_key.trim()));
     }
@@ -266,9 +264,7 @@ pub async fn generate_chat_completion(
     messages: &[ChatMessage],
     temperature: f32,
 ) -> anyhow::Result<String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(180))
-        .build()?;
+    let client = crate::http::client();
 
     let mut url = provider.base_url.trim().trim_end_matches('/').to_string();
     if !url.ends_with("/chat/completions") {
@@ -287,7 +283,7 @@ pub async fn generate_chat_completion(
         temperature,
     };
 
-    let mut req = client.post(&url).json(&payload);
+    let mut req = client.post(&url).json(&payload).timeout(Duration::from_secs(180));
     if !provider.api_key.trim().is_empty() {
         req = req.header("Authorization", format!("Bearer {}", provider.api_key.trim()));
     }

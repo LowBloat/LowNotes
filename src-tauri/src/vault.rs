@@ -207,20 +207,6 @@ pub fn rename_item(root: &Path, old_relative: &str, new_relative: &str) -> anyho
     crate::structural::rename(root, old_relative, new_relative, &crate::crdt::CrdtManager::new(), "local")
 }
 
-pub fn delete_item(root: &Path, relative: &str) -> anyhow::Result<()> {
-    crate::note_transaction::recover_all(root)?;
-    let target = safe_join(root, relative)?;
-    if !target.exists() {
-        return Ok(());
-    }
-    if target.is_dir() {
-        fs::remove_dir_all(target)?;
-    } else {
-        fs::remove_file(target)?;
-    }
-    Ok(())
-}
-
 pub fn build_manifest(root: &Path) -> anyhow::Result<Manifest> {
     crate::note_transaction::recover_all(root)?;
     crate::links::prepare_sync(root)?;
