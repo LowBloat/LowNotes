@@ -420,6 +420,7 @@ const esES: Dictionary = {
     demoNote: 'Nota de ejemplo', demoBody: 'Tus notas se verán así con estos colores.', demoLink: 'un enlace', demoButton: 'Botón', demoSuccess: 'Guardado', demoDanger: 'Alerta',
     languageHint: 'Idioma de la aplicación.', defaultView: 'Vista predeterminada', defaultViewHint: 'Cómo se abre una nota.',
     lineWrapping: 'Ajuste visual de líneas', lineWrappingHint: 'Muestra líneas largas en varias filas sin cambiar el archivo ni la numeración. Desactívalo para usar el desplazamiento horizontal.',
+    remoteImages: 'Cargar imágenes remotas', remoteImagesHint: 'Las notas pueden venir de dispositivos emparejados o del asistente. Cargar una imagen remota revela tu dirección IP a su servidor. Las imágenes de los proveedores de subida de LowNotes siempre se cargan.',
     behavior: 'Comportamiento de la ventana', behaviorHint: 'Decide qué sucede al cerrar la ventana.',
     closeToTray: 'Seguir en la bandeja del sistema', closeToTrayHint: 'Cerrar la ventana oculta LowNotes. Usa el icono de la bandeja para abrir o salir.',
     aiHint: 'Configura el modelo predeterminado y el comportamiento de las notas.', activeProvider: 'Proveedor activo', activeProviderHint: 'Se usa en el chat y las sugerencias.', saveAi: 'Guardar ajustes de IA',
@@ -503,6 +504,9 @@ const esES: Dictionary = {
     suggestLinksFailed: 'fallo al sugerir enlaces',
     aiSendFailed: 'fallo al enviar mensaje a la IA',
     aiEmptyResponse: 'la IA devolvió una respuesta vacía',
+  },
+  preview: {
+    remoteImageBlocked: 'Imagen remota bloqueada. Haz clic para cargarla.',
   },
 };
 

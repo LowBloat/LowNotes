@@ -95,6 +95,7 @@ export interface AppSettings {
   theme_palettes: ThemePalettesSettings;
   view_mode: ViewMode;
   line_wrapping: boolean;
+  load_remote_images?: boolean;
   language: string;
   update_check: boolean;
   close_to_tray: boolean;

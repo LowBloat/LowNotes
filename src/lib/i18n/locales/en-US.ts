@@ -418,6 +418,7 @@ const enUS = {
     demoNote: 'Sample note', demoBody: 'Your notes will look like this with these colors.', demoLink: 'a link', demoButton: 'Button', demoSuccess: 'Saved', demoDanger: 'Alert',
     languageHint: 'Language used throughout the app.', defaultView: 'Default editor view', defaultViewHint: 'How a note opens.',
     lineWrapping: 'Visual line wrapping', lineWrappingHint: 'Display long lines across multiple screen rows without changing the file or line numbers. Turn off to use horizontal scrolling.',
+    remoteImages: 'Load remote images', remoteImagesHint: 'Notes can come from paired devices or the assistant. Loading a remote image reveals your IP address to its host. Images from the LowNotes upload providers always load.',
     behavior: 'Window behavior', behaviorHint: 'Control what happens when you close the window.',
     closeToTray: 'Keep running in the system tray', closeToTrayHint: 'Closing the window hides LowNotes. Use the tray icon to reopen or quit.',
     aiHint: 'Set the assistant’s default model and note behavior.', activeProvider: 'Active provider', activeProviderHint: 'Used for chat and note suggestions.', saveAi: 'Save AI settings',
@@ -501,6 +502,9 @@ const enUS = {
     suggestLinksFailed: 'Failed to suggest links',
     aiSendFailed: 'Failed to send message to the AI',
     aiEmptyResponse: 'The AI returned an empty response',
+  },
+  preview: {
+    remoteImageBlocked: 'Remote image blocked. Click to load.',
   },
 };
 
