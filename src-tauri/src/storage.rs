@@ -40,6 +40,26 @@ pub(crate) fn report_recovery(path: &Path, recovered: bool) {
 /// denied" (5) or a sharing/lock violation (32, 33). Retry those for up to
 /// about 300 ms; any other error, and every error elsewhere, is returned as is.
 pub(crate) fn retry_transient<T>(
+    operation: impl FnMut() -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    retry_windows_codes(&[5, 32, 33], operation)
+}
+
+/// Removing a directory right after deleting its files can fail with "directory
+/// not empty" (145) on Windows: a deleted file stays listed until every handle
+/// to it (often a scanner's) is closed. Retry that too, with the same bound.
+pub(crate) fn remove_dir(path: impl AsRef<Path>) -> std::io::Result<()> {
+    let path = path.as_ref();
+    retry_windows_codes(&[5, 32, 33, 145], || fs::remove_dir(path))
+}
+
+pub(crate) fn remove_dir_all(path: impl AsRef<Path>) -> std::io::Result<()> {
+    let path = path.as_ref();
+    retry_windows_codes(&[5, 32, 33, 145], || fs::remove_dir_all(path))
+}
+
+fn retry_windows_codes<T>(
+    codes: &[i32],
     mut operation: impl FnMut() -> std::io::Result<T>,
 ) -> std::io::Result<T> {
     let mut attempt = 0;
@@ -49,7 +69,9 @@ pub(crate) fn retry_transient<T>(
             Err(error)
                 if cfg!(windows)
                     && attempt < 6
-                    && matches!(error.raw_os_error(), Some(5 | 32 | 33)) =>
+                    && error
+                        .raw_os_error()
+                        .is_some_and(|code| codes.contains(&code)) =>
             {
                 std::thread::sleep(std::time::Duration::from_millis(5 << attempt));
                 attempt += 1;

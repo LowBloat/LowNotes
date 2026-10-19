@@ -361,7 +361,7 @@ fn finish(
     let file = directory.join("intent.json");
     storage::remove_file(&storage::backup_path(&file))?;
     storage::remove_file(&file)?;
-    fs::remove_dir_all(directory)?;
+    storage::remove_dir_all(directory)?;
     if recovered {
         storage::report_recovery(&destination, true);
     }

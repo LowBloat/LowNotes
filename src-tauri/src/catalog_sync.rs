@@ -307,7 +307,7 @@ pub(crate) fn move_preserving(source: &Path, destination: &Path) -> anyhow::Resu
             }
             move_preserving(&child.path(), &destination.join(child.file_name()))?;
         }
-        fs::remove_dir(source)?;
+        storage::remove_dir(source)?;
     } else if source.is_file() && destination.is_file() {
         // Preserve an external file that appeared after staging. Never replace
         // it before its copy has been committed to disk.
@@ -1308,7 +1308,7 @@ pub(crate) fn expire_trash(
         }
         report.archives += 1;
         if apply {
-            fs::remove_dir_all(entry.path())?;
+            storage::remove_dir_all(entry.path())?;
         }
     }
     Ok(())
