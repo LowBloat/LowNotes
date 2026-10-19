@@ -290,7 +290,7 @@ pub fn preserve_deleted(
 pub(crate) fn move_preserving(source: &Path, destination: &Path) -> anyhow::Result<()> {
     if !destination.exists() {
         fs::create_dir_all(destination.parent().context("missing destination parent")?)?;
-        fs::rename(source, destination).with_context(|| {
+        storage::rename(source, destination).with_context(|| {
             format!(
                 "place structural item {} -> {}",
                 source.display(),
@@ -331,7 +331,7 @@ pub(crate) fn move_preserving(source: &Path, destination: &Path) -> anyhow::Resu
         storage::write_validated(&copy, &previous, |bytes| bytes == previous.as_slice())?;
         storage::report_recovery(&copy, true);
         storage::remove_file(destination)?;
-        fs::rename(source, destination)?;
+        storage::rename(source, destination)?;
     } else {
         bail!("structural destination has a different type");
     }
@@ -401,7 +401,7 @@ pub(crate) fn preserve_recreated_source(
         .join(id)
         .join(catalog::random_id());
     fs::create_dir_all(archived.parent().unwrap())?;
-    fs::rename(source, archived)?;
+    storage::rename(source, archived)?;
     Ok(())
 }
 
@@ -460,7 +460,7 @@ fn finish(
             if item.restore_from.is_some() {
                 copy_tree(&source, &staged)?;
             } else {
-                fs::rename(&source, &staged).with_context(|| {
+                storage::rename(&source, &staged).with_context(|| {
                     format!(
                         "stage structural source {} -> {}",
                         source.display(),
@@ -605,7 +605,7 @@ fn finish(
     // Retain the original CRDT states and removed files. The archive also
     // records their identities and locations for a later observed restore.
     fs::create_dir_all(root.join(TRASH))?;
-    fs::rename(
+    storage::rename(
         directory,
         root.join(TRASH).join(directory.file_name().unwrap()),
     )

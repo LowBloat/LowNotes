@@ -109,6 +109,11 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libdbus-1-dev gnome-keyring
       - name: Rust regression tests
         run: cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
+      # Windows is where filesystem races showed up (#50); a second run surfaces
+      # intermittent failures early. The build is cached, so it costs about a minute.
+      - name: Rust regression tests (second run)
+        if: runner.os == 'Windows'
+        run: cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
       - name: Native credential store regression (Windows/macOS)
         if: runner.os != 'Linux'
         run: cargo test --locked --lib --manifest-path src-tauri/Cargo.toml credentials::tests::native_store_round_trip -- --exact --ignored

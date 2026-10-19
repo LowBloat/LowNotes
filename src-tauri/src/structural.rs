@@ -258,7 +258,7 @@ fn finish(
                 &source,
             )?;
         } else {
-            fs::rename(&source, &staged)?;
+            storage::rename(&source, &staged)?;
             progress.staged = true;
             storage::write_validated(&progress_file, &serde_json::to_vec(&progress)?, |bytes| {
                 serde_json::from_slice::<MoveProgress>(bytes).is_ok()
@@ -352,7 +352,7 @@ fn finish(
             .join(".lownotes/recovered-files")
             .join(directory.file_name().unwrap());
         fs::create_dir_all(archive.parent().unwrap())?;
-        fs::rename(directory, &archive)?;
+        storage::rename(directory, &archive)?;
         storage::report_recovery(&archive, true);
         return Ok(());
     }
