@@ -6,7 +6,7 @@ use std::{
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{
     assistant::{self, AssistantSkill, NoteDraft, NoteEdit},
@@ -32,6 +32,21 @@ pub struct RestoredItem {
     pub path: String,
     pub is_dir: bool,
     pub has_more: bool,
+}
+
+/// Runs an IO-bound command body on Tauri's blocking pool. Synchronous
+/// commands run on the main thread, where disk, CRDT and structural-lock waits
+/// freeze the interface (for example while a peer synchronizes).
+async fn on_worker<T: Send + 'static>(
+    app: AppHandle,
+    task: impl FnOnce(&AppState, &AppHandle) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        task(&state, &app)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 pub(crate) fn catalog_device(state: &AppState, vault: &VaultConfig) -> String {
@@ -60,303 +75,309 @@ pub fn take_recovery_notices() -> Vec<crate::storage::RecoveryNotice> {
 }
 
 #[tauri::command]
-pub fn retry_credentials(state: State<'_, AppState>, app: AppHandle) -> Result<AppSettings, String> {
-    let mut settings = state.settings.write();
-    crate::credentials::retry(&mut settings).map_err(|error| error.to_string())?;
-    let vault = settings.active_vault().cloned();
-    let result = settings.for_frontend();
-    drop(settings);
-    if let Some(vault) = vault { restart_network_service(&state, &vault, app)?; }
-    Ok(result)
+pub async fn retry_credentials(app: AppHandle) -> Result<AppSettings, String> {
+    on_worker(app, move |state, app| {
+        let app = app.clone();
+        let mut settings = state.settings.write();
+        crate::credentials::retry(&mut settings).map_err(|error| error.to_string())?;
+        let vault = settings.active_vault().cloned();
+        let result = settings.for_frontend();
+        drop(settings);
+        if let Some(vault) = vault { restart_network_service(&state, &vault, app)?; }
+        Ok(result)
+    }).await
 }
 
 #[tauri::command]
-pub fn get_app_state(state: State<'_, AppState>) -> Result<InitialStateResponse, String> {
-    let settings = state.settings.read().clone();
-    let active_vault = settings.active_vault().cloned();
-    let items = if let Some(vault) = &active_vault {
-        vault::list_vault_items(&vault.path).map_err(|e| e.to_string())?
-    } else {
-        Vec::new()
-    };
+pub async fn get_app_state(app: AppHandle) -> Result<InitialStateResponse, String> {
+    on_worker(app, move |state, _app| {
+        let settings = state.settings.read().clone();
+        let active_vault = settings.active_vault().cloned();
+        let items = if let Some(vault) = &active_vault {
+            vault::list_vault_items(&vault.path).map_err(|e| e.to_string())?
+        } else {
+            Vec::new()
+        };
 
-    let pair_info = state.network.read().as_ref().and_then(|s| s.pair_info());
+        let pair_info = state.network.read().as_ref().and_then(|s| s.pair_info());
 
-    Ok(InitialStateResponse {
-        settings: settings.for_frontend(),
-        active_vault: active_vault.as_ref().map(VaultConfig::for_frontend),
-        items,
-        pair_info,
-    })
+        Ok(InitialStateResponse {
+            settings: settings.for_frontend(),
+            active_vault: active_vault.as_ref().map(VaultConfig::for_frontend),
+            items,
+            pair_info,
+        })
+    }).await
 }
 
 #[tauri::command]
-pub fn select_vault(
-    path_str: String,
-    state: State<'_, AppState>,
-    app: AppHandle,
-) -> Result<InitialStateResponse, String> {
-    let path = PathBuf::from(path_str);
-    if !path.is_dir() {
-        return Err("errors.invalidFolderPath".to_string());
-    }
+pub async fn select_vault(path_str: String, app: AppHandle) -> Result<InitialStateResponse, String> {
+    on_worker(app, move |state, app| {
+        let app = app.clone();
+        let path = PathBuf::from(path_str);
+        if !path.is_dir() {
+            return Err("errors.invalidFolderPath".to_string());
+        }
 
-    let mut settings = state.settings.write();
-    let vault_id = if let Some(existing) = settings.vaults.iter().find(|v| v.path == path) {
-        existing.id.clone()
-    } else {
-        let new_vault = VaultConfig::new(path.clone(), None);
+        let mut settings = state.settings.write();
+        let vault_id = if let Some(existing) = settings.vaults.iter().find(|v| v.path == path) {
+            existing.id.clone()
+        } else {
+            let new_vault = VaultConfig::new(path.clone(), None);
+            let id = new_vault.id.clone();
+            settings.vaults.push(new_vault);
+            id
+        };
+
+        settings.active_vault_id = Some(vault_id);
+        settings.save().map_err(|e| e.to_string())?;
+
+        let active_vault = settings.active_vault().cloned().ok_or("errors.vaultNotFound")?;
+        drop(settings);
+
+        // Restart network service for the selected vault
+        restart_network_service(&state, &active_vault, app)?;
+
+        let items = vault::list_vault_items(&active_vault.path).map_err(|e| e.to_string())?;
+        let current_settings = state.settings.read().for_frontend();
+
+        let pair_info = state.network.read().as_ref().and_then(|s| s.pair_info());
+
+        Ok(InitialStateResponse {
+            settings: current_settings,
+            active_vault: Some(active_vault.for_frontend()),
+            items,
+            pair_info,
+        })
+    }).await
+}
+
+#[tauri::command]
+pub async fn create_vault(path_str: String, name: Option<String>, app: AppHandle) -> Result<InitialStateResponse, String> {
+    on_worker(app, move |state, app| {
+        let app = app.clone();
+        let path = PathBuf::from(path_str);
+        std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+
+        let mut settings = state.settings.write();
+        let new_vault = VaultConfig::new(path.clone(), name);
         let id = new_vault.id.clone();
         settings.vaults.push(new_vault);
-        id
-    };
+        settings.active_vault_id = Some(id);
+        settings.save().map_err(|e| e.to_string())?;
 
-    settings.active_vault_id = Some(vault_id);
-    settings.save().map_err(|e| e.to_string())?;
+        let active_vault = settings.active_vault().cloned().ok_or("errors.vaultNotFound")?;
+        drop(settings);
 
-    let active_vault = settings.active_vault().cloned().ok_or("errors.vaultNotFound")?;
-    drop(settings);
+        restart_network_service(&state, &active_vault, app)?;
 
-    // Restart network service for the selected vault
-    restart_network_service(&state, &active_vault, app)?;
+        let items = vault::list_vault_items(&active_vault.path).map_err(|e| e.to_string())?;
+        let current_settings = state.settings.read().for_frontend();
 
-    let items = vault::list_vault_items(&active_vault.path).map_err(|e| e.to_string())?;
-    let current_settings = state.settings.read().for_frontend();
+        let pair_info = state.network.read().as_ref().and_then(|s| s.pair_info());
 
-    let pair_info = state.network.read().as_ref().and_then(|s| s.pair_info());
-
-    Ok(InitialStateResponse {
-        settings: current_settings,
-        active_vault: Some(active_vault.for_frontend()),
-        items,
-        pair_info,
-    })
+        Ok(InitialStateResponse {
+            settings: current_settings,
+            active_vault: Some(active_vault.for_frontend()),
+            items,
+            pair_info,
+        })
+    }).await
 }
 
 #[tauri::command]
-pub fn create_vault(
-    path_str: String,
-    name: Option<String>,
-    state: State<'_, AppState>,
-    app: AppHandle,
-) -> Result<InitialStateResponse, String> {
-    let path = PathBuf::from(path_str);
-    std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
-
-    let mut settings = state.settings.write();
-    let new_vault = VaultConfig::new(path.clone(), name);
-    let id = new_vault.id.clone();
-    settings.vaults.push(new_vault);
-    settings.active_vault_id = Some(id);
-    settings.save().map_err(|e| e.to_string())?;
-
-    let active_vault = settings.active_vault().cloned().ok_or("errors.vaultNotFound")?;
-    drop(settings);
-
-    restart_network_service(&state, &active_vault, app)?;
-
-    let items = vault::list_vault_items(&active_vault.path).map_err(|e| e.to_string())?;
-    let current_settings = state.settings.read().for_frontend();
-
-    let pair_info = state.network.read().as_ref().and_then(|s| s.pair_info());
-
-    Ok(InitialStateResponse {
-        settings: current_settings,
-        active_vault: Some(active_vault.for_frontend()),
-        items,
-        pair_info,
-    })
+pub async fn list_notes(app: AppHandle) -> Result<Vec<VaultItem>, String> {
+    on_worker(app, move |state, _app| {
+        let settings = state.settings.read().clone();
+        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
+        vault::list_vault_items(&vault.path).map_err(|e| e.to_string())
+    }).await
 }
 
 #[tauri::command]
-pub fn list_notes(state: State<'_, AppState>) -> Result<Vec<VaultItem>, String> {
-    let settings = state.settings.read();
-    let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-    vault::list_vault_items(&vault.path).map_err(|e| e.to_string())
+pub async fn read_note(path: String, app: AppHandle) -> Result<NoteReadResponse, String> {
+    on_worker(app, move |state, _app| {
+        let settings = state.settings.read().clone();
+        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
+        let catalog = crate::catalog_sync::prepare(&vault.path, &state.crdt, &catalog_device(&state, vault)).map_err(|e| e.to_string())?;
+        let note_id = catalog.resolve().map_err(|e| e.to_string())?.into_values().find(|entry| !entry.deleted() && !entry.is_dir && entry.path == path).map(|entry| entry.id);
+        vault::read_note(&vault.path, &path).map_err(|e| e.to_string())?;
+
+        let crdt_bytes = state.crdt.get_or_create_doc(&vault.path, &path).map_err(|e| e.to_string())?;
+        let content = vault::read_note(&vault.path, &path).map_err(|e| e.to_string())?;
+        let crdt_update_base64 = URL_SAFE_NO_PAD.encode(crdt_bytes);
+
+        Ok(NoteReadResponse {
+            content,
+            crdt_update_base64,
+            note_id,
+        })
+    }).await
 }
 
 #[tauri::command]
-pub fn read_note(path: String, state: State<'_, AppState>) -> Result<NoteReadResponse, String> {
-    let settings = state.settings.read();
-    let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-    let catalog = crate::catalog_sync::prepare(&vault.path, &state.crdt, &catalog_device(&state, vault)).map_err(|e| e.to_string())?;
-    let note_id = catalog.resolve().map_err(|e| e.to_string())?.into_values().find(|entry| !entry.deleted() && !entry.is_dir && entry.path == path).map(|entry| entry.id);
-    vault::read_note(&vault.path, &path).map_err(|e| e.to_string())?;
-
-    let crdt_bytes = state.crdt.get_or_create_doc(&vault.path, &path).map_err(|e| e.to_string())?;
-    let content = vault::read_note(&vault.path, &path).map_err(|e| e.to_string())?;
-    let crdt_update_base64 = URL_SAFE_NO_PAD.encode(crdt_bytes);
-
-    Ok(NoteReadResponse {
-        content,
-        crdt_update_base64,
-        note_id,
-    })
-}
-
-#[tauri::command]
-pub fn save_note(path: String, content: String, state: State<'_, AppState>, app: AppHandle) -> Result<(), String> {
-    let settings = state.settings.read();
-    let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-    let saved = state.crdt.replace_note_text(&vault.path, &path, &content).map_err(|e| e.to_string())?;
-    if saved.changed {
-        let _ = app.emit("p2p:crdt-update", crate::network::NetworkEventPayload::RemoteCrdtUpdate {
-            note_path: path.clone(), update: saved.state.clone(),
-        });
-        if let Some(net) = state.network.read().as_ref() { net.broadcast_crdt_update(path, saved.state); }
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub fn create_note(
-    path: String,
-    title: Option<String>,
-    state: State<'_, AppState>,
-) -> Result<String, String> {
-    let settings = state.settings.read();
-    let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-    let lang = settings.language.clone();
-    let init_content = title.map(|t| format!("# {t}\n\n"));
-    let created = vault::create_note(&vault.path, &path, init_content.as_deref(), &lang)
-        .map_err(|e| e.to_string())?;
-    state.crdt.invalidate_path(&vault.path, &created).map_err(|e| e.to_string())?;
-
-    // Best-effort AI auto-linking for brand-new notes.
-    if settings.ai.auto_link_notes {
-        if let Some(provider) = settings
-            .ai
-            .providers
-            .iter()
-            .find(|p| p.id == settings.ai.active_provider_id)
-            .cloned()
-        {
-            let vault_path = vault.path.clone();
-            let note_path = created.clone();
-            tauri::async_runtime::spawn(async move {
-                match suggest_links_for_note(&vault_path, &note_path, &provider).await {
-                    Ok(targets) if !targets.is_empty() => {
-                        let ops: Vec<links::LinkOperation> = targets
-                            .into_iter()
-                            .map(|target| links::LinkOperation {
-                                source: note_path.clone(),
-                                target,
-                                action: links::LinkAction::add,
-                            })
-                            .collect();
-                        if let Err(e) =
-                            links::apply_operations(&vault_path, &ops, links::LinkOrigin::agent)
-                        {
-                            eprintln!("auto-link apply failed for {note_path}: {e}");
-                        }
-                    }
-                    Ok(_) => {}
-                    Err(e) => eprintln!("auto-link suggestion failed for {note_path}: {e}"),
-                }
+pub async fn save_note(path: String, content: String, app: AppHandle) -> Result<(), String> {
+    on_worker(app, move |state, app| {
+        let app = app.clone();
+        let settings = state.settings.read().clone();
+        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
+        let saved = state.crdt.replace_note_text(&vault.path, &path, &content).map_err(|e| e.to_string())?;
+        if saved.changed {
+            let _ = app.emit("p2p:crdt-update", crate::network::NetworkEventPayload::RemoteCrdtUpdate {
+                note_path: path.clone(), update: saved.state.clone(),
             });
+            if let Some(net) = state.network.read().as_ref() { net.broadcast_crdt_update(path, saved.state); }
         }
-    }
-
-    if let Some(net) = state.network.read().as_ref() {
-        net.sync_now();
-    }
-    Ok(created)
+        Ok(())
+    }).await
 }
 
 #[tauri::command]
-pub fn create_folder(path: String, state: State<'_, AppState>) -> Result<(), String> {
-    let settings = state.settings.read();
-    let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-    vault::create_folder(&vault.path, &path).map_err(|e| e.to_string())?;
-    if let Some(net) = state.network.read().as_ref() { net.sync_now(); }
-    Ok(())
-}
+pub async fn create_note(path: String, title: Option<String>, app: AppHandle) -> Result<String, String> {
+    on_worker(app, move |state, _app| {
+        let settings = state.settings.read().clone();
+        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
+        let lang = settings.language.clone();
+        let init_content = title.map(|t| format!("# {t}\n\n"));
+        let created = vault::create_note(&vault.path, &path, init_content.as_deref(), &lang)
+            .map_err(|e| e.to_string())?;
+        state.crdt.invalidate_path(&vault.path, &created).map_err(|e| e.to_string())?;
 
-#[tauri::command]
-pub fn rename_item(
-    old_path: String,
-    new_path: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let settings = state.settings.read();
-    let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-    crate::structural::rename(&vault.path, &old_path, &new_path, &state.crdt, &catalog_device(&state, vault)).map_err(|e| e.to_string())?;
-    if let Some(net) = state.network.read().as_ref() {
-        net.sync_now();
-    }
-    Ok(())
-}
+        // Best-effort AI auto-linking for brand-new notes.
+        if settings.ai.auto_link_notes {
+            if let Some(provider) = settings
+                .ai
+                .providers
+                .iter()
+                .find(|p| p.id == settings.ai.active_provider_id)
+                .cloned()
+            {
+                let vault_path = vault.path.clone();
+                let note_path = created.clone();
+                tauri::async_runtime::spawn(async move {
+                    match suggest_links_for_note(&vault_path, &note_path, &provider).await {
+                        Ok(targets) if !targets.is_empty() => {
+                            let ops: Vec<links::LinkOperation> = targets
+                                .into_iter()
+                                .map(|target| links::LinkOperation {
+                                    source: note_path.clone(),
+                                    target,
+                                    action: links::LinkAction::add,
+                                })
+                                .collect();
+                            if let Err(e) =
+                                links::apply_operations(&vault_path, &ops, links::LinkOrigin::agent)
+                            {
+                                eprintln!("auto-link apply failed for {note_path}: {e}");
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(e) => eprintln!("auto-link suggestion failed for {note_path}: {e}"),
+                    }
+                });
+            }
+        }
 
-#[tauri::command]
-pub fn delete_item(path: String, state: State<'_, AppState>) -> Result<(), String> {
-    let settings = state.settings.read();
-    let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-    crate::catalog_sync::delete(&vault.path, &path, &state.crdt, &catalog_device(&state, vault)).map_err(|e| e.to_string())?;
-
-    if let Some(net) = state.network.read().as_ref() {
-        net.sync_now();
-    }
-
-    Ok(())
-}
-
-#[tauri::command]
-pub fn undo_last_delete(state: State<'_, AppState>) -> Result<Option<RestoredItem>, String> {
-    let settings = state.settings.read();
-    let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-    let restored = crate::catalog_sync::restore_latest(&vault.path, &state.crdt, &catalog_device(&state, vault))
-        .map_err(|e| e.to_string())?.map(|(path, is_dir)| RestoredItem {
-            path, is_dir, has_more: crate::catalog_sync::has_restorable(&vault.path).unwrap_or(false),
-        });
-    if restored.is_some() {
         if let Some(net) = state.network.read().as_ref() {
             net.sync_now();
         }
-    }
-    Ok(restored)
+        Ok(created)
+    }).await
 }
 
 #[tauri::command]
-pub fn crdt_apply_client_update(
-    note_path: String,
-    update_base64: String,
-    note_id: Option<String>,
-    vault_id: Option<String>,
-    recovery_update: Option<bool>,
-    state: State<'_, AppState>,
-    app: AppHandle,
-) -> Result<(), String> {
-    let update_bytes = URL_SAFE_NO_PAD
-        .decode(&update_base64)
-        .map_err(|_e| "errors.invalidBase64".to_string())?;
+pub async fn create_folder(path: String, app: AppHandle) -> Result<(), String> {
+    on_worker(app, move |state, _app| {
+        let settings = state.settings.read().clone();
+        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
+        vault::create_folder(&vault.path, &path).map_err(|e| e.to_string())?;
+        if let Some(net) = state.network.read().as_ref() { net.sync_now(); }
+        Ok(())
+    }).await
+}
 
-    let settings = state.settings.read();
-    let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-    if vault_id.as_ref().is_some_and(|id| id != &vault.id) { return Err("ai.vaultChanged".into()); }
-    if let Some(id) = note_id {
-        let catalog = crate::catalog::load(&vault.path).and_then(|catalog| catalog.resolve()).map_err(|error| error.to_string())?;
-        let entry = catalog.get(&id).ok_or("unknown note identity")?;
-        if entry.deleted() && !recovery_update.unwrap_or(false) { return Err("errors.noteDeleted".into()); }
-        let changed = crate::network::apply_identified_update(&vault.path, &id, &note_path, &update_bytes, &state.crdt, Some(&app)).map_err(|error| error.to_string())?;
-        if changed && !entry.deleted() {
-            let full_state = state.crdt.get_or_create_doc(&vault.path, &entry.path).map_err(|error| error.to_string())?;
-            if let Some(net) = state.network.read().as_ref() { net.broadcast_crdt_update(entry.path.clone(), full_state); }
-        }
-        return Ok(());
-    }
-    // A delayed local save from a closed/deleted note must not recreate it.
-    vault::read_note(&vault.path, &note_path).map_err(|e| e.to_string())?;
-    let result = state.crdt.apply_update(&vault.path, &note_path, &update_bytes)
-        .map_err(|e| e.to_string())?;
-
-    // Full state lets a peer recover from a missed incremental packet.
-    if result.changed {
+#[tauri::command]
+pub async fn rename_item(old_path: String, new_path: String, app: AppHandle) -> Result<(), String> {
+    on_worker(app, move |state, _app| {
+        let settings = state.settings.read().clone();
+        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
+        crate::structural::rename(&vault.path, &old_path, &new_path, &state.crdt, &catalog_device(&state, vault)).map_err(|e| e.to_string())?;
         if let Some(net) = state.network.read().as_ref() {
-            net.broadcast_crdt_update(note_path, result.state);
+            net.sync_now();
         }
-    }
+        Ok(())
+    }).await
+}
 
-    Ok(())
+#[tauri::command]
+pub async fn delete_item(path: String, app: AppHandle) -> Result<(), String> {
+    on_worker(app, move |state, _app| {
+        let settings = state.settings.read().clone();
+        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
+        crate::catalog_sync::delete(&vault.path, &path, &state.crdt, &catalog_device(&state, vault)).map_err(|e| e.to_string())?;
+
+        if let Some(net) = state.network.read().as_ref() {
+            net.sync_now();
+        }
+
+        Ok(())
+    }).await
+}
+
+#[tauri::command]
+pub async fn undo_last_delete(app: AppHandle) -> Result<Option<RestoredItem>, String> {
+    on_worker(app, move |state, _app| {
+        let settings = state.settings.read().clone();
+        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
+        let restored = crate::catalog_sync::restore_latest(&vault.path, &state.crdt, &catalog_device(&state, vault))
+            .map_err(|e| e.to_string())?.map(|(path, is_dir)| RestoredItem {
+                path, is_dir, has_more: crate::catalog_sync::has_restorable(&vault.path).unwrap_or(false),
+            });
+        if restored.is_some() {
+            if let Some(net) = state.network.read().as_ref() {
+                net.sync_now();
+            }
+        }
+        Ok(restored)
+    }).await
+}
+
+#[tauri::command]
+pub async fn crdt_apply_client_update(note_path: String, update_base64: String, note_id: Option<String>, vault_id: Option<String>, recovery_update: Option<bool>, app: AppHandle) -> Result<(), String> {
+    on_worker(app, move |state, app| {
+        let app = app.clone();
+        let update_bytes = URL_SAFE_NO_PAD
+            .decode(&update_base64)
+            .map_err(|_e| "errors.invalidBase64".to_string())?;
+
+        let settings = state.settings.read().clone();
+        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
+        if vault_id.as_ref().is_some_and(|id| id != &vault.id) { return Err("ai.vaultChanged".into()); }
+        if let Some(id) = note_id {
+            let catalog = crate::catalog::load(&vault.path).and_then(|catalog| catalog.resolve()).map_err(|error| error.to_string())?;
+            let entry = catalog.get(&id).ok_or("unknown note identity")?;
+            if entry.deleted() && !recovery_update.unwrap_or(false) { return Err("errors.noteDeleted".into()); }
+            let changed = crate::network::apply_identified_update(&vault.path, &id, &note_path, &update_bytes, &state.crdt, Some(&app)).map_err(|error| error.to_string())?;
+            if changed && !entry.deleted() {
+                let full_state = state.crdt.get_or_create_doc(&vault.path, &entry.path).map_err(|error| error.to_string())?;
+                if let Some(net) = state.network.read().as_ref() { net.broadcast_crdt_update(entry.path.clone(), full_state); }
+            }
+            return Ok(());
+        }
+        // A delayed local save from a closed/deleted note must not recreate it.
+        vault::read_note(&vault.path, &note_path).map_err(|e| e.to_string())?;
+        let result = state.crdt.apply_update(&vault.path, &note_path, &update_bytes)
+            .map_err(|e| e.to_string())?;
+
+        // Full state lets a peer recover from a missed incremental packet.
+        if result.changed {
+            if let Some(net) = state.network.read().as_ref() {
+                net.broadcast_crdt_update(note_path, result.state);
+            }
+        }
+
+        Ok(())
+    }).await
 }
 
 #[tauri::command]
@@ -626,15 +647,13 @@ pub async fn fetch_ai_models(
 }
 
 #[tauri::command]
-pub fn search_vault_rag(
-    query: String,
-    limit: Option<usize>,
-    state: State<'_, AppState>,
-) -> Result<Vec<RagChunk>, String> {
-    let settings = state.settings.read();
-    let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-    rag::index_and_search_vault(&vault.path, &query, limit.unwrap_or(5))
-        .map_err(|e| e.to_string())
+pub async fn search_vault_rag(query: String, limit: Option<usize>, app: AppHandle) -> Result<Vec<RagChunk>, String> {
+    on_worker(app, move |state, _app| {
+        let settings = state.settings.read().clone();
+        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
+        rag::index_and_search_vault(&vault.path, &query, limit.unwrap_or(5))
+            .map_err(|e| e.to_string())
+    }).await
 }
 
 #[tauri::command]
@@ -730,62 +749,63 @@ pub async fn ai_chat_query(
 }
 
 #[tauri::command]
-pub fn chat_history_get(vault_id: String, state: State<'_, AppState>) -> Result<ChatHistory, String> {
-    if !state.settings.read().vaults.iter().any(|vault| vault.id == vault_id) {
-        return Err("ai.vaultChanged".into());
-    }
-    chat_history::load(&vault_id).map_err(|error| error.to_string())
+pub async fn chat_history_get(vault_id: String, app: AppHandle) -> Result<ChatHistory, String> {
+    on_worker(app, move |state, _app| {
+        if !state.settings.read().vaults.iter().any(|vault| vault.id == vault_id) {
+            return Err("ai.vaultChanged".into());
+        }
+        chat_history::load(&vault_id).map_err(|error| error.to_string())
+    }).await
 }
 
 #[tauri::command]
-pub fn chat_history_save(
-    vault_id: String,
-    history: ChatHistory,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    if !state.settings.read().vaults.iter().any(|vault| vault.id == vault_id) {
-        return Err("ai.vaultChanged".into());
-    }
-    chat_history::save(&vault_id, &history).map_err(|error| error.to_string())
+pub async fn chat_history_save(vault_id: String, history: ChatHistory, app: AppHandle) -> Result<(), String> {
+    on_worker(app, move |state, _app| {
+        if !state.settings.read().vaults.iter().any(|vault| vault.id == vault_id) {
+            return Err("ai.vaultChanged".into());
+        }
+        chat_history::save(&vault_id, &history).map_err(|error| error.to_string())
+    }).await
 }
 
 #[tauri::command]
-pub fn ai_save_draft(
-    vault_id: String,
-    draft: NoteDraft,
-    state: State<'_, AppState>,
-) -> Result<String, String> {
-    let settings = state.settings.read();
-    let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-    if vault.id != vault_id {
-        return Err("ai.vaultChanged".into());
-    }
-    let path = assistant::save_draft(&vault.path, &draft).map_err(|e| e.to_string())?;
-    state.crdt.invalidate_path(&vault.path, &path).map_err(|e| e.to_string())?;
-    if let Err(e) = links::reconcile_wikilinks(&vault.path, &path, &draft.content) {
-        eprintln!("reconcile_wikilinks failed for {path}: {e}");
-    }
-    if let Some(net) = state.network.read().as_ref() {
-        net.sync_now();
-    }
-    Ok(path)
+pub async fn ai_save_draft(vault_id: String, draft: NoteDraft, app: AppHandle) -> Result<String, String> {
+    on_worker(app, move |state, _app| {
+        let settings = state.settings.read().clone();
+        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
+        if vault.id != vault_id {
+            return Err("ai.vaultChanged".into());
+        }
+        let path = assistant::save_draft(&vault.path, &draft).map_err(|e| e.to_string())?;
+        state.crdt.invalidate_path(&vault.path, &path).map_err(|e| e.to_string())?;
+        if let Err(e) = links::reconcile_wikilinks(&vault.path, &path, &draft.content) {
+            eprintln!("reconcile_wikilinks failed for {path}: {e}");
+        }
+        if let Some(net) = state.network.read().as_ref() {
+            net.sync_now();
+        }
+        Ok(path)
+    }).await
 }
 
 #[tauri::command]
-pub fn ai_apply_edit(vault_id: String, edit: NoteEdit, state: State<'_, AppState>, app: AppHandle) -> Result<String, String> {
-    let settings = state.settings.read();
-    let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-    if vault.id != vault_id { return Err("ai.vaultChanged".into()); }
-    let result = state.crdt.apply_note_edit(&vault.path, &edit).map_err(|e| e.to_string())?;
-    // The open editor receives the same CRDT state as the paired devices.
-    let _ = app.emit("p2p:crdt-update", crate::network::NetworkEventPayload::RemoteCrdtUpdate {
-        note_path: edit.path.clone(), update: result.state.clone(),
-    });
-    if let Some(net) = state.network.read().as_ref() {
-        net.broadcast_crdt_update(edit.path.clone(), result.state);
-        net.sync_now();
-    }
-    Ok(edit.path)
+pub async fn ai_apply_edit(vault_id: String, edit: NoteEdit, app: AppHandle) -> Result<String, String> {
+    on_worker(app, move |state, app| {
+        let app = app.clone();
+        let settings = state.settings.read().clone();
+        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
+        if vault.id != vault_id { return Err("ai.vaultChanged".into()); }
+        let result = state.crdt.apply_note_edit(&vault.path, &edit).map_err(|e| e.to_string())?;
+        // The open editor receives the same CRDT state as the paired devices.
+        let _ = app.emit("p2p:crdt-update", crate::network::NetworkEventPayload::RemoteCrdtUpdate {
+            note_path: edit.path.clone(), update: result.state.clone(),
+        });
+        if let Some(net) = state.network.read().as_ref() {
+            net.broadcast_crdt_update(edit.path.clone(), result.state);
+            net.sync_now();
+        }
+        Ok(edit.path)
+    }).await
 }
 
 /// Load an image from the vault or its explicit HTTP(S) source for export.
@@ -820,29 +840,29 @@ pub fn mark_welcome_seen(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn links_get(state: State<'_, AppState>) -> Result<Vec<links::LinkEdge>, String> {
-    let settings = state.settings.read();
-    let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-    links::graph_links(&vault.path).map_err(|e| e.to_string())
+pub async fn links_get(app: AppHandle) -> Result<Vec<links::LinkEdge>, String> {
+    on_worker(app, move |state, _app| {
+        let settings = state.settings.read().clone();
+        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
+        links::graph_links(&vault.path).map_err(|e| e.to_string())
+    }).await
 }
 
 #[tauri::command]
-pub fn links_apply(
-    operations: Vec<links::LinkOperation>,
-    origin: Option<links::LinkOrigin>,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let settings = state.settings.read();
-    let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-    links::apply_operations_with_manager(
-        &vault.path,
-        &operations,
-        origin.unwrap_or(links::LinkOrigin::manual),
-        &state.crdt,
-    )
-    .map_err(|e| e.to_string())?;
-    if let Some(net) = state.network.read().as_ref() { net.sync_now(); }
-    Ok(())
+pub async fn links_apply(operations: Vec<links::LinkOperation>, origin: Option<links::LinkOrigin>, app: AppHandle) -> Result<(), String> {
+    on_worker(app, move |state, _app| {
+        let settings = state.settings.read().clone();
+        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
+        links::apply_operations_with_manager(
+            &vault.path,
+            &operations,
+            origin.unwrap_or(links::LinkOrigin::manual),
+            &state.crdt,
+        )
+        .map_err(|e| e.to_string())?;
+        if let Some(net) = state.network.read().as_ref() { net.sync_now(); }
+        Ok(())
+    }).await
 }
 
 #[tauri::command]

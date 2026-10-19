@@ -6,30 +6,62 @@ use crate::{
     storage, vault,
 };
 use anyhow::{bail, Context};
-use parking_lot::ReentrantMutex;
+use parking_lot::{Mutex, ReentrantMutex};
 use serde::{Deserialize, Serialize};
 use std::{
-    cell::Cell,
-    collections::{BTreeMap, BTreeSet},
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet, HashMap},
     fs,
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
 };
 use yrs::{updates::decoder::Decode, Doc, GetString, Transact, Update};
 
 const DIRECTORY: &str = ".lownotes/pending-moves";
 const BINDINGS: &str = ".lownotes/catalog-paths.json";
-static LOCK: OnceLock<ReentrantMutex<()>> = OnceLock::new();
-thread_local! { static BUSY: Cell<bool> = const { Cell::new(false) }; }
-struct Scope(bool);
+/// One reentrant lock per vault: structural work in one vault never waits on
+/// another vault (or on a peer synchronizing a different vault).
+static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<ReentrantMutex<()>>>>> = OnceLock::new();
+thread_local! { static BUSY: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) }; }
+
+fn vault_key(root: &Path) -> PathBuf {
+    root.canonicalize().unwrap_or_else(|_| root.to_path_buf())
+}
+
+fn vault_lock(key: &Path) -> Arc<ReentrantMutex<()>> {
+    LOCKS
+        .get_or_init(Default::default)
+        .lock()
+        .entry(key.to_path_buf())
+        .or_insert_with(|| Arc::new(ReentrantMutex::new(())))
+        .clone()
+}
+
+/// Marks this thread as inside the structural lock of one vault. `nested` is
+/// true when an outer call on the same thread already holds it (and has run
+/// recovery for that vault).
+struct Scope {
+    key: Option<PathBuf>,
+    nested: bool,
+}
 impl Scope {
-    fn enter() -> Self {
-        Self(BUSY.replace(true))
+    fn enter(key: &Path) -> Self {
+        BUSY.with(|busy| {
+            let mut busy = busy.borrow_mut();
+            if busy.iter().any(|held| held == key) {
+                Self { key: None, nested: true }
+            } else {
+                busy.push(key.to_path_buf());
+                Self { key: Some(key.to_path_buf()), nested: false }
+            }
+        })
     }
 }
 impl Drop for Scope {
     fn drop(&mut self) {
-        BUSY.set(self.0);
+        if let Some(key) = self.key.take() {
+            BUSY.with(|busy| busy.borrow_mut().retain(|held| held != &key));
+        }
     }
 }
 
@@ -175,9 +207,11 @@ pub(crate) fn exclusive<T>(
     manager: &CrdtManager,
     action: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
-    let _guard = LOCK.get_or_init(|| ReentrantMutex::new(())).lock();
-    let _scope = Scope::enter();
-    if !_scope.0 {
+    let key = vault_key(root);
+    let lock = vault_lock(&key);
+    let _guard = lock.lock();
+    let _scope = Scope::enter(&key);
+    if !_scope.nested {
         crate::note_transaction::recover_all(root)?;
         recover_inner(root, manager)?;
         crate::catalog_sync::recover_all(root, manager)?;
@@ -360,7 +394,8 @@ fn recover_inner(root: &Path, manager: &CrdtManager) -> anyhow::Result<()> {
 }
 
 pub fn recover_all(root: &Path, manager: &CrdtManager) -> anyhow::Result<()> {
-    if BUSY.get() {
+    // Already inside a structural scope on this thread: the outer call recovers.
+    if BUSY.with(|busy| !busy.borrow().is_empty()) {
         return Ok(());
     }
     exclusive(root, manager, || Ok(()))
@@ -384,8 +419,10 @@ fn rename_with_hook(
     author: &str,
     hook: impl Fn(u8) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
-    let _guard = LOCK.get_or_init(|| ReentrantMutex::new(())).lock();
-    let _scope = Scope::enter();
+    let key = vault_key(root);
+    let lock = vault_lock(&key);
+    let _guard = lock.lock();
+    let _scope = Scope::enter(&key);
     crate::note_transaction::recover_all(root)?;
     recover_inner(root, manager)?;
     crate::catalog_sync::recover_all(root, manager)?;
@@ -487,6 +524,27 @@ fn rename_with_hook(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn structural_locks_are_per_vault() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let manager = crate::crdt::CrdtManager::new();
+        let (tx, rx) = std::sync::mpsc::channel();
+        super::exclusive(a.path(), &manager, || {
+            let other = b.path().to_path_buf();
+            // Another thread can take vault B's lock while A's is held here.
+            let handle = std::thread::spawn(move || {
+                super::exclusive(&other, &crate::crdt::CrdtManager::new(), || Ok(())).unwrap();
+                tx.send(()).unwrap();
+            });
+            rx.recv_timeout(std::time::Duration::from_secs(10)).expect("vault B waited on vault A");
+            handle.join().unwrap();
+            // Same thread, same vault: reentrant.
+            super::exclusive(a.path(), &manager, || Ok(()))
+        })
+        .unwrap();
+    }
+
     use super::*;
     use yrs::{ReadTxn, StateVector, Text};
 
