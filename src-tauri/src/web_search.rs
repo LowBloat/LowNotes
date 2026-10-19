@@ -48,7 +48,9 @@ pub async fn search_web(
         bail!("ai.webNoProviders");
     }
     static SEARCH_CLIENT: std::sync::OnceLock<Client> = std::sync::OnceLock::new();
-    let client = crate::http::cached(&SEARCH_CLIENT, |builder| builder.timeout(Duration::from_secs(12)));
+    let client = crate::http::cached(&SEARCH_CLIENT, |builder| {
+        builder.timeout(Duration::from_secs(12))
+    });
     let start = NEXT_SEARCH.fetch_add(1, Ordering::Relaxed) % enabled.len();
     for offset in 0..enabled.len() {
         let source = enabled[(start + offset) % enabled.len()];
@@ -333,8 +335,18 @@ mod tests {
         let settings = WebSearchSettings::default();
         assert!(settings.source("duckduckgo").unwrap().enabled);
         // The other services are opt-in: each one would receive the search terms.
-        for id in ["firecrawl", "keenable", "exa", "searxng", "brave", "parallel"] {
-            assert!(!settings.source(id).unwrap().enabled, "{id} should be opt-in");
+        for id in [
+            "firecrawl",
+            "keenable",
+            "exa",
+            "searxng",
+            "brave",
+            "parallel",
+        ] {
+            assert!(
+                !settings.source(id).unwrap().enabled,
+                "{id} should be opt-in"
+            );
         }
     }
 

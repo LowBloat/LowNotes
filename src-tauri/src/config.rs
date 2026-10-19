@@ -1,10 +1,7 @@
-use std::{
-    fs,
-    path::PathBuf,
-};
+use std::{fs, path::PathBuf};
 
 use anyhow::Context;
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use directories::ProjectDirs;
 use iroh::{EndpointAddr, EndpointId, SecretKey};
 use iroh_tickets::endpoint::EndpointTicket;
@@ -22,17 +19,12 @@ pub struct PeerConfig {
 
 impl PeerConfig {
     pub fn endpoint_addr(&self) -> anyhow::Result<EndpointAddr> {
-        let ticket: EndpointTicket = self
-            .ticket
-            .parse()
-            .context("errors.invalidDeviceAddress")?;
+        let ticket: EndpointTicket = self.ticket.parse().context("errors.invalidDeviceAddress")?;
         Ok(ticket.endpoint_addr().clone())
     }
 
     pub fn id(&self) -> anyhow::Result<EndpointId> {
-        self.endpoint_id
-            .parse()
-            .context("errors.invalidDeviceId")
+        self.endpoint_id.parse().context("errors.invalidDeviceId")
     }
 }
 
@@ -58,7 +50,11 @@ pub struct VaultConfig {
     #[serde(default)]
     pub peers: Vec<PeerConfig>,
     /// Only set on copies sent to the interface: the folder no longer exists.
-    #[serde(default, skip_deserializing, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(
+        default,
+        skip_deserializing,
+        skip_serializing_if = "std::ops::Not::not"
+    )]
     pub missing: bool,
 }
 
@@ -89,7 +85,9 @@ impl VaultConfig {
     }
 
     pub fn ensure_keys(&mut self) -> bool {
-        if self.credentials_locked { return false; }
+        if self.credentials_locked {
+            return false;
+        }
         let mut changed = false;
         if self.pairing_token.trim().is_empty() {
             self.pairing_token = new_pairing_token();
@@ -120,7 +118,12 @@ impl VaultConfig {
     /// Copy safe to hand to the webview: the private P2P identity and the
     /// pairing token stay in the Rust process.
     pub fn for_frontend(&self) -> Self {
-        Self { secret_key: String::new(), pairing_token: String::new(), missing: !self.path.is_dir(), ..self.clone() }
+        Self {
+            secret_key: String::new(),
+            pairing_token: String::new(),
+            missing: !self.path.is_dir(),
+            ..self.clone()
+        }
     }
 }
 
@@ -128,7 +131,11 @@ impl VaultConfig {
 /// `keep == true`; the interface never receives secrets, so it cannot echo them.
 fn merge_saved_secret(incoming: &mut String, keep: bool, previous: Option<&String>) {
     if incoming.trim().is_empty() {
-        *incoming = if keep { previous.cloned().unwrap_or_default() } else { String::new() };
+        *incoming = if keep {
+            previous.cloned().unwrap_or_default()
+        } else {
+            String::new()
+        };
     }
 }
 
@@ -217,7 +224,11 @@ impl AiSettings {
     /// Restores keys the interface marked as kept; see `merge_saved_secret`.
     pub fn merge_saved_keys(&mut self, previous: &AiSettings) {
         for provider in &mut self.providers {
-            let saved = previous.providers.iter().find(|old| old.id == provider.id).map(|old| &old.api_key);
+            let saved = previous
+                .providers
+                .iter()
+                .find(|old| old.id == provider.id)
+                .map(|old| &old.api_key);
             merge_saved_secret(&mut provider.api_key, provider.has_api_key, saved);
             provider.has_api_key = false;
         }
@@ -230,12 +241,26 @@ impl AiSettings {
         let mut providers: Vec<AiProviderConfig> = Self::default()
             .providers
             .into_iter()
-            .map(|default| saved.iter().find(|p| p.id == default.id).cloned().unwrap_or(default))
+            .map(|default| {
+                saved
+                    .iter()
+                    .find(|p| p.id == default.id)
+                    .cloned()
+                    .unwrap_or(default)
+            })
             .collect();
         providers.extend(saved.into_iter().filter(|p| p.is_custom));
         self.providers = providers;
-        if !self.providers.iter().any(|p| p.id == self.active_provider_id) {
-            self.active_provider_id = self.providers.first().map(|p| p.id.clone()).unwrap_or_default();
+        if !self
+            .providers
+            .iter()
+            .any(|p| p.id == self.active_provider_id)
+        {
+            self.active_provider_id = self
+                .providers
+                .first()
+                .map(|p| p.id.clone())
+                .unwrap_or_default();
         }
     }
 }
@@ -266,17 +291,25 @@ pub struct WebSearchSettings {
 impl Default for WebSearchSettings {
     fn default() -> Self {
         Self {
-            sources: ["firecrawl", "keenable", "exa", "duckduckgo", "searxng", "brave", "parallel"]
-                .into_iter()
-                .map(|id| WebSearchSourceConfig {
-                    id: id.into(),
-                    // Every enabled service receives the search terms of a
-                    // Research request, so only DuckDuckGo starts enabled.
-                    enabled: id == "duckduckgo",
-                    api_key: String::new(),
-                    has_api_key: false,
-                })
-                .collect(),
+            sources: [
+                "firecrawl",
+                "keenable",
+                "exa",
+                "duckduckgo",
+                "searxng",
+                "brave",
+                "parallel",
+            ]
+            .into_iter()
+            .map(|id| WebSearchSourceConfig {
+                id: id.into(),
+                // Every enabled service receives the search terms of a
+                // Research request, so only DuckDuckGo starts enabled.
+                enabled: id == "duckduckgo",
+                api_key: String::new(),
+                has_api_key: false,
+            })
+            .collect(),
             searxng_url: "https://search.lumy.live/".into(),
             opt_in_applied: true,
         }
@@ -297,7 +330,9 @@ impl WebSearchSettings {
         }
         for source in &mut self.sources {
             source.enabled = source.enabled
-                && (source.id == "duckduckgo" || !source.api_key.trim().is_empty() || has_saved_key(&source.id));
+                && (source.id == "duckduckgo"
+                    || !source.api_key.trim().is_empty()
+                    || has_saved_key(&source.id));
         }
         self.opt_in_applied = true;
     }
@@ -313,9 +348,17 @@ impl WebSearchSettings {
 
     pub fn normalize(&mut self) {
         let defaults = Self::default();
-        self.sources = defaults.sources.into_iter().map(|default| {
-            self.sources.iter().find(|source| source.id == default.id).cloned().unwrap_or(default)
-        }).collect();
+        self.sources = defaults
+            .sources
+            .into_iter()
+            .map(|default| {
+                self.sources
+                    .iter()
+                    .find(|source| source.id == default.id)
+                    .cloned()
+                    .unwrap_or(default)
+            })
+            .collect();
     }
 }
 
@@ -348,9 +391,20 @@ pub struct ThemeColors {
 impl ThemeColors {
     pub fn values(&self) -> impl Iterator<Item = &str> {
         [
-            &self.bg_main, &self.bg_sidebar, &self.bg_card, &self.bg_hover, &self.bg_active,
-            &self.border, &self.text_main, &self.text_muted, &self.text_dim, &self.accent,
-            &self.accent_light, &self.accent_contrast, &self.success, &self.danger,
+            &self.bg_main,
+            &self.bg_sidebar,
+            &self.bg_card,
+            &self.bg_hover,
+            &self.bg_active,
+            &self.border,
+            &self.text_main,
+            &self.text_muted,
+            &self.text_dim,
+            &self.accent,
+            &self.accent_light,
+            &self.accent_contrast,
+            &self.success,
+            &self.danger,
         ]
         .into_iter()
         .map(|value| value.as_str())
@@ -395,11 +449,19 @@ impl ThemePalettesSettings {
             !id.is_empty()
                 && !BUILTIN_PALETTE_IDS.contains(&id)
                 && !palette.name.trim().is_empty()
-                && palette.dark.values().chain(palette.light.values()).all(is_hex_color)
+                && palette
+                    .dark
+                    .values()
+                    .chain(palette.light.values())
+                    .all(is_hex_color)
         });
         let mut seen = std::collections::HashSet::new();
-        self.custom_palettes.retain(|palette| seen.insert(palette.id.clone()));
-        let known = self.custom_palettes.iter().any(|palette| palette.id == self.active_palette_id)
+        self.custom_palettes
+            .retain(|palette| seen.insert(palette.id.clone()));
+        let known = self
+            .custom_palettes
+            .iter()
+            .any(|palette| palette.id == self.active_palette_id)
             || BUILTIN_PALETTE_IDS.contains(&self.active_palette_id.as_str());
         if !known {
             self.active_palette_id = default_palette_id();
@@ -408,9 +470,7 @@ impl ThemePalettesSettings {
 }
 
 fn is_hex_color(value: &str) -> bool {
-    value.len() == 7
-        && value.starts_with('#')
-        && value[1..].chars().all(|c| c.is_ascii_hexdigit())
+    value.len() == 7 && value.starts_with('#') && value[1..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
 fn default_palette_id() -> String {
@@ -429,7 +489,11 @@ pub struct ImageUploadSettings {
 
 impl Default for ImageUploadSettings {
     fn default() -> Self {
-        Self { provider: "local".into(), imgur_client_id: String::new(), local_default_applied: true }
+        Self {
+            provider: "local".into(),
+            imgur_client_id: String::new(),
+            local_default_applied: true,
+        }
     }
 }
 
@@ -522,24 +586,50 @@ fn default_true() -> bool {
 
 impl AppSettings {
     pub(crate) fn from_saved_value(saved: serde_json::Value) -> Option<Self> {
-        let old_brave_key = saved.pointer("/ai/web_search_api_key")
-            .and_then(|key| key.as_str()).unwrap_or_default().to_owned();
+        let old_brave_key = saved
+            .pointer("/ai/web_search_api_key")
+            .and_then(|key| key.as_str())
+            .unwrap_or_default()
+            .to_owned();
         let mut settings: Self = serde_json::from_value(saved).ok()?;
-        if settings.credential_storage_version > 1 { return None; }
-        if settings.credential_storage_version == 1 && settings.vaults.iter().any(|vault|
-            !settings.credential_refs.contains_key(&format!("vault:{}:identity", vault.id))
-            || !settings.credential_refs.contains_key(&format!("vault:{}:pairing", vault.id))) { return None; }
+        if settings.credential_storage_version > 1 {
+            return None;
+        }
+        if settings.credential_storage_version == 1
+            && settings.vaults.iter().any(|vault| {
+                !settings
+                    .credential_refs
+                    .contains_key(&format!("vault:{}:identity", vault.id))
+                    || !settings
+                        .credential_refs
+                        .contains_key(&format!("vault:{}:pairing", vault.id))
+            })
+        {
+            return None;
+        }
         settings.web_search.normalize();
         let refs = settings.credential_refs.clone();
-        settings.web_search.apply_opt_in_defaults(|id| refs.contains_key(&format!("web:{id}")));
+        settings
+            .web_search
+            .apply_opt_in_defaults(|id| refs.contains_key(&format!("web:{id}")));
         settings.theme_palettes.normalize();
         settings.ai.normalize();
-        if !settings.image_upload.local_default_applied || !matches!(settings.image_upload.provider.as_str(), "local" | "catbox" | "imgur") {
+        if !settings.image_upload.local_default_applied
+            || !matches!(
+                settings.image_upload.provider.as_str(),
+                "local" | "catbox" | "imgur"
+            )
+        {
             settings.image_upload.provider = "local".into();
             settings.image_upload.local_default_applied = true;
         }
         if !old_brave_key.is_empty() {
-            if let Some(brave) = settings.web_search.sources.iter_mut().find(|s| s.id == "brave") {
+            if let Some(brave) = settings
+                .web_search
+                .sources
+                .iter_mut()
+                .find(|s| s.id == "brave")
+            {
                 if brave.api_key.is_empty() {
                     brave.api_key = old_brave_key;
                     brave.enabled = true;
@@ -550,8 +640,7 @@ impl AppSettings {
     }
 
     pub fn config_file() -> anyhow::Result<PathBuf> {
-        let dirs = ProjectDirs::from("dev", "lowbloat", "lownotes")
-            .context("errors.configDir")?;
+        let dirs = ProjectDirs::from("dev", "lowbloat", "lownotes").context("errors.configDir")?;
         let dir = dirs.config_dir();
         fs::create_dir_all(dir)?;
         Ok(dir.join("settings.json"))
@@ -571,7 +660,10 @@ impl AppSettings {
     }
 
     pub(crate) fn valid_saved_bytes(bytes: &[u8]) -> bool {
-        serde_json::from_slice::<serde_json::Value>(bytes).ok().and_then(Self::from_saved_value).is_some()
+        serde_json::from_slice::<serde_json::Value>(bytes)
+            .ok()
+            .and_then(Self::from_saved_value)
+            .is_some()
     }
 
     pub fn active_vault(&self) -> Option<&VaultConfig> {
@@ -602,12 +694,16 @@ impl AppSettings {
         public.vaults = self.vaults.iter().map(VaultConfig::for_frontend).collect();
         for provider in &mut public.ai.providers {
             provider.has_api_key = !provider.api_key.is_empty()
-                || self.credential_refs.contains_key(&format!("ai:{}", provider.id));
+                || self
+                    .credential_refs
+                    .contains_key(&format!("ai:{}", provider.id));
             provider.api_key.clear();
         }
         for source in &mut public.web_search.sources {
             source.has_api_key = !source.api_key.is_empty()
-                || self.credential_refs.contains_key(&format!("web:{}", source.id));
+                || self
+                    .credential_refs
+                    .contains_key(&format!("web:{}", source.id));
             source.api_key.clear();
         }
         public.credential_refs.clear();
@@ -663,13 +759,24 @@ mod tests {
         let original = serde_json::to_vec(&settings).unwrap();
         crate::storage::write_validated(&path, &original, AppSettings::valid_saved_bytes).unwrap();
         settings.theme = "dark".into();
-        crate::storage::write_validated(&path, &serde_json::to_vec(&settings).unwrap(), AppSettings::valid_saved_bytes).unwrap();
+        crate::storage::write_validated(
+            &path,
+            &serde_json::to_vec(&settings).unwrap(),
+            AppSettings::valid_saved_bytes,
+        )
+        .unwrap();
         std::fs::write(&path, b"interrupted settings").unwrap();
-        let bytes = crate::storage::read_validated(&path, AppSettings::valid_saved_bytes).unwrap().unwrap();
-        let recovered = AppSettings::from_saved_value(serde_json::from_slice(&bytes).unwrap()).unwrap();
+        let bytes = crate::storage::read_validated(&path, AppSettings::valid_saved_bytes)
+            .unwrap()
+            .unwrap();
+        let recovered =
+            AppSettings::from_saved_value(serde_json::from_slice(&bytes).unwrap()).unwrap();
         assert_eq!(recovered.vaults[0].secret_key, identity);
         assert_eq!(recovered.vaults[0].pairing_token, token);
-        assert!(std::fs::read_dir(root.path()).unwrap().any(|entry| std::fs::read(entry.unwrap().path()).ok().as_deref() == Some(b"interrupted settings")));
+        assert!(std::fs::read_dir(root.path())
+            .unwrap()
+            .any(|entry| std::fs::read(entry.unwrap().path()).ok().as_deref()
+                == Some(b"interrupted settings")));
     }
 
     #[test]
@@ -704,12 +811,16 @@ mod tests {
         let mut saved = serde_json::to_value(AppSettings::default()).unwrap();
         saved["image_upload"]["provider"] = "imgur".into();
         saved["image_upload"]["imgur_client_id"] = "myId123".into();
-        saved["image_upload"].as_object_mut().unwrap().remove("local_default_applied");
+        saved["image_upload"]
+            .as_object_mut()
+            .unwrap()
+            .remove("local_default_applied");
         let mut restored = AppSettings::from_saved_value(saved).unwrap();
         assert_eq!(restored.image_upload.provider, "local");
         assert_eq!(restored.image_upload.imgur_client_id, "myId123");
         restored.image_upload.provider = "catbox".into();
-        let restored = AppSettings::from_saved_value(serde_json::to_value(restored).unwrap()).unwrap();
+        let restored =
+            AppSettings::from_saved_value(serde_json::to_value(restored).unwrap()).unwrap();
         assert_eq!(restored.image_upload.provider, "catbox");
     }
 
@@ -781,11 +892,20 @@ mod tests {
 
     fn colors(hex: &str) -> ThemeColors {
         ThemeColors {
-            bg_main: hex.into(), bg_sidebar: hex.into(), bg_card: hex.into(),
-            bg_hover: hex.into(), bg_active: hex.into(), border: hex.into(),
-            text_main: hex.into(), text_muted: hex.into(), text_dim: hex.into(),
-            accent: hex.into(), accent_light: hex.into(), accent_contrast: hex.into(),
-            success: hex.into(), danger: hex.into(),
+            bg_main: hex.into(),
+            bg_sidebar: hex.into(),
+            bg_card: hex.into(),
+            bg_hover: hex.into(),
+            bg_active: hex.into(),
+            border: hex.into(),
+            text_main: hex.into(),
+            text_muted: hex.into(),
+            text_dim: hex.into(),
+            accent: hex.into(),
+            accent_light: hex.into(),
+            accent_contrast: hex.into(),
+            success: hex.into(),
+            danger: hex.into(),
         }
     }
 
@@ -801,8 +921,10 @@ mod tests {
         let mut settings = ThemePalettesSettings {
             active_palette_id: "custom_x".into(),
             custom_palettes: vec![ThemePalette {
-                id: "custom_x".into(), name: "Ocean".into(),
-                dark: colors("#101010"), light: colors("#f0f0f0"),
+                id: "custom_x".into(),
+                name: "Ocean".into(),
+                dark: colors("#101010"),
+                light: colors("#f0f0f0"),
             }],
         };
         settings.normalize();
@@ -815,9 +937,24 @@ mod tests {
         let mut settings = ThemePalettesSettings {
             active_palette_id: "megumin".into(),
             custom_palettes: vec![
-                ThemePalette { id: "rimuru".into(), name: "Clash".into(), dark: colors("#101010"), light: colors("#f0f0f0") },
-                ThemePalette { id: "custom_bad".into(), name: "Bad".into(), dark: colors("nope"), light: colors("#f0f0f0") },
-                ThemePalette { id: "".into(), name: "Empty".into(), dark: colors("#101010"), light: colors("#f0f0f0") },
+                ThemePalette {
+                    id: "rimuru".into(),
+                    name: "Clash".into(),
+                    dark: colors("#101010"),
+                    light: colors("#f0f0f0"),
+                },
+                ThemePalette {
+                    id: "custom_bad".into(),
+                    name: "Bad".into(),
+                    dark: colors("nope"),
+                    light: colors("#f0f0f0"),
+                },
+                ThemePalette {
+                    id: "".into(),
+                    name: "Empty".into(),
+                    dark: colors("#101010"),
+                    light: colors("#f0f0f0"),
+                },
             ],
         };
         settings.normalize();
@@ -862,10 +999,23 @@ mod tests {
         ]);
         saved["ai"]["active_provider_id"] = "custom_z".into();
         let restored = AppSettings::from_saved_value(saved).unwrap();
-        let ids: Vec<&str> = restored.ai.providers.iter().map(|p| p.id.as_str()).collect();
-        assert!(ids.contains(&"ollama"), "removed defaults must come back: {ids:?}");
+        let ids: Vec<&str> = restored
+            .ai
+            .providers
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect();
+        assert!(
+            ids.contains(&"ollama"),
+            "removed defaults must come back: {ids:?}"
+        );
         assert!(ids.contains(&"custom_z"));
-        let openai = restored.ai.providers.iter().find(|p| p.id == "openai").unwrap();
+        let openai = restored
+            .ai
+            .providers
+            .iter()
+            .find(|p| p.id == "openai")
+            .unwrap();
         assert_eq!(openai.api_key, "sk-user");
         assert_eq!(openai.selected_model, "gpt-4o");
         assert_eq!(restored.ai.active_provider_id, "custom_z");
@@ -888,11 +1038,20 @@ mod tests {
         settings.ai.providers[1].api_key = "sk-provider-secret".into();
         settings.web_search.sources[0].api_key = "web-secret".into();
         // A locked credential store leaves the value empty but keeps the reference.
-        settings.credential_refs.insert(format!("ai:{}", settings.ai.providers[2].id), "v1-ref".into());
+        settings.credential_refs.insert(
+            format!("ai:{}", settings.ai.providers[2].id),
+            "v1-ref".into(),
+        );
 
         let public = settings.for_frontend();
         let json = serde_json::to_string(&public).unwrap();
-        for secret in [identity.as_str(), token.as_str(), "sk-provider-secret", "web-secret", "v1-ref"] {
+        for secret in [
+            identity.as_str(),
+            token.as_str(),
+            "sk-provider-secret",
+            "web-secret",
+            "v1-ref",
+        ] {
             assert!(!json.contains(secret), "{secret} leaked to the interface");
         }
         assert!(public.ai.providers[1].has_api_key);
@@ -900,7 +1059,9 @@ mod tests {
         assert!(!public.ai.providers[0].has_api_key);
         assert!(public.web_search.sources[0].has_api_key);
         // The flag is never persisted from the in-memory settings.
-        assert!(!serde_json::to_string(&settings).unwrap().contains("has_api_key"));
+        assert!(!serde_json::to_string(&settings)
+            .unwrap()
+            .contains("has_api_key"));
     }
 
     #[test]
@@ -927,26 +1088,45 @@ mod tests {
     #[test]
     fn web_search_services_are_opt_in() {
         let fresh = super::WebSearchSettings::default();
-        let enabled: Vec<_> = fresh.sources.iter().filter(|s| s.enabled).map(|s| s.id.as_str()).collect();
+        let enabled: Vec<_> = fresh
+            .sources
+            .iter()
+            .filter(|s| s.enabled)
+            .map(|s| s.id.as_str())
+            .collect();
         assert_eq!(enabled, ["duckduckgo"]);
 
         // Settings saved by an older version: most services on, one with a key.
         let mut saved = serde_json::to_value(AppSettings::default()).unwrap();
         let sources = saved["web_search"]["sources"].as_array_mut().unwrap();
         for source in sources.iter_mut() {
-            source["enabled"] = (!matches!(source["id"].as_str(), Some("brave" | "parallel"))).into();
-            if source["id"] == "exa" { source["api_key"] = "exa-key".into(); }
+            source["enabled"] =
+                (!matches!(source["id"].as_str(), Some("brave" | "parallel"))).into();
+            if source["id"] == "exa" {
+                source["api_key"] = "exa-key".into();
+            }
         }
-        saved["web_search"].as_object_mut().unwrap().remove("opt_in_applied");
+        saved["web_search"]
+            .as_object_mut()
+            .unwrap()
+            .remove("opt_in_applied");
         let migrated = AppSettings::from_saved_value(saved).unwrap();
-        let enabled: Vec<_> = migrated.web_search.sources.iter().filter(|s| s.enabled).map(|s| s.id.as_str()).collect();
+        let enabled: Vec<_> = migrated
+            .web_search
+            .sources
+            .iter()
+            .filter(|s| s.enabled)
+            .map(|s| s.id.as_str())
+            .collect();
         assert_eq!(enabled, ["exa", "duckduckgo"]);
         assert!(migrated.web_search.opt_in_applied);
 
         // After the one-time migration, user choices are kept as saved.
         let mut chosen = serde_json::to_value(&migrated).unwrap();
         for source in chosen["web_search"]["sources"].as_array_mut().unwrap() {
-            if source["id"] == "searxng" { source["enabled"] = true.into(); }
+            if source["id"] == "searxng" {
+                source["enabled"] = true.into();
+            }
         }
         let reloaded = AppSettings::from_saved_value(chosen).unwrap();
         assert!(reloaded.web_search.source("searxng").unwrap().enabled);
@@ -966,10 +1146,15 @@ mod tests {
         let removed = settings.forget_vault(&first.id).unwrap();
         assert_eq!(removed.id, first.id);
         assert!(first.path.is_dir(), "the folder must stay on disk");
-        assert_eq!(settings.active_vault_id.as_deref(), Some(second.id.as_str()));
+        assert_eq!(
+            settings.active_vault_id.as_deref(),
+            Some(second.id.as_str())
+        );
         // A vault whose folder disappeared is flagged for the interface.
         assert!(settings.for_frontend().vaults[0].missing);
-        assert!(!serde_json::to_string(&settings).unwrap().contains("missing"));
+        assert!(!serde_json::to_string(&settings)
+            .unwrap()
+            .contains("missing"));
 
         settings.forget_vault(&second.id).unwrap();
         assert!(settings.vaults.is_empty());

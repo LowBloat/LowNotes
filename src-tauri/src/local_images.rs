@@ -347,10 +347,17 @@ mod tests {
     use crate::config::{AppSettings, VaultConfig};
 
     fn png() -> Vec<u8> {
-        let image = image::RgbaImage::from_fn(80, 40, |x, y| image::Rgba([x as u8, y as u8, 100, if x < 40 { 0 } else { 255 }]));
+        let image = image::RgbaImage::from_fn(80, 40, |x, y| {
+            image::Rgba([x as u8, y as u8, 100, if x < 40 { 0 } else { 255 }])
+        });
         let mut bytes = Vec::new();
-        image::codecs::png::PngEncoder::new_with_quality(&mut bytes, image::codecs::png::CompressionType::Fast, image::codecs::png::FilterType::NoFilter)
-            .write_image(&image, 80, 40, image::ExtendedColorType::Rgba8).unwrap();
+        image::codecs::png::PngEncoder::new_with_quality(
+            &mut bytes,
+            image::codecs::png::CompressionType::Fast,
+            image::codecs::png::FilterType::NoFilter,
+        )
+        .write_image(&image, 80, 40, image::ExtendedColorType::Rgba8)
+        .unwrap();
         bytes
     }
 
@@ -363,16 +370,27 @@ mod tests {
         let stored = load(dir.path(), name).unwrap();
         assert!(stored.bytes.len() < original.len());
         assert_eq!(stored.mime, "image/webp");
-        assert_eq!(image::load_from_memory(&stored.bytes).unwrap().to_rgba8(), image::load_from_memory(&original).unwrap().to_rgba8());
+        assert_eq!(
+            image::load_from_memory(&stored.bytes).unwrap().to_rgba8(),
+            image::load_from_memory(&original).unwrap().to_rgba8()
+        );
         assert_eq!(save_pasted(dir.path(), original).unwrap(), link);
         assert_eq!(manifest(dir.path()).unwrap().len(), 1);
-        assert_eq!(fs::read_dir(dir.path().join(".lownotes")).unwrap().count(), 1);
+        assert_eq!(
+            fs::read_dir(dir.path().join(".lownotes")).unwrap().count(),
+            1
+        );
         fs::write(dir.path().join("note.md"), format!("![image]({link})")).unwrap();
         let items = crate::vault::list_vault_items(dir.path()).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].path, "note.md");
-        assert!(crate::vault::build_manifest(dir.path()).unwrap().keys().any(|key| is_sync_image(key)));
-        assert!(!crate::vault::build_manifest(dir.path()).unwrap().contains_key(DATABASE));
+        assert!(crate::vault::build_manifest(dir.path())
+            .unwrap()
+            .keys()
+            .any(|key| is_sync_image(key)));
+        assert!(!crate::vault::build_manifest(dir.path())
+            .unwrap()
+            .contains_key(DATABASE));
         crate::vault::rename_item(dir.path(), "note.md", "folder/renamed.md").unwrap();
         assert!(load(dir.path(), name).is_ok());
     }
@@ -384,14 +402,23 @@ mod tests {
             let mut encoder = gif::Encoder::new(&mut bytes, 2, 1, &[255, 0, 0, 0, 255, 0]).unwrap();
             encoder.set_repeat(gif::Repeat::Finite(3)).unwrap();
             for color in [0, 1] {
-                let frame = gif::Frame { width: 2, height: 1, delay: 7, transparent: Some(1),
-                    dispose: gif::DisposalMethod::Background, buffer: std::borrow::Cow::Owned(vec![color, color]), ..Default::default() };
+                let frame = gif::Frame {
+                    width: 2,
+                    height: 1,
+                    delay: 7,
+                    transparent: Some(1),
+                    dispose: gif::DisposalMethod::Background,
+                    buffer: std::borrow::Cow::Owned(vec![color, color]),
+                    ..Default::default()
+                };
                 encoder.write_frame(&frame).unwrap();
             }
         }
         let (optimized, extension) = optimize(bytes).unwrap();
         assert_eq!(extension, "gif");
-        let mut decoder = gif::DecodeOptions::new().read_info(Cursor::new(optimized)).unwrap();
+        let mut decoder = gif::DecodeOptions::new()
+            .read_info(Cursor::new(optimized))
+            .unwrap();
         for color in [0, 1] {
             let frame = decoder.read_next_frame().unwrap().unwrap();
             assert_eq!(frame.buffer.as_ref(), &[color, color]);
@@ -407,7 +434,12 @@ mod tests {
     fn rejects_bad_images_paths_and_corrupt_sync_blobs_before_writing() {
         let dir = tempfile::tempdir().unwrap();
         assert!(save_pasted(dir.path(), b"not an image".to_vec()).is_err());
-        for name in ["../../outside.png", "x.png", &format!("{}.exe", "a".repeat(64)), &format!("{}.png?secret", "a".repeat(64))] {
+        for name in [
+            "../../outside.png",
+            "x.png",
+            &format!("{}.exe", "a".repeat(64)),
+            &format!("{}.png?secret", "a".repeat(64)),
+        ] {
             assert!(load(dir.path(), name).is_err());
         }
         let data = png();
@@ -431,11 +463,20 @@ mod tests {
         let response = protocol_response(&settings, &format!("/{vault_id}/{name}"));
         assert_eq!(response.status(), 200);
         assert_eq!(response.headers()["content-type"], "image/webp");
-        assert_eq!(protocol_response(&settings, &format!("/{vault_id}%2F{name}")).body(), response.body());
-        let exported = crate::export_images::load_image(dir.path(), "note.md", &link).await.unwrap();
+        assert_eq!(
+            protocol_response(&settings, &format!("/{vault_id}%2F{name}")).body(),
+            response.body()
+        );
+        let exported = crate::export_images::load_image(dir.path(), "note.md", &link)
+            .await
+            .unwrap();
         assert_eq!(response.body(), &exported.bytes);
         assert_eq!(exported.mime_type, "image/webp");
-        for path in [format!("/unknown/{name}"), format!("/{vault_id}/../settings.json"), format!("/{vault_id}/{name}/secret")] {
+        for path in [
+            format!("/unknown/{name}"),
+            format!("/{vault_id}/../settings.json"),
+            format!("/{vault_id}/{name}/secret"),
+        ] {
             let response = protocol_response(&settings, &path);
             assert_eq!(response.status(), 404);
             assert!(response.body().is_empty());

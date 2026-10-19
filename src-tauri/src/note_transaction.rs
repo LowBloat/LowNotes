@@ -139,9 +139,17 @@ pub(crate) fn commit_with_hook(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(error.into()),
     };
-    let previous_hash = previous.as_ref().map(|bytes| blake3::hash(bytes).to_hex().to_string());
+    let previous_hash = previous
+        .as_ref()
+        .map(|bytes| blake3::hash(bytes).to_hex().to_string());
     if let Some(bytes) = &previous {
-        crate::note_history::record_previous(root, note, std::str::from_utf8(bytes)?, content, false)?;
+        crate::note_history::record_previous(
+            root,
+            note,
+            std::str::from_utf8(bytes)?,
+            content,
+            false,
+        )?;
     }
     let intent = Intent {
         version: 1,

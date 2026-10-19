@@ -92,7 +92,10 @@ fn operations(doc: &Doc) -> anyhow::Result<BTreeMap<yrs::ClientID, RewriteOperat
 fn document(state: &[u8], client: Option<u64>) -> anyhow::Result<Doc> {
     // Yjs IDs use UTF-16 clocks. StickyIndex positions must use that same
     // encoding, then be translated to parser byte offsets at the boundary.
-    let mut options = yrs::Options { offset_kind: yrs::OffsetKind::Utf16, ..Default::default() };
+    let mut options = yrs::Options {
+        offset_kind: yrs::OffsetKind::Utf16,
+        ..Default::default()
+    };
     if let Some(client) = client {
         options.client_id = yrs::ClientID::new(client);
     }

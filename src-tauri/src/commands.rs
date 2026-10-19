@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -11,12 +11,14 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::{
     assistant::{self, AssistantSkill, NoteDraft, NoteEdit},
     chat_history::{self, ChatHistory},
-    config::{AiProviderConfig, AiSettings, AppSettings, BUILTIN_PALETTE_IDS, ThemePalettesSettings, VaultConfig, WebSearchSettings, decode_pair_code},
+    config::{
+        decode_pair_code, AiProviderConfig, AiSettings, AppSettings, ThemePalettesSettings,
+        VaultConfig, WebSearchSettings, BUILTIN_PALETTE_IDS,
+    },
     crdt::CrdtManager,
     links,
     network::{NetworkIdentity, NetworkService, PairInfo},
     rag::{self, ChatMessage, ChatResponse, RagChunk},
-
     vault::{self, VaultItem},
     web_search,
 };
@@ -50,7 +52,12 @@ async fn on_worker<T: Send + 'static>(
 }
 
 pub(crate) fn catalog_device(state: &AppState, vault: &VaultConfig) -> String {
-    state.network.read().as_ref().and_then(|service| service.pair_info()).map(|info| info.endpoint_id)
+    state
+        .network
+        .read()
+        .as_ref()
+        .and_then(|service| service.pair_info())
+        .map(|info| info.endpoint_id)
         .unwrap_or_else(|| format!("local-{}", blake3::hash(vault.id.as_bytes()).to_hex()))
 }
 
@@ -83,9 +90,12 @@ pub async fn retry_credentials(app: AppHandle) -> Result<AppSettings, String> {
         let vault = settings.active_vault().cloned();
         let result = settings.for_frontend();
         drop(settings);
-        if let Some(vault) = vault { restart_network_service(state, &vault, app)?; }
+        if let Some(vault) = vault {
+            restart_network_service(state, &vault, app)?;
+        }
         Ok(result)
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -107,11 +117,15 @@ pub async fn get_app_state(app: AppHandle) -> Result<InitialStateResponse, Strin
             items,
             pair_info,
         })
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn select_vault(path_str: String, app: AppHandle) -> Result<InitialStateResponse, String> {
+pub async fn select_vault(
+    path_str: String,
+    app: AppHandle,
+) -> Result<InitialStateResponse, String> {
     on_worker(app, move |state, app| {
         let app = app.clone();
         let path = PathBuf::from(path_str);
@@ -132,7 +146,10 @@ pub async fn select_vault(path_str: String, app: AppHandle) -> Result<InitialSta
         settings.active_vault_id = Some(vault_id);
         settings.save().map_err(|e| e.to_string())?;
 
-        let active_vault = settings.active_vault().cloned().ok_or("errors.vaultNotFound")?;
+        let active_vault = settings
+            .active_vault()
+            .cloned()
+            .ok_or("errors.vaultNotFound")?;
         drop(settings);
 
         // Restart network service for the selected vault
@@ -149,11 +166,16 @@ pub async fn select_vault(path_str: String, app: AppHandle) -> Result<InitialSta
             items,
             pair_info,
         })
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn create_vault(path_str: String, name: Option<String>, app: AppHandle) -> Result<InitialStateResponse, String> {
+pub async fn create_vault(
+    path_str: String,
+    name: Option<String>,
+    app: AppHandle,
+) -> Result<InitialStateResponse, String> {
     on_worker(app, move |state, app| {
         let app = app.clone();
         let path = PathBuf::from(path_str);
@@ -166,7 +188,10 @@ pub async fn create_vault(path_str: String, name: Option<String>, app: AppHandle
         settings.active_vault_id = Some(id);
         settings.save().map_err(|e| e.to_string())?;
 
-        let active_vault = settings.active_vault().cloned().ok_or("errors.vaultNotFound")?;
+        let active_vault = settings
+            .active_vault()
+            .cloned()
+            .ok_or("errors.vaultNotFound")?;
         drop(settings);
 
         restart_network_service(state, &active_vault, app)?;
@@ -182,19 +207,25 @@ pub async fn create_vault(path_str: String, name: Option<String>, app: AppHandle
             items,
             pair_info,
         })
-    }).await
+    })
+    .await
 }
 
 /// Removes a vault from the app's list without touching its folder. Its
 /// identity and pairing token leave the OS credential store, so adding the same
 /// folder again creates a new device identity that must be paired again.
 #[tauri::command]
-pub async fn forget_vault(vault_id: String, app: AppHandle) -> Result<InitialStateResponse, String> {
+pub async fn forget_vault(
+    vault_id: String,
+    app: AppHandle,
+) -> Result<InitialStateResponse, String> {
     on_worker(app, move |state, app| {
         let mut settings = state.settings.write();
         let was_active = settings.active_vault_id.as_deref() == Some(vault_id.as_str());
         let previous = settings.clone();
-        settings.forget_vault(&vault_id).ok_or("errors.vaultNotFound")?;
+        settings
+            .forget_vault(&vault_id)
+            .ok_or("errors.vaultNotFound")?;
         if let Err(error) = settings.save() {
             *settings = previous;
             return Err(error.to_string());
@@ -209,7 +240,9 @@ pub async fn forget_vault(vault_id: String, app: AppHandle) -> Result<InitialSta
         if was_active {
             match &active {
                 Some(vault) => restart_network_service(state, vault, app.clone())?,
-                None => { state.network.write().take(); }
+                None => {
+                    state.network.write().take();
+                }
             }
         }
         let items = match &active {
@@ -223,7 +256,8 @@ pub async fn forget_vault(vault_id: String, app: AppHandle) -> Result<InitialSta
             items,
             pair_info,
         })
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -232,7 +266,8 @@ pub async fn list_notes(app: AppHandle) -> Result<Vec<VaultItem>, String> {
         let settings = state.settings.read().clone();
         let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
         vault::list_vault_items(&vault.path).map_err(|e| e.to_string())
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -240,11 +275,21 @@ pub async fn read_note(path: String, app: AppHandle) -> Result<NoteReadResponse,
     on_worker(app, move |state, _app| {
         let settings = state.settings.read().clone();
         let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-        let catalog = crate::catalog_sync::prepare(&vault.path, &state.crdt, &catalog_device(state, vault)).map_err(|e| e.to_string())?;
-        let note_id = catalog.resolve().map_err(|e| e.to_string())?.into_values().find(|entry| !entry.deleted() && !entry.is_dir && entry.path == path).map(|entry| entry.id);
+        let catalog =
+            crate::catalog_sync::prepare(&vault.path, &state.crdt, &catalog_device(state, vault))
+                .map_err(|e| e.to_string())?;
+        let note_id = catalog
+            .resolve()
+            .map_err(|e| e.to_string())?
+            .into_values()
+            .find(|entry| !entry.deleted() && !entry.is_dir && entry.path == path)
+            .map(|entry| entry.id);
         vault::read_note(&vault.path, &path).map_err(|e| e.to_string())?;
 
-        let crdt_bytes = state.crdt.get_or_create_doc(&vault.path, &path).map_err(|e| e.to_string())?;
+        let crdt_bytes = state
+            .crdt
+            .get_or_create_doc(&vault.path, &path)
+            .map_err(|e| e.to_string())?;
         let content = vault::read_note(&vault.path, &path).map_err(|e| e.to_string())?;
         let crdt_update_base64 = URL_SAFE_NO_PAD.encode(crdt_bytes);
 
@@ -253,7 +298,8 @@ pub async fn read_note(path: String, app: AppHandle) -> Result<NoteReadResponse,
             crdt_update_base64,
             note_id,
         })
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -262,19 +308,33 @@ pub async fn save_note(path: String, content: String, app: AppHandle) -> Result<
         let app = app.clone();
         let settings = state.settings.read().clone();
         let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-        let saved = state.crdt.replace_note_text(&vault.path, &path, &content).map_err(|e| e.to_string())?;
+        let saved = state
+            .crdt
+            .replace_note_text(&vault.path, &path, &content)
+            .map_err(|e| e.to_string())?;
         if saved.changed {
-            let _ = app.emit("p2p:crdt-update", crate::network::NetworkEventPayload::RemoteCrdtUpdate {
-                note_path: path.clone(), update: saved.state.clone(),
-            });
-            if let Some(net) = state.network.read().as_ref() { net.broadcast_crdt_update(path, saved.state); }
+            let _ = app.emit(
+                "p2p:crdt-update",
+                crate::network::NetworkEventPayload::RemoteCrdtUpdate {
+                    note_path: path.clone(),
+                    update: saved.state.clone(),
+                },
+            );
+            if let Some(net) = state.network.read().as_ref() {
+                net.broadcast_crdt_update(path, saved.state);
+            }
         }
         Ok(())
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn create_note(path: String, title: Option<String>, app: AppHandle) -> Result<String, String> {
+pub async fn create_note(
+    path: String,
+    title: Option<String>,
+    app: AppHandle,
+) -> Result<String, String> {
     on_worker(app, move |state, _app| {
         let settings = state.settings.read().clone();
         let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
@@ -282,7 +342,10 @@ pub async fn create_note(path: String, title: Option<String>, app: AppHandle) ->
         let init_content = title.map(|t| format!("# {t}\n\n"));
         let created = vault::create_note(&vault.path, &path, init_content.as_deref(), &lang)
             .map_err(|e| e.to_string())?;
-        state.crdt.invalidate_path(&vault.path, &created).map_err(|e| e.to_string())?;
+        state
+            .crdt
+            .invalidate_path(&vault.path, &created)
+            .map_err(|e| e.to_string())?;
 
         // Best-effort AI auto-linking for brand-new notes.
         if settings.ai.auto_link_notes {
@@ -313,7 +376,9 @@ pub async fn create_note(path: String, title: Option<String>, app: AppHandle) ->
                             }
                         }
                         Ok(_) => {}
-                        Err(e) => tracing::warn!("auto-link suggestion failed for {note_path}: {e}"),
+                        Err(e) => {
+                            tracing::warn!("auto-link suggestion failed for {note_path}: {e}")
+                        }
                     }
                 });
             }
@@ -323,7 +388,8 @@ pub async fn create_note(path: String, title: Option<String>, app: AppHandle) ->
             net.sync_now();
         }
         Ok(created)
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -332,9 +398,12 @@ pub async fn create_folder(path: String, app: AppHandle) -> Result<(), String> {
         let settings = state.settings.read().clone();
         let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
         vault::create_folder(&vault.path, &path).map_err(|e| e.to_string())?;
-        if let Some(net) = state.network.read().as_ref() { net.sync_now(); }
+        if let Some(net) = state.network.read().as_ref() {
+            net.sync_now();
+        }
         Ok(())
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -342,12 +411,20 @@ pub async fn rename_item(old_path: String, new_path: String, app: AppHandle) -> 
     on_worker(app, move |state, _app| {
         let settings = state.settings.read().clone();
         let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-        crate::structural::rename(&vault.path, &old_path, &new_path, &state.crdt, &catalog_device(state, vault)).map_err(|e| e.to_string())?;
+        crate::structural::rename(
+            &vault.path,
+            &old_path,
+            &new_path,
+            &state.crdt,
+            &catalog_device(state, vault),
+        )
+        .map_err(|e| e.to_string())?;
         if let Some(net) = state.network.read().as_ref() {
             net.sync_now();
         }
         Ok(())
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -355,14 +432,21 @@ pub async fn delete_item(path: String, app: AppHandle) -> Result<(), String> {
     on_worker(app, move |state, _app| {
         let settings = state.settings.read().clone();
         let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-        crate::catalog_sync::delete(&vault.path, &path, &state.crdt, &catalog_device(state, vault)).map_err(|e| e.to_string())?;
+        crate::catalog_sync::delete(
+            &vault.path,
+            &path,
+            &state.crdt,
+            &catalog_device(state, vault),
+        )
+        .map_err(|e| e.to_string())?;
 
         if let Some(net) = state.network.read().as_ref() {
             net.sync_now();
         }
 
         Ok(())
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -370,21 +454,36 @@ pub async fn undo_last_delete(app: AppHandle) -> Result<Option<RestoredItem>, St
     on_worker(app, move |state, _app| {
         let settings = state.settings.read().clone();
         let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-        let restored = crate::catalog_sync::restore_latest(&vault.path, &state.crdt, &catalog_device(state, vault))
-            .map_err(|e| e.to_string())?.map(|(path, is_dir)| RestoredItem {
-                path, is_dir, has_more: crate::catalog_sync::has_restorable(&vault.path).unwrap_or(false),
-            });
+        let restored = crate::catalog_sync::restore_latest(
+            &vault.path,
+            &state.crdt,
+            &catalog_device(state, vault),
+        )
+        .map_err(|e| e.to_string())?
+        .map(|(path, is_dir)| RestoredItem {
+            path,
+            is_dir,
+            has_more: crate::catalog_sync::has_restorable(&vault.path).unwrap_or(false),
+        });
         if restored.is_some() {
             if let Some(net) = state.network.read().as_ref() {
                 net.sync_now();
             }
         }
         Ok(restored)
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn crdt_apply_client_update(note_path: String, update_base64: String, note_id: Option<String>, vault_id: Option<String>, recovery_update: Option<bool>, app: AppHandle) -> Result<(), String> {
+pub async fn crdt_apply_client_update(
+    note_path: String,
+    update_base64: String,
+    note_id: Option<String>,
+    vault_id: Option<String>,
+    recovery_update: Option<bool>,
+    app: AppHandle,
+) -> Result<(), String> {
     on_worker(app, move |state, app| {
         let app = app.clone();
         let update_bytes = URL_SAFE_NO_PAD
@@ -393,21 +492,42 @@ pub async fn crdt_apply_client_update(note_path: String, update_base64: String, 
 
         let settings = state.settings.read().clone();
         let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-        if vault_id.as_ref().is_some_and(|id| id != &vault.id) { return Err("ai.vaultChanged".into()); }
+        if vault_id.as_ref().is_some_and(|id| id != &vault.id) {
+            return Err("ai.vaultChanged".into());
+        }
         if let Some(id) = note_id {
-            let catalog = crate::catalog::load(&vault.path).and_then(|catalog| catalog.resolve()).map_err(|error| error.to_string())?;
+            let catalog = crate::catalog::load(&vault.path)
+                .and_then(|catalog| catalog.resolve())
+                .map_err(|error| error.to_string())?;
             let entry = catalog.get(&id).ok_or("unknown note identity")?;
-            if entry.deleted() && !recovery_update.unwrap_or(false) { return Err("errors.noteDeleted".into()); }
-            let changed = crate::network::apply_identified_update(&vault.path, &id, &note_path, &update_bytes, &state.crdt, Some(&app)).map_err(|error| error.to_string())?;
+            if entry.deleted() && !recovery_update.unwrap_or(false) {
+                return Err("errors.noteDeleted".into());
+            }
+            let changed = crate::network::apply_identified_update(
+                &vault.path,
+                &id,
+                &note_path,
+                &update_bytes,
+                &state.crdt,
+                Some(&app),
+            )
+            .map_err(|error| error.to_string())?;
             if changed && !entry.deleted() {
-                let full_state = state.crdt.get_or_create_doc(&vault.path, &entry.path).map_err(|error| error.to_string())?;
-                if let Some(net) = state.network.read().as_ref() { net.broadcast_crdt_update(entry.path.clone(), full_state); }
+                let full_state = state
+                    .crdt
+                    .get_or_create_doc(&vault.path, &entry.path)
+                    .map_err(|error| error.to_string())?;
+                if let Some(net) = state.network.read().as_ref() {
+                    net.broadcast_crdt_update(entry.path.clone(), full_state);
+                }
             }
             return Ok(());
         }
         // A delayed local save from a closed/deleted note must not recreate it.
         vault::read_note(&vault.path, &note_path).map_err(|e| e.to_string())?;
-        let result = state.crdt.apply_update(&vault.path, &note_path, &update_bytes)
+        let result = state
+            .crdt
+            .apply_update(&vault.path, &note_path, &update_bytes)
             .map_err(|e| e.to_string())?;
 
         // Full state lets a peer recover from a missed incremental packet.
@@ -418,7 +538,8 @@ pub async fn crdt_apply_client_update(note_path: String, update_base64: String, 
         }
 
         Ok(())
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -441,8 +562,14 @@ pub fn network_request_pair(pair_code: String, state: State<'_, AppState>) -> Re
 /// Replaces the pairing token so every previously shared code stops working.
 #[tauri::command]
 pub fn network_regenerate_pair_code(state: State<'_, AppState>) -> Result<(), String> {
-    let vault_id = state.settings.read().active_vault().map(|v| v.id.clone()).ok_or("errors.noActiveVault")?;
-    let token = crate::network::rotate_pairing_token(&state.settings, &vault_id).ok_or("credentials.unavailable")?;
+    let vault_id = state
+        .settings
+        .read()
+        .active_vault()
+        .map(|v| v.id.clone())
+        .ok_or("errors.noActiveVault")?;
+    let token = crate::network::rotate_pairing_token(&state.settings, &vault_id)
+        .ok_or("credentials.unavailable")?;
     if let Some(service) = state.network.read().as_ref() {
         service.set_pairing_token(token);
     }
@@ -462,10 +589,7 @@ pub fn network_answer_pair(
 }
 
 #[tauri::command]
-pub fn network_remove_peer(
-    endpoint_id: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub fn network_remove_peer(endpoint_id: String, state: State<'_, AppState>) -> Result<(), String> {
     let mut settings = state.settings.write();
     if let Some(vault) = settings.active_vault_mut() {
         let removed = vault.remove_peer(&endpoint_id);
@@ -518,14 +642,15 @@ pub async fn network_get_pair_info(state: State<'_, AppState>) -> Result<Option<
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 
-    let maybe_info = {
-        state.network.read().as_ref().and_then(|s| s.pair_info())
-    };
+    let maybe_info = { state.network.read().as_ref().and_then(|s| s.pair_info()) };
     Ok(maybe_info)
 }
 
 #[tauri::command]
-pub fn save_ai_settings(mut settings: AiSettings, state: State<'_, AppState>) -> Result<(), String> {
+pub fn save_ai_settings(
+    mut settings: AiSettings,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let mut s = state.settings.write();
     settings.merge_saved_keys(&s.ai);
     let previous = std::mem::replace(&mut s.ai, settings);
@@ -537,18 +662,35 @@ pub fn save_ai_settings(mut settings: AiSettings, state: State<'_, AppState>) ->
 }
 
 #[tauri::command]
-pub fn save_web_search_settings(mut settings: WebSearchSettings, state: State<'_, AppState>) -> Result<(), String> {
+pub fn save_web_search_settings(
+    mut settings: WebSearchSettings,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     settings.normalize();
     settings.merge_saved_keys(&state.settings.read().web_search);
     // Choices saved from Settings are explicit; never re-run the opt-in migration on them.
     settings.opt_in_applied = true;
-    if ["brave", "parallel"].into_iter().any(|id| settings.source(id).is_some_and(|source| source.enabled && source.api_key.trim().is_empty())) {
+    if ["brave", "parallel"].into_iter().any(|id| {
+        settings
+            .source(id)
+            .is_some_and(|source| source.enabled && source.api_key.trim().is_empty())
+    }) {
         return Err("ai.webKeyRequired".into());
     }
-    if settings.source("searxng").is_some_and(|source| source.enabled) {
-        let url = reqwest::Url::parse(settings.searxng_url.trim()).map_err(|_| "ai.webInvalidSearxngUrl")?;
-        if url.scheme() != "https" || url.host_str().is_none() || !url.username().is_empty() || url.password().is_some()
-            || url.host_str().is_some_and(|host| host == "localhost" || host.parse::<std::net::IpAddr>().is_ok()) {
+    if settings
+        .source("searxng")
+        .is_some_and(|source| source.enabled)
+    {
+        let url = reqwest::Url::parse(settings.searxng_url.trim())
+            .map_err(|_| "ai.webInvalidSearxngUrl")?;
+        if url.scheme() != "https"
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url
+                .host_str()
+                .is_some_and(|host| host == "localhost" || host.parse::<std::net::IpAddr>().is_ok())
+        {
             return Err("ai.webInvalidSearxngUrl".into());
         }
     }
@@ -576,7 +718,10 @@ pub fn save_theme(theme: String, state: State<'_, AppState>) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub fn save_theme_palettes(palettes: ThemePalettesSettings, state: State<'_, AppState>) -> Result<(), String> {
+pub fn save_theme_palettes(
+    palettes: ThemePalettesSettings,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     validate_theme_palettes(&palettes)?;
     let mut settings = state.settings.write();
     let previous = std::mem::replace(&mut settings.theme_palettes, palettes);
@@ -635,7 +780,10 @@ pub fn save_line_wrapping(line_wrapping: bool, state: State<'_, AppState>) -> Re
 }
 
 #[tauri::command]
-pub fn save_remote_images(load_remote_images: bool, state: State<'_, AppState>) -> Result<(), String> {
+pub fn save_remote_images(
+    load_remote_images: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let mut settings = state.settings.write();
     let previous = std::mem::replace(&mut settings.load_remote_images, load_remote_images);
     if let Err(error) = settings.save() {
@@ -666,13 +814,15 @@ pub async fn fetch_ai_models(
     custom_key: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
-    let stored_key = |settings: &AppSettings, id: Option<&String>| id
-        .and_then(|id| settings.ai.providers.iter().find(|p| &p.id == id))
-        .map(|p| p.api_key.clone())
-        .unwrap_or_default();
+    let stored_key = |settings: &AppSettings, id: Option<&String>| {
+        id.and_then(|id| settings.ai.providers.iter().find(|p| &p.id == id))
+            .map(|p| p.api_key.clone())
+            .unwrap_or_default()
+    };
     let (base_url, api_key) = if let Some(url) = custom_url {
         // The interface never holds saved keys; an empty key means "use the stored one".
-        let key = custom_key.filter(|key| !key.trim().is_empty())
+        let key = custom_key
+            .filter(|key| !key.trim().is_empty())
             .unwrap_or_else(|| stored_key(&state.settings.read(), provider_id.as_ref()));
         (url, key)
     } else {
@@ -693,13 +843,18 @@ pub async fn fetch_ai_models(
 }
 
 #[tauri::command]
-pub async fn search_vault_rag(query: String, limit: Option<usize>, app: AppHandle) -> Result<Vec<RagChunk>, String> {
+pub async fn search_vault_rag(
+    query: String,
+    limit: Option<usize>,
+    app: AppHandle,
+) -> Result<Vec<RagChunk>, String> {
     on_worker(app, move |state, _app| {
         let settings = state.settings.read().clone();
         let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
         rag::index_and_search_vault(&vault.path, &query, limit.unwrap_or(5))
             .map_err(|e| e.to_string())
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -724,13 +879,19 @@ pub async fn ai_chat_query(
             .find(|p| p.id == settings.ai.active_provider_id)
             .cloned()
             .ok_or("nenhum provedor de IA selecionado")?;
-        (p, vault.path.clone(), vault.id.clone(),
-            settings.web_search.clone(), settings.language.clone())
+        (
+            p,
+            vault.path.clone(),
+            vault.id.clone(),
+            settings.web_search.clone(),
+            settings.language.clone(),
+        )
     };
 
     let web_sources = if skill == AssistantSkill::Research {
         web_search::search_web(&prompt, &web_settings, &language)
-            .await.map_err(|e| e.to_string())?
+            .await
+            .map_err(|e| e.to_string())?
     } else {
         Vec::new()
     };
@@ -748,14 +909,18 @@ pub async fn ai_chat_query(
         let context = format!("---\n[Open Note: {path} (Line: 1)]\n{content}\n---");
         (vec![chunk], context)
     } else {
-        let chunks = rag::index_and_search_vault(&vault_path, &prompt, 5)
-            .map_err(|e| e.to_string())?;
+        let chunks =
+            rag::index_and_search_vault(&vault_path, &prompt, 5).map_err(|e| e.to_string())?;
 
         let mut parts = Vec::new();
         for chunk in &chunks {
             parts.push(format!(
                 "---\n[Note: {} ({}), Section: {}, Line: {}]\n{}\n---",
-                chunk.note_title, chunk.note_path, chunk.section_title, chunk.line_number, chunk.content
+                chunk.note_title,
+                chunk.note_path,
+                chunk.section_title,
+                chunk.line_number,
+                chunk.content
             ));
         }
         let context = parts.join("\n\n");
@@ -770,7 +935,8 @@ pub async fn ai_chat_query(
         "saved_user_memory": saved_memory.chars().take(8_000).collect::<String>(),
         "web_search_performed": skill == AssistantSkill::Research,
         "web_results": web_sources,
-    }).to_string();
+    })
+    .to_string();
     let messages = assistant::build_messages(skill, &prompt, &context, &conversation);
 
     let answer = rag::generate_chat_completion(&provider, &messages, 0.3)
@@ -791,31 +957,61 @@ pub async fn ai_chat_query(
     if skill == AssistantSkill::Research && web_sources.is_empty() {
         warnings.push("ai.webNoResults".into());
     }
-    Ok(ChatResponse { answer, sources, web_sources, drafts, edits, warnings, vault_id })
+    Ok(ChatResponse {
+        answer,
+        sources,
+        web_sources,
+        drafts,
+        edits,
+        warnings,
+        vault_id,
+    })
 }
 
 #[tauri::command]
 pub async fn chat_history_get(vault_id: String, app: AppHandle) -> Result<ChatHistory, String> {
     on_worker(app, move |state, _app| {
-        if !state.settings.read().vaults.iter().any(|vault| vault.id == vault_id) {
+        if !state
+            .settings
+            .read()
+            .vaults
+            .iter()
+            .any(|vault| vault.id == vault_id)
+        {
             return Err("ai.vaultChanged".into());
         }
         chat_history::load(&vault_id).map_err(|error| error.to_string())
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn chat_history_save(vault_id: String, history: ChatHistory, app: AppHandle) -> Result<(), String> {
+pub async fn chat_history_save(
+    vault_id: String,
+    history: ChatHistory,
+    app: AppHandle,
+) -> Result<(), String> {
     on_worker(app, move |state, _app| {
-        if !state.settings.read().vaults.iter().any(|vault| vault.id == vault_id) {
+        if !state
+            .settings
+            .read()
+            .vaults
+            .iter()
+            .any(|vault| vault.id == vault_id)
+        {
             return Err("ai.vaultChanged".into());
         }
         chat_history::save(&vault_id, &history).map_err(|error| error.to_string())
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn ai_save_draft(vault_id: String, draft: NoteDraft, app: AppHandle) -> Result<String, String> {
+pub async fn ai_save_draft(
+    vault_id: String,
+    draft: NoteDraft,
+    app: AppHandle,
+) -> Result<String, String> {
     on_worker(app, move |state, _app| {
         let settings = state.settings.read().clone();
         let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
@@ -823,7 +1019,10 @@ pub async fn ai_save_draft(vault_id: String, draft: NoteDraft, app: AppHandle) -
             return Err("ai.vaultChanged".into());
         }
         let path = assistant::save_draft(&vault.path, &draft).map_err(|e| e.to_string())?;
-        state.crdt.invalidate_path(&vault.path, &path).map_err(|e| e.to_string())?;
+        state
+            .crdt
+            .invalidate_path(&vault.path, &path)
+            .map_err(|e| e.to_string())?;
         if let Err(e) = links::reconcile_wikilinks(&vault.path, &path, &draft.content) {
             tracing::warn!("reconcile_wikilinks failed for {path}: {e}");
         }
@@ -831,40 +1030,71 @@ pub async fn ai_save_draft(vault_id: String, draft: NoteDraft, app: AppHandle) -
             net.sync_now();
         }
         Ok(path)
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn ai_apply_edit(vault_id: String, edit: NoteEdit, app: AppHandle) -> Result<String, String> {
+pub async fn ai_apply_edit(
+    vault_id: String,
+    edit: NoteEdit,
+    app: AppHandle,
+) -> Result<String, String> {
     on_worker(app, move |state, app| {
         let app = app.clone();
         let settings = state.settings.read().clone();
         let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-        if vault.id != vault_id { return Err("ai.vaultChanged".into()); }
-        let result = state.crdt.apply_note_edit(&vault.path, &edit).map_err(|e| e.to_string())?;
+        if vault.id != vault_id {
+            return Err("ai.vaultChanged".into());
+        }
+        let result = state
+            .crdt
+            .apply_note_edit(&vault.path, &edit)
+            .map_err(|e| e.to_string())?;
         // The open editor receives the same CRDT state as the paired devices.
-        let _ = app.emit("p2p:crdt-update", crate::network::NetworkEventPayload::RemoteCrdtUpdate {
-            note_path: edit.path.clone(), update: result.state.clone(),
-        });
+        let _ = app.emit(
+            "p2p:crdt-update",
+            crate::network::NetworkEventPayload::RemoteCrdtUpdate {
+                note_path: edit.path.clone(),
+                update: result.state.clone(),
+            },
+        );
         if let Some(net) = state.network.read().as_ref() {
             net.broadcast_crdt_update(edit.path.clone(), result.state);
             net.sync_now();
         }
         Ok(edit.path)
-    }).await
+    })
+    .await
 }
 
 /// Load an image from the vault or its explicit HTTP(S) source for export.
 #[tauri::command]
-pub async fn load_export_image(note_path: String, src: String, state: State<'_, AppState>) -> Result<crate::export_images::ExportImageData, String> {
-    let root = state.settings.read().active_vault().ok_or("errors.noActiveVault")?.path.clone();
-    crate::export_images::load_image(&root, &note_path, &src).await.map_err(|_| "export.imageFailed".into())
+pub async fn load_export_image(
+    note_path: String,
+    src: String,
+    state: State<'_, AppState>,
+) -> Result<crate::export_images::ExportImageData, String> {
+    let root = state
+        .settings
+        .read()
+        .active_vault()
+        .ok_or("errors.noActiveVault")?
+        .path
+        .clone();
+    crate::export_images::load_image(&root, &note_path, &src)
+        .await
+        .map_err(|_| "export.imageFailed".into())
 }
 
 /// Opens the native save dialog from Rust and returns a single-use token for
 /// the chosen destination, or `None` when the user cancels.
 #[tauri::command]
-pub async fn export_choose_destination(file_name: String, format: String, app: AppHandle) -> Result<Option<String>, String> {
+pub async fn export_choose_destination(
+    file_name: String,
+    format: String,
+    app: AppHandle,
+) -> Result<Option<String>, String> {
     let format = crate::export_target::ExportFormat::parse(&format)?;
     crate::export_target::choose(&app, &file_name, format).await
 }
@@ -873,8 +1103,14 @@ pub async fn export_choose_destination(file_name: String, format: String, app: A
 /// `export_choose_destination`. The webview never supplies a path.
 #[tauri::command]
 pub fn export_document(request: tauri::ipc::Request<'_>) -> Result<(), String> {
-    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("export.invalidFile".into()) };
-    let token = request.headers().get("x-export-token").and_then(|v| v.to_str().ok()).ok_or("export.invalidFile")?;
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("export.invalidFile".into());
+    };
+    let token = request
+        .headers()
+        .get("x-export-token")
+        .and_then(|v| v.to_str().ok())
+        .ok_or("export.invalidFile")?;
     crate::export_target::write(token, bytes).map(|_| ())
 }
 
@@ -884,7 +1120,9 @@ pub fn open_log_folder(app: AppHandle) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     let dir = crate::logging::log_dir().ok_or("errors.configDir")?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
+    app.opener()
+        .open_path(dir.to_string_lossy(), None::<&str>)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -900,11 +1138,16 @@ pub async fn links_get(app: AppHandle) -> Result<Vec<links::LinkEdge>, String> {
         let settings = state.settings.read().clone();
         let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
         links::graph_links(&vault.path).map_err(|e| e.to_string())
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn links_apply(operations: Vec<links::LinkOperation>, origin: Option<links::LinkOrigin>, app: AppHandle) -> Result<(), String> {
+pub async fn links_apply(
+    operations: Vec<links::LinkOperation>,
+    origin: Option<links::LinkOrigin>,
+    app: AppHandle,
+) -> Result<(), String> {
     on_worker(app, move |state, _app| {
         let settings = state.settings.read().clone();
         let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
@@ -915,9 +1158,12 @@ pub async fn links_apply(operations: Vec<links::LinkOperation>, origin: Option<l
             &state.crdt,
         )
         .map_err(|e| e.to_string())?;
-        if let Some(net) = state.network.read().as_ref() { net.sync_now(); }
+        if let Some(net) = state.network.read().as_ref() {
+            net.sync_now();
+        }
         Ok(())
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1015,7 +1261,10 @@ fn parse_ai_path_list(answer: &str) -> Vec<String> {
         .or_else(|| trimmed.strip_prefix("```"))
         .unwrap_or(trimmed)
         .trim();
-    let stripped = without_open.strip_suffix("```").unwrap_or(without_open).trim();
+    let stripped = without_open
+        .strip_suffix("```")
+        .unwrap_or(without_open)
+        .trim();
 
     if let Ok(parsed) = serde_json::from_str::<Vec<String>>(stripped) {
         return parsed;

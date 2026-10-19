@@ -2,47 +2,50 @@
 // belongs with the persistent-connection work (#14), not with lint fixes.
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
+pub mod assistant;
+pub mod catalog;
+pub mod catalog_sync;
+pub mod chat_history;
+pub mod commands;
 pub mod config;
 pub mod crdt;
-pub mod network;
-pub mod vault;
-pub mod commands;
-pub mod rag;
-pub mod links;
 pub mod link_operations;
-pub mod catalog;
-pub mod structural;
-pub mod catalog_sync;
-pub mod references;
+pub mod links;
+pub mod network;
+pub mod rag;
 pub mod reference_sync;
-pub mod assistant;
+pub mod references;
+pub mod structural;
+pub mod vault;
 pub mod web_search;
-pub mod chat_history;
 
+pub mod creation;
+pub mod credentials;
 pub mod export_images;
 pub mod export_target;
+pub mod history_commands;
 pub mod http;
-pub mod logging;
-pub mod updates;
 pub mod image_upload;
 pub mod local_images;
-pub mod storage;
-pub mod note_transaction;
-pub mod creation;
+pub mod logging;
 pub mod note_history;
+pub mod note_transaction;
 pub mod retention;
-pub mod history_commands;
-pub mod credentials;
+pub mod storage;
+pub mod updates;
 
-use std::sync::Arc;
 use parking_lot::RwLock;
-use tauri::{Manager, menu::{Menu, MenuItem}, tray::{MouseButton, TrayIconBuilder, TrayIconEvent}};
+use std::sync::Arc;
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
+    Manager,
+};
 
+use commands::AppState;
 use config::AppSettings;
 use crdt::CrdtManager;
 use network::{NetworkIdentity, NetworkService};
-use commands::AppState;
-
 
 /// Tray menu labels for the interface language. An empty or unknown code
 /// (automatic detection happens in the interface) falls back to English until
@@ -98,7 +101,6 @@ pub fn run() {
         settings: settings.clone(),
         crdt,
         network: network.clone(),
-
     };
 
     let builder = tauri::Builder::default();
@@ -122,14 +124,20 @@ pub fn run() {
     };
 
     builder
-        .register_asynchronous_uri_scheme_protocol("lownotes-image", |context, request, responder| {
-            let app = context.app_handle().clone();
-            tauri::async_runtime::spawn_blocking(move || {
-                let state = app.state::<AppState>();
-                let settings = state.settings.read().clone();
-                responder.respond(local_images::protocol_response(&settings, request.uri().path()));
-            });
-        })
+        .register_asynchronous_uri_scheme_protocol(
+            "lownotes-image",
+            |context, request, responder| {
+                let app = context.app_handle().clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    let state = app.state::<AppState>();
+                    let settings = state.settings.read().clone();
+                    responder.respond(local_images::protocol_response(
+                        &settings,
+                        request.uri().path(),
+                    ));
+                });
+            },
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
@@ -137,12 +145,18 @@ pub fn run() {
         .manage(app_state)
         .setup(move |app| {
             let projection_app = app.handle().clone();
-            app.state::<AppState>().crdt.set_projection_observer(Arc::new(move |_root, path, state| {
-                use tauri::Emitter;
-                let _ = projection_app.emit("p2p:crdt-update", network::NetworkEventPayload::RemoteCrdtUpdate {
-                    note_path: path.into(), update: state.into(),
-                });
-            }));
+            app.state::<AppState>()
+                .crdt
+                .set_projection_observer(Arc::new(move |_root, path, state| {
+                    use tauri::Emitter;
+                    let _ = projection_app.emit(
+                        "p2p:crdt-update",
+                        network::NetworkEventPayload::RemoteCrdtUpdate {
+                            note_path: path.into(),
+                            update: state.into(),
+                        },
+                    );
+                }));
             let mut s = settings.write();
             let mut saved_keys = false;
             if let Some(vault) = s.active_vault_mut() {
@@ -179,15 +193,25 @@ pub fn run() {
                 }
             }
             drop(s);
-            history_commands::start_retention(settings.clone(), app.state::<AppState>().crdt.clone());
+            history_commands::start_retention(
+                settings.clone(),
+                app.state::<AppState>().crdt.clone(),
+            );
 
             let (open_label, quit_label) = tray_labels(&settings.read().language);
             let open = MenuItem::with_id(app, "open", open_label, true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", quit_label, true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &quit])?;
-            app.manage(TrayMenu { open: open.clone(), quit: quit.clone() });
+            app.manage(TrayMenu {
+                open: open.clone(),
+                quit: quit.clone(),
+            });
             TrayIconBuilder::new()
-                .icon(app.default_window_icon().expect("ícone do aplicativo").clone())
+                .icon(
+                    app.default_window_icon()
+                        .expect("ícone do aplicativo")
+                        .clone(),
+                )
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -196,7 +220,11 @@ pub fn run() {
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click { button: MouseButton::Left, .. } = event {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        ..
+                    } = event
+                    {
                         show_main_window(tray.app_handle());
                     }
                 })
@@ -206,7 +234,13 @@ pub fn run() {
         .on_window_event(|window, event| {
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    if window.app_handle().state::<AppState>().settings.read().close_to_tray {
+                    if window
+                        .app_handle()
+                        .state::<AppState>()
+                        .settings
+                        .read()
+                        .close_to_tray
+                    {
                         api.prevent_close();
                         let _ = window.hide();
                     }
@@ -285,7 +319,10 @@ mod tests {
     #[test]
     fn tray_labels_follow_the_interface_language() {
         assert_eq!(tray_labels("pt-BR"), ("Abrir LowNotes", "Sair do LowNotes"));
-        assert_eq!(tray_labels("es-ES"), ("Abrir LowNotes", "Salir de LowNotes"));
+        assert_eq!(
+            tray_labels("es-ES"),
+            ("Abrir LowNotes", "Salir de LowNotes")
+        );
         assert_eq!(tray_labels("en-US"), ("Open LowNotes", "Quit LowNotes"));
         assert_eq!(tray_labels(""), ("Open LowNotes", "Quit LowNotes"));
     }

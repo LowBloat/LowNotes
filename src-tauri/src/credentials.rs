@@ -126,8 +126,19 @@ fn references_in(path: &Path) -> BTreeSet<String> {
     fs::read(path)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-        .and_then(|value| value.get("credential_refs").and_then(|refs| refs.as_object()).cloned())
-        .map(|refs| refs.values().filter_map(|v| v.as_str()).filter(|r| r.starts_with("v1-")).map(String::from).collect())
+        .and_then(|value| {
+            value
+                .get("credential_refs")
+                .and_then(|refs| refs.as_object())
+                .cloned()
+        })
+        .map(|refs| {
+            refs.values()
+                .filter_map(|v| v.as_str())
+                .filter(|r| r.starts_with("v1-"))
+                .map(String::from)
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -190,12 +201,13 @@ fn save_at(
             .ok()
             .and_then(AppSettings::from_saved_value)
         {
-            if old.credential_storage_version == 0 && next.unavailable_credentials.is_empty()
+            if old.credential_storage_version == 0
+                && next.unavailable_credentials.is_empty()
                 && storage::write_without_backup(&backup, &bytes, AppSettings::valid_saved_bytes)
                     .is_err()
-                {
-                    next.credential_error = "credentials.migrationIncomplete".into();
-                }
+            {
+                next.credential_error = "credentials.migrationIncomplete".into();
+            }
         }
     }
     // Each changed secret gets a new immutable reference. Keep the ones named by
@@ -232,9 +244,9 @@ fn load_at(path: &Path, store: &mut impl Store) -> anyhow::Result<AppSettings> {
                 .is_some_and(|old| old.credential_storage_version == 0)
             && storage::write_without_backup(&backup, &bytes, AppSettings::valid_saved_bytes)
                 .is_err()
-            {
-                settings.credential_error = "credentials.migrationIncomplete".into();
-            }
+        {
+            settings.credential_error = "credentials.migrationIncomplete".into();
+        }
     }
     Ok(settings)
 }
@@ -332,11 +344,18 @@ mod tests {
         settings.ai.providers[0].api_key = "third".into();
         settings = save_at(&path, &settings, &mut store).unwrap();
         let third = settings.credential_refs[&slot].clone();
-        assert!(!store.values.contains_key(&first), "orphaned reference was kept");
-        assert_eq!(store.values.get(&second).map(String::as_str), Some("second"));
+        assert!(
+            !store.values.contains_key(&first),
+            "orphaned reference was kept"
+        );
+        assert_eq!(
+            store.values.get(&second).map(String::as_str),
+            Some("second")
+        );
         assert_eq!(store.values.get(&third).map(String::as_str), Some("third"));
         // Unchanged secrets keep their reference and value.
-        let identity = settings.credential_refs[&format!("vault:{}:identity", settings.vaults[0].id)].clone();
+        let identity =
+            settings.credential_refs[&format!("vault:{}:identity", settings.vaults[0].id)].clone();
         assert!(store.values.contains_key(&identity));
     }
 

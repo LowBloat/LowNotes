@@ -12,7 +12,10 @@ pub fn client() -> &'static Client {
 }
 
 /// A client with its own configuration, built once into `slot`.
-pub fn cached(slot: &'static OnceLock<Client>, configure: impl FnOnce(ClientBuilder) -> ClientBuilder) -> &'static Client {
+pub fn cached(
+    slot: &'static OnceLock<Client>,
+    configure: impl FnOnce(ClientBuilder) -> ClientBuilder,
+) -> &'static Client {
     slot.get_or_init(|| {
         configure(Client::builder().connect_timeout(Duration::from_secs(15)))
             .build()

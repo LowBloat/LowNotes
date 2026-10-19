@@ -5,7 +5,7 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-use anyhow::{Context, bail};
+use anyhow::{bail, Context};
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
@@ -33,7 +33,10 @@ pub struct VaultItem {
 
 pub fn is_markdown(path: &Path) -> bool {
     matches!(
-        path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(),
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .as_deref(),
         Some("md" | "markdown")
     )
 }
@@ -127,12 +130,10 @@ pub fn list_vault_items(root: &Path) -> anyhow::Result<Vec<VaultItem>> {
     }
 
     // Sort: folders first, then alphabetical by title
-    items.sort_by(|a, b| {
-        match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.path.to_lowercase().cmp(&b.path.to_lowercase()),
-        }
+    items.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.path.to_lowercase().cmp(&b.path.to_lowercase()),
     });
 
     Ok(items)
@@ -150,7 +151,11 @@ fn extract_title_or_name(path: &Path, file_name: &str) -> String {
             }
         }
     }
-    file_name.strip_suffix(".md").or_else(|| file_name.strip_suffix(".markdown")).unwrap_or(file_name).to_string()
+    file_name
+        .strip_suffix(".md")
+        .or_else(|| file_name.strip_suffix(".markdown"))
+        .unwrap_or(file_name)
+        .to_string()
 }
 
 pub fn read_note(root: &Path, relative: &str) -> anyhow::Result<String> {
@@ -185,7 +190,13 @@ pub fn create_note(
     let default_content = initial_content
         .map(|s| s.to_string())
         .unwrap_or_else(|| default_note_content(lang));
-    crate::creation::create(root, &clean_relative, Some(&default_content), &crate::crdt::CrdtManager::new(), "local")
+    crate::creation::create(
+        root,
+        &clean_relative,
+        Some(&default_content),
+        &crate::crdt::CrdtManager::new(),
+        "local",
+    )
 }
 
 /// Template written into brand-new notes when no initial content is supplied.
@@ -199,12 +210,24 @@ fn default_note_content(lang: &str) -> String {
 }
 
 pub fn create_folder(root: &Path, relative: &str) -> anyhow::Result<()> {
-    crate::creation::create(root, &relative.trim().replace('\\', "/"), None, &crate::crdt::CrdtManager::new(), "local")?;
+    crate::creation::create(
+        root,
+        &relative.trim().replace('\\', "/"),
+        None,
+        &crate::crdt::CrdtManager::new(),
+        "local",
+    )?;
     Ok(())
 }
 
 pub fn rename_item(root: &Path, old_relative: &str, new_relative: &str) -> anyhow::Result<()> {
-    crate::structural::rename(root, old_relative, new_relative, &crate::crdt::CrdtManager::new(), "local")
+    crate::structural::rename(
+        root,
+        old_relative,
+        new_relative,
+        &crate::crdt::CrdtManager::new(),
+        "local",
+    )
 }
 
 pub fn build_manifest(root: &Path) -> anyhow::Result<Manifest> {
@@ -233,7 +256,10 @@ pub fn build_manifest(root: &Path) -> anyhow::Result<Manifest> {
     }
 
     // Include the hidden links store so P2P sync (manifest-driven) propagates it.
-    for links_rel in [crate::links::LINKS_REL_PATH, crate::link_operations::RELATIVE_PATH] {
+    for links_rel in [
+        crate::links::LINKS_REL_PATH,
+        crate::link_operations::RELATIVE_PATH,
+    ] {
         let links_file = root.join(links_rel);
         if links_file.is_file() {
             if let (Ok(bytes), Ok(metadata)) = (fs::read(&links_file), fs::metadata(&links_file)) {
@@ -260,20 +286,40 @@ pub fn build_manifest(root: &Path) -> anyhow::Result<Manifest> {
     // CRDT history is synced separately from Markdown content and merged on receipt.
     let state_dir = root.join(".lownotes/crdt");
     if state_dir.is_dir() {
-        for entry in WalkDir::new(&state_dir).min_depth(1).max_depth(1).into_iter().filter_map(Result::ok) {
-            if !entry.file_type().is_file() || entry.path().extension().and_then(|e| e.to_str()) != Some("bin") {
+        for entry in WalkDir::new(&state_dir)
+            .min_depth(1)
+            .max_depth(1)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            if !entry.file_type().is_file()
+                || entry.path().extension().and_then(|e| e.to_str()) != Some("bin")
+            {
                 continue;
             }
-            let relative = entry.path().strip_prefix(root)?.to_string_lossy().replace('\\', "/");
-            let bytes = crate::crdt::CrdtManager::read_state_file(root, &relative)?.context("CRDT state missing")?;
+            let relative = entry
+                .path()
+                .strip_prefix(root)?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let bytes = crate::crdt::CrdtManager::read_state_file(root, &relative)?
+                .context("CRDT state missing")?;
             let metadata = entry.metadata()?;
-            let modified_ms = metadata.modified().ok()
+            let modified_ms = metadata
+                .modified()
+                .ok()
                 .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-                .map(|duration| duration.as_millis() as u64).unwrap_or(0);
-            manifest.insert(relative.clone(), NoteMeta {
-                path: relative, modified_ms, size: metadata.len(),
-                hash: blake3::hash(&bytes).to_hex().to_string(),
-            });
+                .map(|duration| duration.as_millis() as u64)
+                .unwrap_or(0);
+            manifest.insert(
+                relative.clone(),
+                NoteMeta {
+                    path: relative,
+                    modified_ms,
+                    size: metadata.len(),
+                    hash: blake3::hash(&bytes).to_hex().to_string(),
+                },
+            );
         }
     }
 

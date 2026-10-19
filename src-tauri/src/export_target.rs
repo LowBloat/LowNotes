@@ -73,10 +73,20 @@ fn suggested_name(name: &str, format: ExportFormat) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or_default()
         .chars()
-        .map(|c| if c.is_control() || FORBIDDEN_NAME_CHARS.contains(c) { '-' } else { c })
+        .map(|c| {
+            if c.is_control() || FORBIDDEN_NAME_CHARS.contains(c) {
+                '-'
+            } else {
+                c
+            }
+        })
         .collect();
     let stem = stem.trim();
-    format!("{}.{}", if stem.is_empty() { "document" } else { stem }, format.extension())
+    format!(
+        "{}.{}",
+        if stem.is_empty() { "document" } else { stem },
+        format.extension()
+    )
 }
 
 fn with_extension(path: PathBuf, format: ExportFormat) -> PathBuf {
@@ -87,7 +97,10 @@ fn with_extension(path: PathBuf, format: ExportFormat) -> PathBuf {
     if matches {
         return path;
     }
-    let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+    let mut name = path
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_default();
     name.push(format!(".{}", format.extension()));
     path.with_file_name(name)
 }
@@ -98,7 +111,11 @@ pub(crate) fn register(path: PathBuf, format: ExportFormat) -> String {
     map.retain(|_, entry| entry.created.elapsed() < TOKEN_TTL);
     map.insert(
         token.clone(),
-        Pending { path: with_extension(path, format), format, created: Instant::now() },
+        Pending {
+            path: with_extension(path, format),
+            format,
+            created: Instant::now(),
+        },
     );
     token
 }
@@ -107,7 +124,10 @@ pub(crate) fn register(path: PathBuf, format: ExportFormat) -> String {
 /// whether or not the write succeeds.
 pub(crate) fn write(token: &str, bytes: &[u8]) -> Result<PathBuf, String> {
     let entry = pending().lock().remove(token).ok_or("export.invalidFile")?;
-    if entry.created.elapsed() >= TOKEN_TTL || bytes.len() > MAX_EXPORT_BYTES || !entry.format.accepts(bytes) {
+    if entry.created.elapsed() >= TOKEN_TTL
+        || bytes.len() > MAX_EXPORT_BYTES
+        || !entry.format.accepts(bytes)
+    {
         return Err("export.invalidFile".into());
     }
     std::fs::write(&entry.path, bytes).map_err(|e| e.to_string())?;
@@ -144,7 +164,10 @@ mod tests {
     fn writes_only_through_a_single_use_token_with_matching_content() {
         let dir = tempfile::tempdir().unwrap();
         let token = register(dir.path().join("report"), ExportFormat::Pdf);
-        assert_eq!(write("not-a-token", b"%PDF-1.7"), Err("export.invalidFile".into()));
+        assert_eq!(
+            write("not-a-token", b"%PDF-1.7"),
+            Err("export.invalidFile".into())
+        );
         let written = write(&token, b"%PDF-1.7 body").unwrap();
         assert_eq!(written, dir.path().join("report.pdf"));
         assert_eq!(std::fs::read(&written).unwrap(), b"%PDF-1.7 body");
@@ -158,8 +181,14 @@ mod tests {
 
     #[test]
     fn suggested_names_are_plain_file_names() {
-        assert_eq!(suggested_name("../../etc/passwd.md", ExportFormat::Pdf), "passwd.pdf");
-        assert_eq!(suggested_name("..\\..\\win\\notes.md", ExportFormat::Pdf), "notes.pdf");
+        assert_eq!(
+            suggested_name("../../etc/passwd.md", ExportFormat::Pdf),
+            "passwd.pdf"
+        );
+        assert_eq!(
+            suggested_name("..\\..\\win\\notes.md", ExportFormat::Pdf),
+            "notes.pdf"
+        );
         assert_eq!(suggested_name("a*b?c.md", ExportFormat::Docx), "a-b-c.docx");
         assert_eq!(suggested_name("", ExportFormat::Pdf), "document.pdf");
         assert_eq!(ExportFormat::parse("exe"), Err("export.invalidFile".into()));

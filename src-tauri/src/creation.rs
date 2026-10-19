@@ -482,7 +482,9 @@ fn create_with_hook(
             }
             parent = Some(id.clone());
         }
-        if content.is_some() { crate::note_history::forget(root, path)?; }
+        if content.is_some() {
+            crate::note_history::forget(root, path)?;
+        }
         let intent = Intent {
             version: 1,
             path: path.into(),
