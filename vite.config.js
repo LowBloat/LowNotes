@@ -2,11 +2,17 @@ import { defineConfig } from "vite";
 import { sveltekit } from "@sveltejs/kit/vite";
 import tailwindcss from "@tailwindcss/vite";
 import process from "node:process";
+import { readFileSync } from "node:fs";
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(() => ({
   plugins: [tailwindcss(), sveltekit()],
+  // Only the version is needed at runtime; importing package.json would ship
+  // the whole dependency list in the bundle.
+  define: {
+    __APP_VERSION__: JSON.stringify(JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version),
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
