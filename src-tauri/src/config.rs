@@ -112,6 +112,20 @@ impl VaultConfig {
         self.peers.retain(|p| p.endpoint_id != endpoint_id);
         self.peers.len() < prev_len
     }
+
+    /// Copy safe to hand to the webview: the private P2P identity and the
+    /// pairing token stay in the Rust process.
+    pub fn for_frontend(&self) -> Self {
+        Self { secret_key: String::new(), pairing_token: String::new(), ..self.clone() }
+    }
+}
+
+/// Keeps a stored secret when the interface sends an empty value together with
+/// `keep == true`; the interface never receives secrets, so it cannot echo them.
+fn merge_saved_secret(incoming: &mut String, keep: bool, previous: Option<&String>) {
+    if incoming.trim().is_empty() {
+        *incoming = if keep { previous.cloned().unwrap_or_default() } else { String::new() };
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +139,10 @@ pub struct AiProviderConfig {
     pub selected_model: String,
     #[serde(default)]
     pub is_custom: bool,
+    /// Only set on copies sent to the interface, where `api_key` is blanked.
+    /// When the interface saves, `true` with an empty key keeps the stored key.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub has_api_key: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,6 +165,7 @@ impl Default for AiSettings {
                     api_key: String::new(),
                     selected_model: "qwen2.5:1.5b".to_string(),
                     is_custom: false,
+                    has_api_key: false,
                 },
                 AiProviderConfig {
                     id: "openai".to_string(),
@@ -155,6 +174,7 @@ impl Default for AiSettings {
                     api_key: String::new(),
                     selected_model: "gpt-4o-mini".to_string(),
                     is_custom: false,
+                    has_api_key: false,
                 },
                 AiProviderConfig {
                     id: "openrouter".to_string(),
@@ -163,6 +183,7 @@ impl Default for AiSettings {
                     api_key: String::new(),
                     selected_model: "meta-llama/llama-3.3-70b-instruct:free".to_string(),
                     is_custom: false,
+                    has_api_key: false,
                 },
                 AiProviderConfig {
                     id: "groq".to_string(),
@@ -171,6 +192,7 @@ impl Default for AiSettings {
                     api_key: String::new(),
                     selected_model: "llama-3.3-70b-versatile".to_string(),
                     is_custom: false,
+                    has_api_key: false,
                 },
                 AiProviderConfig {
                     id: "lmstudio".to_string(),
@@ -179,6 +201,7 @@ impl Default for AiSettings {
                     api_key: String::new(),
                     selected_model: "local-model".to_string(),
                     is_custom: false,
+                    has_api_key: false,
                 },
             ],
             auto_link_notes: false,
@@ -187,6 +210,15 @@ impl Default for AiSettings {
 }
 
 impl AiSettings {
+    /// Restores keys the interface marked as kept; see `merge_saved_secret`.
+    pub fn merge_saved_keys(&mut self, previous: &AiSettings) {
+        for provider in &mut self.providers {
+            let saved = previous.providers.iter().find(|old| old.id == provider.id).map(|old| &old.api_key);
+            merge_saved_secret(&mut provider.api_key, provider.has_api_key, saved);
+            provider.has_api_key = false;
+        }
+    }
+
     /// Re-applies built-in providers on load so new defaults ship in any
     /// version; user edits to built-ins and custom providers are preserved.
     pub fn normalize(&mut self) {
@@ -210,6 +242,9 @@ pub struct WebSearchSourceConfig {
     pub enabled: bool,
     #[serde(default)]
     pub api_key: String,
+    /// Same contract as `AiProviderConfig::has_api_key`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub has_api_key: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,6 +263,7 @@ impl Default for WebSearchSettings {
                     id: id.into(),
                     enabled: !matches!(id, "brave" | "parallel"),
                     api_key: String::new(),
+                    has_api_key: false,
                 })
                 .collect(),
             searxng_url: "https://search.lumy.live/".into(),
@@ -238,6 +274,15 @@ impl Default for WebSearchSettings {
 impl WebSearchSettings {
     pub fn source(&self, id: &str) -> Option<&WebSearchSourceConfig> {
         self.sources.iter().find(|source| source.id == id)
+    }
+
+    /// Restores keys the interface marked as kept; see `merge_saved_secret`.
+    pub fn merge_saved_keys(&mut self, previous: &WebSearchSettings) {
+        for source in &mut self.sources {
+            let saved = previous.source(&source.id).map(|old| &old.api_key);
+            merge_saved_secret(&mut source.api_key, source.has_api_key, saved);
+            source.has_api_key = false;
+        }
     }
 
     pub fn normalize(&mut self) {
@@ -505,6 +550,25 @@ impl AppSettings {
         let id = self.active_vault_id.clone()?;
         self.vaults.iter_mut().find(|v| v.id == id)
     }
+
+    /// Copy safe to hand to the webview. Provider and search keys are replaced
+    /// by `has_api_key`; vault identities and pairing tokens are blanked.
+    pub fn for_frontend(&self) -> Self {
+        let mut public = self.clone();
+        public.vaults = self.vaults.iter().map(VaultConfig::for_frontend).collect();
+        for provider in &mut public.ai.providers {
+            provider.has_api_key = !provider.api_key.is_empty()
+                || self.credential_refs.contains_key(&format!("ai:{}", provider.id));
+            provider.api_key.clear();
+        }
+        for source in &mut public.web_search.sources {
+            source.has_api_key = !source.api_key.is_empty()
+                || self.credential_refs.contains_key(&format!("web:{}", source.id));
+            source.api_key.clear();
+        }
+        public.credential_refs.clear();
+        public
+    }
 }
 
 pub fn new_pairing_token() -> String {
@@ -766,5 +830,50 @@ mod tests {
         saved["ai"]["active_provider_id"] = "gone".into();
         let restored = AppSettings::from_saved_value(saved).unwrap();
         assert_eq!(restored.ai.active_provider_id, restored.ai.providers[0].id);
+    }
+
+    #[test]
+    fn frontend_copy_carries_no_secrets_and_flags_saved_keys() {
+        let mut settings = AppSettings::default();
+        let vault = super::VaultConfig::new(std::env::temp_dir(), Some("V".into()));
+        let (identity, token) = (vault.secret_key.clone(), vault.pairing_token.clone());
+        settings.vaults.push(vault);
+        settings.ai.providers[1].api_key = "sk-provider-secret".into();
+        settings.web_search.sources[0].api_key = "web-secret".into();
+        // A locked credential store leaves the value empty but keeps the reference.
+        settings.credential_refs.insert(format!("ai:{}", settings.ai.providers[2].id), "v1-ref".into());
+
+        let public = settings.for_frontend();
+        let json = serde_json::to_string(&public).unwrap();
+        for secret in [identity.as_str(), token.as_str(), "sk-provider-secret", "web-secret", "v1-ref"] {
+            assert!(!json.contains(secret), "{secret} leaked to the interface");
+        }
+        assert!(public.ai.providers[1].has_api_key);
+        assert!(public.ai.providers[2].has_api_key);
+        assert!(!public.ai.providers[0].has_api_key);
+        assert!(public.web_search.sources[0].has_api_key);
+        // The flag is never persisted from the in-memory settings.
+        assert!(!serde_json::to_string(&settings).unwrap().contains("has_api_key"));
+    }
+
+    #[test]
+    fn saving_from_the_interface_keeps_replaces_or_clears_keys() {
+        let mut stored = AppSettings::default();
+        stored.ai.providers[0].api_key = "keep-me".into();
+        stored.ai.providers[1].api_key = "replace-me".into();
+        stored.ai.providers[2].api_key = "clear-me".into();
+        let mut incoming = stored.for_frontend().ai;
+        incoming.providers[1].api_key = "new-key".into();
+        incoming.providers[2].has_api_key = false;
+        incoming.merge_saved_keys(&stored.ai);
+        assert_eq!(incoming.providers[0].api_key, "keep-me");
+        assert_eq!(incoming.providers[1].api_key, "new-key");
+        assert_eq!(incoming.providers[2].api_key, "");
+        assert!(incoming.providers.iter().all(|p| !p.has_api_key));
+
+        stored.web_search.sources[0].api_key = "web-keep".into();
+        let mut web = stored.for_frontend().web_search;
+        web.merge_saved_keys(&stored.web_search);
+        assert_eq!(web.sources[0].api_key, "web-keep");
     }
 }

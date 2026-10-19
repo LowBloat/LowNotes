@@ -58,7 +58,7 @@ pub fn retry_credentials(state: State<'_, AppState>, app: AppHandle) -> Result<A
     let mut settings = state.settings.write();
     crate::credentials::retry(&mut settings).map_err(|error| error.to_string())?;
     let vault = settings.active_vault().cloned();
-    let result = settings.clone();
+    let result = settings.for_frontend();
     drop(settings);
     if let Some(vault) = vault { restart_network_service(&state, &vault, app)?; }
     Ok(result)
@@ -77,8 +77,8 @@ pub fn get_app_state(state: State<'_, AppState>) -> Result<InitialStateResponse,
     let pair_info = state.network.read().as_ref().and_then(|s| s.pair_info());
 
     Ok(InitialStateResponse {
-        settings,
-        active_vault,
+        settings: settings.for_frontend(),
+        active_vault: active_vault.as_ref().map(VaultConfig::for_frontend),
         items,
         pair_info,
     })
@@ -115,13 +115,13 @@ pub fn select_vault(
     restart_network_service(&state, &active_vault, app)?;
 
     let items = vault::list_vault_items(&active_vault.path).map_err(|e| e.to_string())?;
-    let current_settings = state.settings.read().clone();
+    let current_settings = state.settings.read().for_frontend();
 
     let pair_info = state.network.read().as_ref().and_then(|s| s.pair_info());
 
     Ok(InitialStateResponse {
         settings: current_settings,
-        active_vault: Some(active_vault),
+        active_vault: Some(active_vault.for_frontend()),
         items,
         pair_info,
     })
@@ -150,13 +150,13 @@ pub fn create_vault(
     restart_network_service(&state, &active_vault, app)?;
 
     let items = vault::list_vault_items(&active_vault.path).map_err(|e| e.to_string())?;
-    let current_settings = state.settings.read().clone();
+    let current_settings = state.settings.read().for_frontend();
 
     let pair_info = state.network.read().as_ref().and_then(|s| s.pair_info());
 
     Ok(InitialStateResponse {
         settings: current_settings,
-        active_vault: Some(active_vault),
+        active_vault: Some(active_vault.for_frontend()),
         items,
         pair_info,
     })
@@ -443,15 +443,21 @@ pub async fn network_get_pair_info(state: State<'_, AppState>) -> Result<Option<
 }
 
 #[tauri::command]
-pub fn save_ai_settings(settings: AiSettings, state: State<'_, AppState>) -> Result<(), String> {
+pub fn save_ai_settings(mut settings: AiSettings, state: State<'_, AppState>) -> Result<(), String> {
     let mut s = state.settings.write();
-    s.ai = settings;
-    s.save().map_err(|e| e.to_string())
+    settings.merge_saved_keys(&s.ai);
+    let previous = std::mem::replace(&mut s.ai, settings);
+    if let Err(error) = s.save() {
+        s.ai = previous;
+        return Err(error.to_string());
+    }
+    Ok(())
 }
 
 #[tauri::command]
 pub fn save_web_search_settings(mut settings: WebSearchSettings, state: State<'_, AppState>) -> Result<(), String> {
     settings.normalize();
+    settings.merge_saved_keys(&state.settings.read().web_search);
     if ["brave", "parallel"].into_iter().any(|id| settings.source(id).is_some_and(|source| source.enabled && source.api_key.trim().is_empty())) {
         return Err("ai.webKeyRequired".into());
     }
@@ -565,8 +571,15 @@ pub async fn fetch_ai_models(
     custom_key: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
+    let stored_key = |settings: &AppSettings, id: Option<&String>| id
+        .and_then(|id| settings.ai.providers.iter().find(|p| &p.id == id))
+        .map(|p| p.api_key.clone())
+        .unwrap_or_default();
     let (base_url, api_key) = if let Some(url) = custom_url {
-        (url, custom_key.unwrap_or_default())
+        // The interface never holds saved keys; an empty key means "use the stored one".
+        let key = custom_key.filter(|key| !key.trim().is_empty())
+            .unwrap_or_else(|| stored_key(&state.settings.read(), provider_id.as_ref()));
+        (url, key)
     } else {
         let settings = state.settings.read();
         let p_id = provider_id.unwrap_or_else(|| settings.ai.active_provider_id.clone());
