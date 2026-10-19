@@ -61,6 +61,19 @@ The [latest release](https://github.com/LowBloat/LowNotes/releases/latest) inclu
 
 Release assets include `.sha256` checksums. Choose the package that matches your operating system; the release page always points to the current version.
 
+**Verify a download.** Each release has a `SHA256SUMS` file, an SPDX software bill of materials (`*-sbom.spdx.json`) and GitHub build provenance attestations. With the [GitHub CLI](https://cli.github.com/):
+
+```bash
+gh attestation verify LowNotes-<version>-linux-x64.AppImage --repo LowBloat/LowNotes
+```
+
+**First launch on Windows and macOS.** The installers are not code-signed yet, so the system warns on first launch:
+
+- **Windows:** SmartScreen shows "Windows protected your PC". Choose **More info → Run anyway**.
+- **macOS:** Gatekeeper may say the app "is damaged" or "cannot be opened". Right-click LowNotes in Applications and choose **Open**, or run `xattr -dr com.apple.quarantine /Applications/LowNotes.app` once.
+
+In-app updates are signed separately and verified before installation.
+
 ### Open your first vault
 
 1. Download the Windows, Linux or macOS build from [Releases](https://github.com/LowBloat/LowNotes/releases/latest).
