@@ -11,6 +11,32 @@ use yrs::{updates::decoder::Decode, Doc, GetString, ReadTxn, StateVector, Text, 
 
 use crate::{links, vault};
 
+/// Size and modification time of a file, and whether it was last modified
+/// long enough ago that a later change must move its modification time.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Fingerprint {
+    len: u64,
+    modified: std::time::SystemTime,
+    settled: bool,
+}
+
+fn fingerprint(path: &Path) -> Option<Fingerprint> {
+    let metadata = fs::metadata(path).ok()?;
+    let modified = metadata.modified().ok()?;
+    let settled = modified
+        .elapsed()
+        .is_ok_and(|age| age >= std::time::Duration::from_secs(3));
+    Some(Fingerprint {
+        len: metadata.len(),
+        modified,
+        settled,
+    })
+}
+
+type FilePair = (Option<Fingerprint>, Option<Fingerprint>);
+/// Markdown and state fingerprints of each note when it was last ensured.
+static ENSURED: std::sync::OnceLock<Mutex<HashMap<PathBuf, FilePair>>> = std::sync::OnceLock::new();
+
 const STATE_DIR: &str = ".lownotes/crdt";
 type ProjectionObserver = Arc<dyn Fn(&Path, &str, &[u8]) + Send + Sync>;
 
@@ -222,6 +248,29 @@ impl CrdtManager {
             }
         }
         Ok(docs.get(&target).expect("document retained"))
+    }
+
+    /// Ensures a note's CRDT state exists and includes external Markdown
+    /// edits, like `get_or_create_doc`, but skips notes whose Markdown and
+    /// state files are unchanged since the last check. Used before every sync,
+    /// where encoding each document only to discard the result dominated.
+    pub(crate) fn ensure_synced_doc(&self, vault_path: &Path, path: &str) -> anyhow::Result<()> {
+        let target = vault::safe_join(vault_path, path)?;
+        let state_file = Self::state_file(vault_path, path);
+        let current = (fingerprint(&target), fingerprint(&state_file));
+        let unchanged = current.0.is_some_and(|f| f.settled)
+            && current.1.is_some_and(|f| f.settled)
+            && ENSURED.get_or_init(Default::default).lock().get(&target) == Some(&current);
+        if unchanged && self.docs.lock().contains_key(&target) {
+            return Ok(());
+        }
+        self.get_or_create_doc(vault_path, path)?;
+        let after = (fingerprint(&target), fingerprint(&state_file));
+        ENSURED
+            .get_or_init(Default::default)
+            .lock()
+            .insert(target, after);
+        Ok(())
     }
 
     pub fn get_or_create_doc(&self, vault_path: &Path, path: &str) -> anyhow::Result<Vec<u8>> {
@@ -717,6 +766,38 @@ impl CrdtManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ensured_documents_still_pick_up_external_edits() {
+        let root = tempfile::tempdir().unwrap();
+        let manager = CrdtManager::new();
+        fs::write(root.path().join("a.md"), "first").unwrap();
+        manager.ensure_synced_doc(root.path(), "a.md").unwrap();
+        assert!(
+            CrdtManager::state_file(root.path(), "a.md").exists(),
+            "the initial history is created"
+        );
+        // Let both files settle, then confirm the unchanged note is skipped safely.
+        let old = filetime::FileTime::from_system_time(
+            std::time::SystemTime::now() - std::time::Duration::from_secs(60),
+        );
+        filetime::set_file_mtime(root.path().join("a.md"), old).unwrap();
+        filetime::set_file_mtime(CrdtManager::state_file(root.path(), "a.md"), old).unwrap();
+        manager.ensure_synced_doc(root.path(), "a.md").unwrap();
+        manager.ensure_synced_doc(root.path(), "a.md").unwrap();
+        // An external editor changes the Markdown: the next sync imports it.
+        fs::write(root.path().join("a.md"), "edited outside").unwrap();
+        manager.ensure_synced_doc(root.path(), "a.md").unwrap();
+        let state = manager.get_or_create_doc(root.path(), "a.md").unwrap();
+        let doc = Doc::new();
+        doc.transact_mut()
+            .apply_update(Update::decode_v1(&state).unwrap())
+            .unwrap();
+        assert_eq!(
+            doc.get_or_insert_text("content")
+                .get_string(&doc.transact()),
+            "edited outside"
+        );
+    }
 
     #[test]
     fn divergent_markdown_with_an_older_timestamp_is_preserved_for_review() {

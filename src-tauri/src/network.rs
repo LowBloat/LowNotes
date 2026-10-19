@@ -49,7 +49,14 @@ struct PeerSyncState {
     failures: u32,
     retry_at: Option<std::time::Instant>,
     alpn: Option<&'static [u8]>,
+    /// Consecutive successful syncs that changed nothing.
+    quiet: u32,
 }
+
+/// The periodic pass slows down for a peer whose syncs keep finding nothing to
+/// exchange: 1, 2, 4, 8 and then every 10 minutes. Local edits, incoming
+/// connections and "Sync now" bring it back to every minute.
+const QUIET_MAX: Duration = Duration::from_secs(10 * 60);
 
 /// Per-peer reconciliation state shared by every sync trigger: which peers
 /// are being synchronized, their backoff, and the protocol each one speaks.
@@ -78,6 +85,18 @@ impl SyncTracker {
     fn reset(&self, peer: &str) {
         if let Some(state) = self.0.lock().1.get_mut(peer) {
             state.retry_at = None;
+            state.quiet = 0;
+        }
+    }
+
+    /// A local edit happened: every peer goes back to the one-minute pass so
+    /// an update missed by the live broadcast is reconciled quickly.
+    fn wake_all(&self) {
+        for state in self.0.lock().1.values_mut() {
+            if state.failures == 0 {
+                state.retry_at = None;
+                state.quiet = 0;
+            }
         }
     }
 
@@ -85,15 +104,23 @@ impl SyncTracker {
         self.0.lock().1.get(peer).and_then(|state| state.alpn)
     }
 
-    fn succeeded(&self, peer: &str, alpn: &'static [u8]) {
+    fn succeeded(&self, peer: &str, alpn: &'static [u8], changed: usize, now: std::time::Instant) {
         let mut guard = self.0.lock();
         guard.0.remove(peer);
+        let quiet = match guard.1.get(peer) {
+            Some(state) if changed == 0 => state.quiet.saturating_add(1),
+            _ if changed == 0 => 1,
+            _ => 0,
+        };
+        let retry_at =
+            (quiet > 0).then(|| now + (BACKOFF_BASE * (1u32 << (quiet - 1).min(4))).min(QUIET_MAX));
         guard.1.insert(
             peer.to_owned(),
             PeerSyncState {
                 failures: 0,
-                retry_at: None,
+                retry_at,
                 alpn: Some(alpn),
+                quiet,
             },
         );
     }
@@ -570,6 +597,7 @@ async fn run_network(
                 }
             }
             NetworkCommand::BroadcastCrdt { note_path, update } => {
+                sync_in_flight.wake_all();
                 let snapshot = crate::catalog::resolved(&vault);
                 let entry_id = snapshot.ok().and_then(|entries| {
                     entries
@@ -1095,7 +1123,7 @@ fn spawn_sync(
 
         match res {
             Ok(((changed, direct, conflict_created), alpn)) => {
-                in_flight.succeeded(&target, alpn);
+                in_flight.succeeded(&target, alpn, changed, std::time::Instant::now());
                 let _ = app.emit(
                     "p2p:synced",
                     NetworkEventPayload::Synced {
@@ -1414,7 +1442,7 @@ fn sync_manifest(
             .into_iter()
             .filter(|item| !item.is_dir)
         {
-            manager.get_or_create_doc(root, &item.path)?;
+            manager.ensure_synced_doc(root, &item.path)?;
         }
         Ok(())
     })?;
@@ -2201,15 +2229,45 @@ mod tests {
         tracker.reset("peer");
         assert!(tracker.due("peer", now));
         assert!(tracker.begin("peer"));
-        tracker.succeeded("peer", METADATA_ALPN);
+        tracker.succeeded("peer", METADATA_ALPN, 2, now);
         assert_eq!(tracker.preferred_alpn("peer"), Some(METADATA_ALPN));
-        assert!(tracker.due("peer", now));
+        assert!(
+            tracker.due("peer", now),
+            "a sync that changed something keeps the one-minute pass"
+        );
         // A peer that keeps failing with its remembered version gets the full ladder again.
         for _ in 0..REMEMBERED_ALPN_ATTEMPTS {
             tracker.begin("peer");
             tracker.failed("peer", now);
         }
         assert_eq!(tracker.preferred_alpn("peer"), None);
+    }
+
+    #[test]
+    fn quiet_peers_are_synced_less_often_until_something_happens() {
+        let tracker = SyncTracker::default();
+        let mut now = std::time::Instant::now();
+        let mut gaps = Vec::new();
+        for _ in 0..6 {
+            assert!(tracker.begin("peer"));
+            tracker.succeeded("peer", ALPN, 0, now);
+            let mut wait = 0;
+            while !tracker.due("peer", now + Duration::from_secs(wait)) {
+                wait += 30;
+            }
+            gaps.push(wait);
+            now += Duration::from_secs(wait);
+        }
+        assert_eq!(gaps, [60, 120, 240, 480, 600, 600]);
+        // A local edit brings every healthy peer back to the one-minute pass.
+        tracker.wake_all();
+        assert!(tracker.due("peer", now));
+        tracker.begin("peer");
+        tracker.succeeded("peer", ALPN, 0, now);
+        assert!(!tracker.due("peer", now));
+        // So does a connection from the peer or "Sync now".
+        tracker.reset("peer");
+        assert!(tracker.due("peer", now));
     }
 
     #[test]
