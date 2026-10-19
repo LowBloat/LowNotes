@@ -329,13 +329,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_ring_needs_no_key_and_brave_is_optional() {
+    fn default_ring_needs_no_key_and_only_duckduckgo_is_on() {
         let settings = WebSearchSettings::default();
-        for id in ["firecrawl", "keenable", "exa", "duckduckgo", "searxng"] {
-            assert!(settings.source(id).unwrap().enabled);
+        assert!(settings.source("duckduckgo").unwrap().enabled);
+        // The other services are opt-in: each one would receive the search terms.
+        for id in ["firecrawl", "keenable", "exa", "searxng", "brave", "parallel"] {
+            assert!(!settings.source(id).unwrap().enabled, "{id} should be opt-in");
         }
-        assert!(!settings.source("brave").unwrap().enabled);
-        assert!(!settings.source("parallel").unwrap().enabled);
     }
 
     #[test]

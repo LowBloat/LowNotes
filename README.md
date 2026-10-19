@@ -37,7 +37,7 @@ LowNotes is an **open-source, local-first Markdown note-taking app** for Windows
 - **Write offline.** Local editing needs no account, cloud storage or AI provider.
 - **Connect your computers.** Pair devices for encrypted P2P sync and real-time collaborative editing.
 - **Build a knowledge base.** Use folders, search, wikilinks, a connection map and Mermaid diagrams.
-- **Choose your assistant.** Use local models through Ollama or LM Studio, or configure a remote provider. Remote requests send the prompt and selected context to that provider.
+- **Choose your assistant.** Use local models through Ollama or LM Studio, or configure a remote provider. Remote requests send the prompt and selected context to that provider. The Research skill sends search terms (never notes) to the web search services you enable; only DuckDuckGo is on by default.
 - **Recover and share your work.** Review local history and trash, then export notes to Word or PDF.
 
 | Day to day | When you need more |

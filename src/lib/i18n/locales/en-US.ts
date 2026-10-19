@@ -434,7 +434,7 @@ const enUS = {
     closeToTray: 'Keep running in the system tray', closeToTrayHint: 'Closing the window hides LowNotes. Use the tray icon to reopen or quit.',
     aiHint: 'Set the assistant’s default model and note behavior.', activeProvider: 'Active provider', activeProviderHint: 'Used for chat and note suggestions.', saveAi: 'Save AI settings',
     providersHint: 'Connect local or cloud AI services.', addProvider: 'Add provider', customProvider: 'Custom provider', builtInProvider: 'Built-in provider', removeProvider: 'Remove provider', chooseModel: 'Choose a model', useProvider: 'Use as active provider', saveProviders: 'Save providers',
-    webSearchHint: 'Choose which public search services the assistant can use.', webRouteHint: 'LowNotes rotates through enabled sources and tries the next one when a search fails. Only search terms are sent.',
+    webSearchHint: 'Choose which public search services the assistant can use. Only DuckDuckGo is on by default.', webRouteHint: 'Each enabled service receives the search terms of a Research request, never your notes. LowNotes rotates through enabled services and tries the next one when a search fails. Turn on only the services you trust.',
     savedKey: 'Key saved. Type to replace it.', removeKey: 'Remove saved key',
     keyless: 'No key needed', requiresKey: 'API key required', optionalKey: 'Optional API key', apiKey: 'API key', getKey: 'Get an API key', publicInstance: 'Public instance URL', publicInstanceHint: 'Public instances may rate limit or disable JSON results.', saveWeb: 'Save web search',
     aboutHint: 'Application information and updates.', version: 'Version', updateHint: 'Look for new versions automatically.', device: 'Device name', saved: 'Changes saved',
