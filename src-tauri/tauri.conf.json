@@ -43,6 +43,11 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
+    "publisher": "LowBloat",
+    "copyright": "Copyright © 2026 LowBloat. Licensed under AGPL-3.0-only.",
+    "category": "Productivity",
+    "shortDescription": "Local-first Markdown notes with P2P sync",
+    "longDescription": "LowNotes keeps Markdown notes in a folder you choose, syncs paired devices directly over encrypted P2P connections, supports real-time collaborative editing and offers an optional assistant with local or remote AI providers.",
     "icon": [
       "icons/32x32.png",
       "icons/64x64.png",
