@@ -45,25 +45,15 @@ jobs:
         id: version
         run: bun scripts/check-version.mjs "$RELEASE_TAG"
 
-      - name: Instalar dependências do frontend
-        run: bun install --frozen-lockfile
-
-      - name: Verificar frontend e Markdown
-        run: |
-          bun run check
-          bun run check:e2e
-          bun test
-          python3 -m unittest discover -s .github/scripts -p "test_*.py"
-
-      - name: Verificar interface antes de publicar
-        run: |
-          bun run build
-          bunx playwright install --with-deps chromium
-          bun run test:e2e
+  # Same checks as every pull request (frontend, interface and Rust on the
+  # three systems), run against the tagged code before any installer is built.
+  checks:
+    name: Verificações
+    uses: ./.github/workflows/ci.yml
 
   windows:
     name: Windows x64
-    needs: verify
+    needs: [verify, checks]
     runs-on: windows-2022
     env:
       VERSION: ${{ needs.verify.outputs.version }}
@@ -80,9 +70,6 @@ jobs:
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - name: Instalar dependências do frontend
         run: bun install --frozen-lockfile
-
-      - name: Testar regressões Rust
-        run: cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
 
       - name: Compilar aplicativo com Tauri
         run: bun run tauri build
@@ -140,7 +127,7 @@ jobs:
 
   linux:
     name: Linux x64
-    needs: verify
+    needs: [verify, checks]
     runs-on: ubuntu-22.04
     env:
       VERSION: ${{ needs.verify.outputs.version }}
@@ -169,9 +156,6 @@ jobs:
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - name: Instalar dependências do frontend
         run: bun install --frozen-lockfile
-
-      - name: Testar regressões Rust
-        run: cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
 
       - name: Compilar aplicativo com Tauri
         run: bun run tauri build
@@ -262,7 +246,7 @@ jobs:
           if-no-files-found: error
   macos:
     name: macOS universal (Apple Silicon + Intel)
-    needs: verify
+    needs: [verify, checks]
     runs-on: macos-14
     env:
       VERSION: ${{ needs.verify.outputs.version }}
@@ -282,9 +266,6 @@ jobs:
 
       - name: Instalar dependências do frontend
         run: bun install --frozen-lockfile
-
-      - name: Testar regressões Rust
-        run: cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
 
       - name: Compilar aplicativo com Tauri (universal)
         run: bun run tauri build --target universal-apple-darwin

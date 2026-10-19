@@ -3,39 +3,88 @@ name: Verify changes
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "assets/screenshots/**"
   pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "assets/screenshots/**"
   workflow_dispatch:
+  # The release workflow reuses these checks before building installers.
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
   group: verify-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded pull request runs, but let every push to main finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  verify:
-    name: Frontend and Rust (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-2022, ubuntu-22.04, macos-latest]
-    runs-on: ${{ matrix.os }}
+  frontend:
+    name: Frontend and interface
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-      - name: Install Linux desktop dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libdbus-1-dev xvfb gnome-keyring
+      - name: Cache Bun packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       - run: bun run version:check
       - run: bun run check
       - run: bun run check:e2e
       - run: bun test
       - run: python -m unittest discover -s .github/scripts -p "test_*.py"
+      - run: bun run build
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+      - name: Install browser for interface regressions
+        run: bunx playwright install --with-deps chromium
+      - name: Interface regression tests
+        run: bun run test:e2e
+      - name: Upload interface diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: interface-diagnostics
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  rust:
+    name: Rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-22.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: src-tauri
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libdbus-1-dev gnome-keyring
       - name: Rust regression tests
         run: cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
       - name: Native credential store regression (Windows/macOS)
@@ -45,18 +94,3 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           dbus-run-session -- bash -c 'printf "lownotes-ci\n" | gnome-keyring-daemon --unlock --components=secrets >/dev/null; cargo test --locked --lib --manifest-path src-tauri/Cargo.toml credentials::tests::native_store_round_trip -- --exact --ignored'
-      - run: bun run build
-      - name: Install browser for interface regressions
-        run: bunx playwright install --with-deps chromium
-      - name: Interface regression tests
-        run: bun run test:e2e
-      - name: Upload interface diagnostics
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: interface-${{ matrix.os }}
-          path: |
-            playwright-report/
-            test-results/
-          if-no-files-found: ignore
-          retention-days: 14
