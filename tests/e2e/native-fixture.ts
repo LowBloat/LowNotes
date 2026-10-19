@@ -165,6 +165,13 @@ export async function openVault(page: Page, options: {
         }
       }, update);
     },
+    /** Deliver a native event to the page, as the Rust side would. */
+    async emit(event: string, payload: Record<string, unknown>) {
+      await page.evaluate(({ event, payload }) => {
+        const globals = window as typeof window & Record<string, any>;
+        for (const handler of globals.__listeners[event] ?? []) globals.__callbacks[handler]({ event, id: handler, payload });
+      }, { event, payload });
+    },
     destroy() { doc.destroy(); },
   };
 }
