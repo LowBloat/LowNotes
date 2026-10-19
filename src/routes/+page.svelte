@@ -1,31 +1,20 @@
 <script lang="ts">
   import { FileText, FolderOpen, MessageSquare, Network, NotebookPen } from 'lucide-svelte';
   import { onMount, onDestroy } from 'svelte';
-  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-  import type {
-    AppSettings,
-    AppTheme,
-    ViewMode,
-    VaultConfig,
-    VaultItem,
-    PeerConfig,
-    NetworkEventPayload,
-    UpdatePolicy,
-  } from '$lib/types';
-  import { checkAvailableUpdate, type AvailableUpdate } from '$lib/updates';
+  import type { AppSettings, AppTheme, ViewMode, VaultConfig, VaultItem } from '$lib/types';
   import {
     getAppState,
-    takeRecoveryNotices,
-    getUpdatePolicy,
     listNotes,
-    readNote,
     pickVaultDirectory,
     selectVault,
     saveViewMode,
-    networkGetPairInfo,
     saveUpdatePrefs,
     undoLastDelete,
   } from '$lib/api';
+  import { createP2pSession } from '$lib/state/p2p-session.svelte';
+  import { createPresenceTracker } from '$lib/state/presence.svelte';
+  import { createUpdateChecker } from '$lib/state/updates.svelte';
+  import { createRecoveryNotices } from '$lib/state/recovery.svelte';
   import { locale, resolveLocale, t, trError } from '$lib/i18n';
   import { configureRemoteImages } from '$lib/markdown';
   import { appAlert, dialogState } from '$lib/dialogs.svelte';
@@ -34,14 +23,6 @@
   import { resolveNoteLink } from '$lib/note-links';
   import { DEFAULT_PALETTE_ID, applyTheme } from '$lib/themes';
   import Sidebar from '$lib/components/Sidebar.svelte';
-  import * as Y from 'yjs';
-  import {
-    Awareness,
-    applyAwarenessUpdate,
-    outdatedTimeout,
-    removeAwarenessStates,
-  } from 'y-protocols/awareness';
-  import { parsePresenceState, type PresenceUser } from '$lib/presence';
   import Editor from '$lib/components/Editor.svelte';
   import GraphView from '$lib/components/GraphView.svelte';
   import PairModal from '$lib/components/PairModal.svelte';
@@ -68,44 +49,26 @@
   let currentNoteContent = $state<string>('');
   let currentCrdtBase64 = $state<string>('');
 
-  let pairCode = $state<string>('');
-  let endpointId = $state<string>('');
-  let syncStatus = $state<'idle' | 'syncing' | 'synced' | 'error'>('idle');
-  let conflictNotice = $state<{ note_path: string; conflict_path: string } | null>(null);
+  // Shell state lives in focused modules; the page wires them together.
+  const p2p = createP2pSession({
+    onItemsChanged: () => void refreshItems(),
+    onPeerApproved: (peer) => {
+      if (activeVault && !activeVault.peers.some((p) => p.endpoint_id === peer.endpoint_id)) activeVault.peers.push(peer);
+    },
+  });
+  const presence = createPresenceTracker();
+  const updates = createUpdateChecker(() => settings);
+  const recovery = createRecoveryNotices();
 
   let isPairModalOpen = $state(false);
-  let incomingRequest = $state<{ request_id: string; peer: PeerConfig } | null>(null);
   let isAiChatOpen = $state(false);
   let isSettingsOpen = $state(false);
   let isHistoryOpen = $state(false);
   let settingsTab = $state<'general' | 'themes' | 'ai' | 'providers' | 'web' | 'about'>('general');
   let isWelcomeOpen = $state(false);
-  let targetLine = $state<number | undefined>(undefined);
-  let pendingUpdate = $state<AvailableUpdate | null>(null);
-  let updatePolicy = $state<UpdatePolicy | null>(null);
-  let isUpdateOpen = $state(false);
+  // A new object per request, so navigating twice to the same line works.
+  let targetLine = $state<{ line: number; nonce: number } | undefined>(undefined);
   let updateCheckLocal = $state(true);
-  let updateTimer: ReturnType<typeof setInterval> | undefined;
-  let recoveryTimer: ReturnType<typeof setInterval> | undefined;
-  let recoveryNotices = $state<Array<{ path: string; recovered: boolean }>>([]);
-  const seenRecoveryNotices = new Set<string>();
-
-  async function refreshRecoveryNotices() {
-    try {
-      for (const notice of await takeRecoveryNotices()) {
-        const key = `${notice.path}:${notice.recovered}`;
-        if (!seenRecoveryNotices.has(key)) { seenRecoveryNotices.add(key); recoveryNotices.push(notice); }
-      }
-    } catch (error) { console.error('Failed to read recovery notices:', error); }
-  }
-  let remoteRefreshTimer: ReturnType<typeof setTimeout> | undefined;
-  let unlisteners: UnlistenFn[] = [];
-
-  let presenceRegistry: Awareness | null = null;
-  let presenceDoc: Y.Doc | null = null;
-  let activeEditors = $state<PresenceUser[]>([]);
-  let unlistenAwareness: UnlistenFn | null = null;
-  let presencePruneTimer: ReturnType<typeof setInterval> | undefined;
   let undoPending = false;
   let lastUndoableAction: 'delete' | 'text' = 'text';
 
@@ -146,10 +109,7 @@
       activeVault = data.active_vault;
       vaults = data.settings.vaults;
       items = data.items;
-      if (data.pair_info) {
-        pairCode = data.pair_info.pair_code;
-        endpointId = data.pair_info.endpoint_id;
-      }
+      if (data.pair_info) p2p.setPairInfo(data.pair_info);
       if (!data.settings.has_seen_welcome) {
         isWelcomeOpen = true;
       }
@@ -163,21 +123,7 @@
     } catch (e) {
       console.error('Failed to load initial state:', e);
     } finally {
-      await refreshRecoveryNotices();
-    }
-  }
-
-  async function checkForUpdates() {
-    if (settings?.update_check === false) return;
-    try {
-      updatePolicy = await getUpdatePolicy();
-      const update = await checkAvailableUpdate(updatePolicy);
-      if (update && update.version !== settings?.skipped_version) {
-        pendingUpdate = update;
-        isUpdateOpen = true;
-      }
-    } catch (e) {
-      console.error('Failed to check for updates:', e);
+      await recovery.refresh();
     }
   }
 
@@ -201,22 +147,6 @@
     }
   }
 
-
-  function refreshActiveEditors() {
-    if (!presenceRegistry) {
-      activeEditors = [];
-      return;
-    }
-    const byDevice = new Map<string, PresenceUser>();
-    for (const [clientId, state] of presenceRegistry.getStates()) {
-      if (clientId === presenceRegistry.clientID) continue;
-      const user = parsePresenceState(state)?.user;
-      if (user?.deviceId) {
-        byDevice.set(user.deviceId, user);
-      }
-    }
-    activeEditors = [...byDevice.values()];
-  }
   // The editor reads the note itself once its listeners are ready, so the
   // page no longer reads it a second time. If that read fails, the previous
   // note is shown again.
@@ -238,7 +168,7 @@
     if (selectedNotePath !== path) {
       await openNote(path);
     }
-    targetLine = line;
+    targetLine = { line, nonce: Date.now() };
   }
 
   async function handleOpenVaultFolder() {
@@ -250,17 +180,8 @@
       settings = res.settings;
       vaults = res.settings.vaults;
       items = res.items;
-      if (res.pair_info) {
-        pairCode = res.pair_info.pair_code;
-        endpointId = res.pair_info.endpoint_id;
-      } else {
-        networkGetPairInfo().then((info) => {
-          if (info) {
-            pairCode = info.pair_code;
-            endpointId = info.endpoint_id;
-          }
-        });
-      }
+      if (res.pair_info) p2p.setPairInfo(res.pair_info);
+      else void p2p.refreshPairInfo();
 
       if (items.length > 0) {
         const first = items.find((i) => !i.is_dir);
@@ -309,128 +230,21 @@
   });
 
   onMount(async () => {
-    recoveryTimer = setInterval(() => void refreshRecoveryNotices(), 3000);
     window.addEventListener('keydown', handleUndoDeletedItem, true);
-    // Setup P2P event listeners first so no events are lost
-    const u1 = await listen<NetworkEventPayload>('p2p:ready', (event) => {
-      if (event.payload.type === 'Ready') {
-        pairCode = event.payload.pair_code;
-        endpointId = event.payload.endpoint_id;
-      }
-    });
-
-    const u2 = await listen<NetworkEventPayload>('p2p:syncing', () => {
-      syncStatus = 'syncing';
-    });
-
-    const u3 = await listen<NetworkEventPayload>('p2p:synced', async () => {
-      syncStatus = 'synced';
-      await refreshItems();
-      setTimeout(() => {
-        syncStatus = 'idle';
-      }, 3000);
-    });
-
-    const u4 = await listen<NetworkEventPayload>('p2p:pair-requested', (event) => {
-      if (event.payload.type === 'PairRequested') {
-        incomingRequest = {
-          request_id: event.payload.request_id,
-          peer: event.payload.peer,
-        };
-      }
-    });
-
-    const u5 = await listen<{ type: string; peer: PeerConfig }>('p2p:pair-approved', async (event) => {
-      if (activeVault && event.payload.peer) {
-        if (!activeVault.peers.some((p) => p.endpoint_id === event.payload.peer.endpoint_id)) {
-          activeVault.peers.push(event.payload.peer);
-        }
-      }
-    });
-
-    const u6 = await listen<NetworkEventPayload>('p2p:error', (event) => {
-      if (event.payload.type === 'Error') {
-        syncStatus = 'error';
-        console.error('[p2p]', trError(event.payload.message), event.payload.peer ?? '');
-      }
-    });
-
-    const u7 = await listen<NetworkEventPayload>('p2p:crdt-update', () => {
-      if (remoteRefreshTimer) clearTimeout(remoteRefreshTimer);
-      remoteRefreshTimer = setTimeout(refreshItems, 1500);
-    });
-
-    const u8 = await listen<NetworkEventPayload>('p2p:conflict', (event) => {
-      if (event.payload.type !== 'Conflict') return;
-      conflictNotice = {
-        note_path: event.payload.note_path,
-        conflict_path: event.payload.conflict_path,
-      };
-      void refreshItems();
-    });
-
-    unlisteners = [u1, u2, u3, u4, u5, u6, u7, u8];
-
-    presenceDoc = new Y.Doc();
-    presenceRegistry = new Awareness(presenceDoc);
-    unlistenAwareness = await listen<{ note_path: string; update: number[] }>(
-      'p2p:awareness',
-      (event) => {
-        if (presenceRegistry) {
-          applyAwarenessUpdate(presenceRegistry, new Uint8Array(event.payload.update), 'remote');
-          refreshActiveEditors();
-        }
-      }
-    );
-    presencePruneTimer = setInterval(() => {
-      if (!presenceRegistry) return;
-      const now = Date.now();
-      const stale: number[] = [];
-      presenceRegistry.meta.forEach((meta, clientId) => {
-        if (clientId !== presenceRegistry!.clientID && now - meta.lastUpdated > outdatedTimeout) {
-          stale.push(clientId);
-        }
-      });
-      if (stale.length > 0) {
-        removeAwarenessStates(presenceRegistry, stale, 'prune');
-        refreshActiveEditors();
-      }
-    }, 15000);
-
+    recovery.start();
+    // Listeners first, so no event is lost while the initial state loads.
+    await Promise.all([p2p.start(), presence.start()]);
     await loadInitialData();
-    void checkForUpdates();
-    updateTimer = setInterval(checkForUpdates, 6 * 60 * 60 * 1000);
-
-    // Fallback: if pairCode is still empty after initial load, fetch it on-demand
-    if (!pairCode) {
-      try {
-        const info = await networkGetPairInfo();
-        if (info) {
-          pairCode = info.pair_code;
-          endpointId = info.endpoint_id;
-        }
-      } catch (err) {
-        console.error('Failed to fetch P2P code:', err);
-      }
-    }
+    updates.start();
+    if (!p2p.state.pairCode) await p2p.refreshPairInfo();
   });
 
   onDestroy(() => {
-    if (recoveryTimer) clearInterval(recoveryTimer);
     window.removeEventListener('keydown', handleUndoDeletedItem, true);
-    unlisteners.forEach((u) => u());
-    if (updateTimer) clearInterval(updateTimer);
-    if (remoteRefreshTimer) clearTimeout(remoteRefreshTimer);
-    if (unlistenAwareness) unlistenAwareness();
-    if (presencePruneTimer) clearInterval(presencePruneTimer);
-    if (presenceRegistry) {
-      presenceRegistry.destroy();
-      presenceRegistry = null;
-    }
-    if (presenceDoc) {
-      presenceDoc.destroy();
-      presenceDoc = null;
-    }
+    recovery.stop();
+    p2p.stop();
+    presence.stop();
+    updates.stop();
   });
 </script>
 
@@ -441,13 +255,13 @@
       <button class="mt-3 text-sm underline text-[var(--accent-light)]" onclick={() => openSettings()}>{$t('credentials.openSettings')}</button>
     </div>
   {/if}
-  {#if recoveryNotices.length}
+  {#if recovery.state.notices.length}
     <div class="fixed top-3 right-3 z-50 max-w-lg p-4 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] shadow-lg" role="status" aria-live="polite">
-      {#each recoveryNotices as notice}
+      {#each recovery.state.notices as notice}
         <p class="text-sm font-medium">{notice.recovered ? $t('storage.recovered') : $t('storage.failed')}</p>
         <p class="text-xs text-[var(--text-muted)] break-all mt-1">{notice.path}</p>
       {/each}
-      <button class="mt-3 text-sm underline text-[var(--accent-light)]" onclick={() => recoveryNotices = []}>{$t('app.dismissConflict')}</button>
+      <button class="mt-3 text-sm underline text-[var(--accent-light)]" onclick={recovery.dismiss}>{$t('app.dismissConflict')}</button>
     </div>
   {/if}
   {#if isSettingsOpen && settings}
@@ -483,7 +297,7 @@
       {vaults}
       {items}
       selectedPath={selectedNotePath}
-      {syncStatus}
+      syncStatus={p2p.state.syncStatus}
       peerCount={activeVault.peers.length}
       onOpenSettings={() => openSettings()}
       onOpenHistory={() => (isHistoryOpen = true)}
@@ -496,15 +310,9 @@
         isGraphOpen = false;
         currentNoteContent = '';
         currentCrdtBase64 = '';
-        pairCode = '';
-        endpointId = '';
+        p2p.setPairInfo(null);
         refreshItems();
-        networkGetPairInfo().then((info) => {
-          if (info) {
-            pairCode = info.pair_code;
-            endpointId = info.endpoint_id;
-          }
-        });
+        void p2p.refreshPairInfo();
       }}
       onVaultsChange={(state) => {
         const switched = state.active_vault?.id !== activeVault?.id;
@@ -517,30 +325,29 @@
           selectedNotePath = '';
           currentNoteContent = '';
           currentCrdtBase64 = '';
-          pairCode = state.pair_info?.pair_code ?? '';
-          endpointId = state.pair_info?.endpoint_id ?? '';
+          p2p.setPairInfo(state.pair_info);
         }
         activeVault = state.active_vault;
       }}
       onOpenPairModal={() => (isPairModalOpen = true)}
       onRefreshItems={refreshItems}
       onItemDeleted={() => (lastUndoableAction = 'delete')}
-      presence={activeEditors}
+      presence={presence.editors}
     />
 
     <!-- Editor Surface -->
     <div class="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-[var(--bg-main)]">
-      {#if conflictNotice}
+      {#each p2p.state.conflicts as conflict (conflict.conflict_path)}
         <div role="alert" class="flex items-center gap-3 px-4 py-2 border-b border-[var(--danger)] bg-[var(--bg-card)] text-xs">
           <div class="flex-1 min-w-0">
             <strong class="text-[var(--accent-light)]">{$t('app.conflictDetected')}</strong>
             <span class="ml-2 text-[var(--text-muted)]">{$t('app.conflictExplanation')}</span>
-            <span class="block truncate mt-1 text-[var(--text-dim)]">{conflictNotice.note_path} → {conflictNotice.conflict_path}</span>
+            <span class="block truncate mt-1 text-[var(--text-dim)]">{conflict.note_path} → {conflict.conflict_path}</span>
           </div>
-          <button class="shrink-0 rounded px-3 py-1.5 bg-[var(--accent)] text-[var(--accent-contrast)] font-semibold" onclick={() => { if (conflictNotice) void openNote(conflictNotice.conflict_path); conflictNotice = null; }}>{$t('app.openConflict')}</button>
-          <button class="shrink-0 px-2 py-1 text-[var(--text-muted)] hover:text-[var(--text-main)]" aria-label={$t('app.dismissConflict')} title={$t('app.dismissConflict')} onclick={() => (conflictNotice = null)}>×</button>
+          <button class="shrink-0 rounded px-3 py-1.5 bg-[var(--accent)] text-[var(--accent-contrast)] font-semibold" onclick={() => { void openNote(conflict.conflict_path); p2p.dismissConflict(conflict.conflict_path); }}>{$t('app.openConflict')}</button>
+          <button class="shrink-0 px-2 py-1 text-[var(--text-muted)] hover:text-[var(--text-main)]" aria-label={$t('app.dismissConflict')} title={$t('app.dismissConflict')} onclick={() => p2p.dismissConflict(conflict.conflict_path)}>×</button>
         </div>
-      {/if}
+      {/each}
       {#if isGraphOpen}
         <GraphView
           {items}
@@ -570,7 +377,7 @@
           onLocalEdit={() => (lastUndoableAction = 'text')}
           onOpenWikilink={handleOpenWikilink}
           deviceName={settings?.device_name ?? ''}
-          deviceId={endpointId}
+          deviceId={p2p.state.endpointId}
         />
         {/key}
       {:else}
@@ -625,8 +432,8 @@
   <!-- Modals -->
   <PairModal
     bind:isOpen={isPairModalOpen}
-    bind:pairCode
-    bind:endpointId
+    bind:pairCode={p2p.state.pairCode}
+    bind:endpointId={p2p.state.endpointId}
     vaultName={activeVault?.name || ''}
     peers={activeVault?.peers || []}
     onPeersChange={async () => {
@@ -636,9 +443,9 @@
   />
 
   <IncomingPairDialog
-    request={incomingRequest}
+    request={p2p.state.incomingRequest}
     onAnswer={() => {
-      incomingRequest = null;
+      p2p.state.incomingRequest = null;
     }}
   />
 
@@ -650,9 +457,9 @@
   />
 
   <UpdateModal
-    bind:isOpen={isUpdateOpen}
-    update={pendingUpdate}
-    policy={updatePolicy}
+    bind:isOpen={updates.state.open}
+    update={updates.state.pending}
+    policy={updates.state.policy}
     bind:autoCheck={updateCheckLocal}
     onAutoCheckChange={async (v) => {
       updateCheckLocal = v;
@@ -664,7 +471,7 @@
       if (settings) {
         settings.skipped_version = v;
       }
-      isUpdateOpen = false;
+      updates.state.open = false;
     }}
   />
 </div>

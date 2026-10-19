@@ -221,3 +221,17 @@ test('edits typed right before switching notes are still saved', async ({ page }
     expect(vault.errors).toEqual([]);
   } finally { vault.destroy(); }
 });
+
+test('every conflict copy stays listed until it is opened or dismissed', async ({ page }) => {
+  const vault = await openVault(page);
+  try {
+    await vault.emit('p2p:conflict', { type: 'Conflict', note_path: 'Lista.md', conflict_path: 'Lista (conflict 1).md' });
+    await vault.emit('p2p:conflict', { type: 'Conflict', note_path: 'Other.md', conflict_path: 'Other (conflict 2).md' });
+    const alerts = page.getByRole('alert').filter({ hasText: 'conflict' });
+    await expect(alerts).toHaveCount(2);
+    await alerts.filter({ hasText: 'Other (conflict 2).md' }).getByRole('button', { name: 'Dismiss' }).click();
+    await expect(alerts).toHaveCount(1);
+    await expect(alerts).toContainText('Lista (conflict 1).md');
+    expect(vault.errors).toEqual([]);
+  } finally { vault.destroy(); }
+});

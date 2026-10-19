@@ -58,7 +58,8 @@
     notePath: string;
     initialContent: string;
     crdtUpdateBase64?: string;
-    targetLine?: number;
+    /** A new object asks for navigation, even to the same line again. */
+    targetLine?: { line: number; nonce: number };
     theme: AppTheme;
     viewMode: ViewMode;
     lineWrapping?: boolean;
@@ -479,8 +480,8 @@
   }
 
   $effect(() => {
-    if (targetLine && targetLine > 0 && editorView) {
-      navigateToLine(targetLine);
+    if (targetLine && targetLine.line > 0 && editorView) {
+      navigateToLine(targetLine.line);
     }
   });
 
