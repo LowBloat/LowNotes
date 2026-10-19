@@ -6,6 +6,9 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 
 ## [Unreleased]
 
+### Fixed
+- The update dialog renders release notes as formatted Markdown instead of raw text; their links open in the browser ([#73](https://github.com/LowBloat/LowNotes/issues/73)).
+
 ## [0.4.0] - 2026-10-19
 
 ### Added

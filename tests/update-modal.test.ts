@@ -50,3 +50,26 @@ test('supported internal updates retain their install button', () => {
     expect(output.body).not.toContain('Baixar atualização');
   }
 });
+
+test('release notes render as Markdown without raw HTML', () => {
+  locale.set('en-US');
+  const body = [
+    '## ✨ Features',
+    '',
+    '- **Remove vaults from the list** — see [the release](https://github.com/LowBloat/LowNotes/releases).',
+    '- `code` and <script>alert(1)</script>',
+    '',
+    '![shot](https://example.com/shot.png)',
+  ].join('\n');
+  const output = render(UpdateModal, { props: { isOpen: true,
+    policy: { channel: 'internal', can_install: true, updater_target: null },
+    update: { version: '0.4.0', body, installer: { version: '0.4.0' } as Update } } });
+  expect(output.body).toContain('<h2>✨ Features</h2>');
+  expect(output.body).toContain('<strong>Remove vaults from the list</strong>');
+  expect(output.body).toContain('<a href="https://github.com/LowBloat/LowNotes/releases">the release</a>');
+  expect(output.body).toContain('<code>code</code>');
+  expect(output.body).not.toContain('<script>');
+  expect(output.body).not.toContain('**Remove');
+  expect(output.body).not.toContain('<img');
+  expect(output.body).toContain('data-remote-src="https://example.com/shot.png"');
+});

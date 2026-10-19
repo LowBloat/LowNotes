@@ -235,3 +235,21 @@ test('every conflict copy stays listed until it is opened or dismissed', async (
     expect(vault.errors).toEqual([]);
   } finally { vault.destroy(); }
 });
+
+test('update notes render as Markdown and their links open in the system browser', async ({ page }) => {
+  const body = '## ✨ Features\n\n- **Remove vaults** — see [the release](https://github.com/LowBloat/LowNotes/releases).\n- [Local](./notes.md)\n';
+  const vault = await openVault(page, { update: { version: '9.9.9', body } });
+  try {
+    const notes = page.getByTestId('release-notes');
+    await expect(notes.getByRole('heading', { name: '✨ Features' })).toBeVisible();
+    await expect(notes.locator('strong')).toHaveText('Remove vaults');
+    await expect(notes).not.toContainText('**');
+    const url = page.url();
+    await notes.getByRole('link', { name: 'the release' }).click();
+    await expect.poll(() => vault.openedUrls).toEqual(['https://github.com/LowBloat/LowNotes/releases']);
+    await notes.getByRole('link', { name: 'Local' }).click();
+    expect(vault.openedUrls).toEqual(['https://github.com/LowBloat/LowNotes/releases']);
+    expect(page.url()).toBe(url);
+    expect(vault.errors).toEqual([]);
+  } finally { vault.destroy(); }
+});
