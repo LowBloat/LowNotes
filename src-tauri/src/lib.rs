@@ -16,6 +16,7 @@ pub mod web_search;
 pub mod chat_history;
 pub mod undo;
 pub mod export_images;
+pub mod export_target;
 pub mod updates;
 pub mod image_upload;
 pub mod local_images;
@@ -213,6 +214,7 @@ pub fn run() {
             commands::ai_chat_query,
             commands::ai_save_draft,
             commands::ai_apply_edit,
+            commands::export_choose_destination,
             commands::export_document,
             commands::load_export_image,
             commands::mark_welcome_seen,

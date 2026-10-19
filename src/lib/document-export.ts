@@ -11,14 +11,14 @@ export function exportFileName(path: string, format: ExportFormat): string {
 }
 
 export async function exportDocument(content: string, path: string, format: ExportFormat): Promise<boolean> {
-  const [{ save }, { invoke }] = await Promise.all([import('@tauri-apps/plugin-dialog'), import('@tauri-apps/api/core')]);
-  const destination = await save({ defaultPath: exportFileName(path, format), filters: [{ name: format === 'docx' ? 'Word' : 'PDF', extensions: [format] }] });
-  if (!destination) return false;
+  const { invoke } = await import('@tauri-apps/api/core');
+  // The save dialog runs in the native process; only a single-use token comes back.
+  const token = await invoke<string | null>('export_choose_destination', { fileName: exportFileName(path, format), format });
+  if (!token) return false;
   const options: ExportOptions = { notePath: path };
   const bytes = format === 'docx'
     ? await (await import('./docx-export')).createDocx(content, options)
     : await (await import('./pdf-export')).createPdf(content, undefined, options);
-  const outputPath = destination.toLowerCase().endsWith(`.${format}`) ? destination : `${destination}.${format}`;
-  await invoke('export_document', { path: outputPath, bytes: Array.from(bytes) });
+  await invoke('export_document', bytes, { headers: { 'x-export-token': token } });
   return true;
 }
