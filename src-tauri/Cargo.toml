@@ -35,7 +35,7 @@ yrs = { version = "0.28", features = ["sync"] }
 directories = "6"
 walkdir = "2"
 blake3 = "1"
-base64 = "0.22"
+base64 = "0.23"
 rand = "0.9"
 hostname = "0.4"
 filetime = "0.2"
