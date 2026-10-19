@@ -41,6 +41,114 @@ const SYNC_SESSION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// then every 15 minutes, instead of every minute.
 const BACKOFF_BASE: Duration = Duration::from_secs(60);
 const BACKOFF_MAX: Duration = Duration::from_secs(15 * 60);
+/// A live connection from a paired device stays open this long without traffic.
+const LIVE_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Live collaboration reuses one connection per peer and opens a stream per
+/// message, instead of a full connection handshake per keystroke or cursor move.
+#[derive(Clone, Default)]
+struct LiveConnections(
+    Arc<
+        parking_lot::Mutex<
+            HashMap<String, Arc<tokio::sync::Mutex<Option<iroh::endpoint::Connection>>>>,
+        >,
+    >,
+);
+
+impl LiveConnections {
+    async fn connection(
+        &self,
+        endpoint: &Endpoint,
+        peer: &PeerConfig,
+        fresh: bool,
+    ) -> anyhow::Result<iroh::endpoint::Connection> {
+        let slot = self
+            .0
+            .lock()
+            .entry(peer.endpoint_id.clone())
+            .or_default()
+            .clone();
+        let mut cached = slot.lock().await;
+        if !fresh {
+            if let Some(connection) = cached.as_ref().filter(|c| c.close_reason().is_none()) {
+                return Ok(connection.clone());
+            }
+        }
+        let addr = peer.endpoint_addr()?;
+        let connection = match endpoint.connect(addr.clone(), ALPN).await {
+            Ok(connection) => connection,
+            Err(_) => endpoint.connect(addr, LEGACY_ALPN).await?,
+        };
+        *cached = Some(connection.clone());
+        Ok(connection)
+    }
+}
+
+/// Sends one live packet on the peer's cached connection, reconnecting once
+/// when it was closed (older peers close after every packet).
+async fn send_live(
+    endpoint: &Endpoint,
+    live: &LiveConnections,
+    peer: &PeerConfig,
+    packet_for: impl Fn(&[u8]) -> anyhow::Result<Packet>,
+) -> anyhow::Result<()> {
+    let mut last_error = None;
+    for fresh in [false, true] {
+        let connection = live.connection(endpoint, peer, fresh).await?;
+        let packet = packet_for(connection.alpn())?;
+        let sent = async {
+            let (mut send, _) = connection.open_bi().await?;
+            send_packet(&mut send, &packet).await?;
+            send.finish()?;
+            // Confirms delivery before reporting success; a closed connection errors here.
+            tokio::time::timeout(Duration::from_secs(2), send.stopped())
+                .await
+                .ok()
+                .transpose()?;
+            anyhow::Ok(())
+        }
+        .await;
+        match sent {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("errors.syncFailed")))
+}
+
+/// Within one batch of queued commands, only the newest live update per note
+/// matters: CRDT broadcasts carry the full state and presence replaces the
+/// previous one. Other commands keep their order.
+fn coalesce_live(commands: Vec<NetworkCommand>) -> Vec<NetworkCommand> {
+    let mut last_crdt = HashMap::new();
+    let mut last_awareness = HashMap::new();
+    for (index, command) in commands.iter().enumerate() {
+        match command {
+            NetworkCommand::BroadcastCrdt { note_path, .. } => {
+                last_crdt.insert(note_path.clone(), index);
+            }
+            NetworkCommand::BroadcastAwareness { note_path, .. } => {
+                last_awareness.insert(note_path.clone(), index);
+            }
+            _ => {}
+        }
+    }
+    commands
+        .into_iter()
+        .enumerate()
+        .filter(|(index, command)| match command {
+            NetworkCommand::BroadcastCrdt { note_path, .. } => {
+                last_crdt.get(note_path) == Some(index)
+            }
+            NetworkCommand::BroadcastAwareness { note_path, .. } => {
+                last_awareness.get(note_path) == Some(index)
+            }
+            _ => true,
+        })
+        .map(|(_, command)| command)
+        .collect()
+}
+
 /// After this many failures with the remembered protocol, try the full ladder again.
 const REMEMBERED_ALPN_ATTEMPTS: u32 = 3;
 
@@ -535,107 +643,121 @@ async fn run_network(
     // Command loop
     let pair_in_flight = Arc::new(parking_lot::Mutex::new(HashSet::<String>::new()));
 
-    while let Some(cmd) = commands.recv().await {
-        match cmd {
-            NetworkCommand::SyncNow => {
-                let known: Vec<PeerConfig> = peers.read().clone();
-                for peer in known {
-                    sync_in_flight.reset(&peer.endpoint_id);
-                    spawn_sync(
-                        endpoint.clone(),
-                        vault.clone(),
-                        peer,
-                        app.clone(),
-                        sync_in_flight.clone(),
-                    );
-                }
-            }
-            NetworkCommand::RequestPair(invite) => {
-                let target_id = invite.peer.endpoint_id.clone();
-                let inserted = pair_in_flight.lock().insert(target_id.clone());
-                if !inserted {
-                    continue;
-                }
-                let ep = endpoint.clone();
-                let my_peers = peers.clone();
-                let my_app = app.clone();
-                let my_ident = identity.clone();
-                let my_vault = vault.clone();
-                let my_settings = settings.clone();
-                let my_sync = sync_in_flight.clone();
-                let in_flight = pair_in_flight.clone();
+    let live = LiveConnections::default();
 
-                tokio::spawn(async move {
-                    let res = dial_pair(
-                        ep,
-                        invite,
-                        my_ident,
-                        my_peers.clone(),
-                        my_app.clone(),
-                        my_vault,
-                        my_settings,
-                        my_sync,
-                    )
-                    .await;
-                    in_flight.lock().remove(&target_id);
-                    if let Err(e) = res {
-                        tracing::warn!("[p2p] pair failed: {e:#}");
-                        let _ = my_app.emit(
-                            "p2p:error",
-                            NetworkEventPayload::Error {
-                                peer: Some(target_id),
-                                message: "errors.pairFailed".to_string(),
-                            },
+    'commands: while let Some(first) = commands.recv().await {
+        // Drain what is already queued so bursts of keystrokes and cursor moves
+        // become one message per note.
+        let mut batch = vec![first];
+        while let Ok(next) = commands.try_recv() {
+            batch.push(next);
+        }
+        for cmd in coalesce_live(batch) {
+            match cmd {
+                NetworkCommand::SyncNow => {
+                    let known: Vec<PeerConfig> = peers.read().clone();
+                    for peer in known {
+                        sync_in_flight.reset(&peer.endpoint_id);
+                        spawn_sync(
+                            endpoint.clone(),
+                            vault.clone(),
+                            peer,
+                            app.clone(),
+                            sync_in_flight.clone(),
                         );
                     }
-                });
-            }
-            NetworkCommand::AnswerPair { request_id, accept } => {
-                let mut map = pending_answers.lock().await;
-                if let Some(sender) = map.remove(&request_id) {
-                    let _ = sender.send(accept);
                 }
-            }
-            NetworkCommand::BroadcastCrdt { note_path, update } => {
-                sync_in_flight.wake_all();
-                let snapshot = crate::catalog::resolved(&vault);
-                let entry_id = snapshot.ok().and_then(|entries| {
-                    entries
-                        .values()
-                        .find(|entry| !entry.deleted() && !entry.is_dir && entry.path == note_path)
-                        .map(|entry| entry.id.clone())
-                });
-                let known: Vec<PeerConfig> = peers.read().clone();
-                for peer in known {
+                NetworkCommand::RequestPair(invite) => {
+                    let target_id = invite.peer.endpoint_id.clone();
+                    let inserted = pair_in_flight.lock().insert(target_id.clone());
+                    if !inserted {
+                        continue;
+                    }
                     let ep = endpoint.clone();
-                    let n_path = note_path.clone();
-                    let u_bytes = update.clone();
-                    let id = entry_id.clone();
+                    let my_peers = peers.clone();
+                    let my_app = app.clone();
+                    let my_ident = identity.clone();
+                    let my_vault = vault.clone();
+                    let my_settings = settings.clone();
+                    let my_sync = sync_in_flight.clone();
+                    let in_flight = pair_in_flight.clone();
+
                     tokio::spawn(async move {
-                        let _ = send_crdt_to_peer(ep, peer, n_path, u_bytes, id).await;
+                        let res = dial_pair(
+                            ep,
+                            invite,
+                            my_ident,
+                            my_peers.clone(),
+                            my_app.clone(),
+                            my_vault,
+                            my_settings,
+                            my_sync,
+                        )
+                        .await;
+                        in_flight.lock().remove(&target_id);
+                        if let Err(e) = res {
+                            tracing::warn!("[p2p] pair failed: {e:#}");
+                            let _ = my_app.emit(
+                                "p2p:error",
+                                NetworkEventPayload::Error {
+                                    peer: Some(target_id),
+                                    message: "errors.pairFailed".to_string(),
+                                },
+                            );
+                        }
                     });
                 }
-            }
-            NetworkCommand::BroadcastAwareness { note_path, update } => {
-                let known: Vec<PeerConfig> = peers.read().clone();
-                for peer in known {
-                    let ep = endpoint.clone();
-                    let n_path = note_path.clone();
-                    let u_bytes = update.clone();
-                    tokio::spawn(async move {
-                        let _ = send_awareness_to_peer(ep, peer, n_path, u_bytes).await;
-                    });
+                NetworkCommand::AnswerPair { request_id, accept } => {
+                    let mut map = pending_answers.lock().await;
+                    if let Some(sender) = map.remove(&request_id) {
+                        let _ = sender.send(accept);
+                    }
                 }
-            }
-            NetworkCommand::Shutdown(done) => {
-                // Close connections gracefully before the runtime is dropped.
-                endpoint.close().await;
-                let _ = done.send(());
-                break;
-            }
-            NetworkCommand::RepublishPairCode => {
-                let token = pairing_token.read().clone();
-                publish_pair_code(&endpoint, &identity, &token, &app, &pair_info);
+                NetworkCommand::BroadcastCrdt { note_path, update } => {
+                    sync_in_flight.wake_all();
+                    let snapshot = crate::catalog::resolved(&vault);
+                    let entry_id = snapshot.ok().and_then(|entries| {
+                        entries
+                            .values()
+                            .find(|entry| {
+                                !entry.deleted() && !entry.is_dir && entry.path == note_path
+                            })
+                            .map(|entry| entry.id.clone())
+                    });
+                    let known: Vec<PeerConfig> = peers.read().clone();
+                    for peer in known {
+                        let ep = endpoint.clone();
+                        let n_path = note_path.clone();
+                        let u_bytes = update.clone();
+                        let id = entry_id.clone();
+                        let live = live.clone();
+                        tokio::spawn(async move {
+                            let _ = send_crdt_to_peer(ep, live, peer, n_path, u_bytes, id).await;
+                        });
+                    }
+                }
+                NetworkCommand::BroadcastAwareness { note_path, update } => {
+                    let known: Vec<PeerConfig> = peers.read().clone();
+                    for peer in known {
+                        let ep = endpoint.clone();
+                        let n_path = note_path.clone();
+                        let u_bytes = update.clone();
+                        let live = live.clone();
+                        tokio::spawn(async move {
+                            let _ = send_awareness_to_peer(ep, live, peer, n_path, u_bytes).await;
+                        });
+                    }
+                }
+                NetworkCommand::Shutdown(done) => {
+                    // Close connections gracefully before the runtime is dropped.
+                    endpoint.close().await;
+                    let _ = done.send(());
+                    break 'commands;
+                }
+                NetworkCommand::RepublishPairCode => {
+                    let token = pairing_token.read().clone();
+                    publish_pair_code(&endpoint, &identity, &token, &app, &pair_info);
+                }
             }
         }
     }
@@ -675,6 +797,85 @@ fn publish_pair_code(
             },
         );
     }
+}
+
+/// Runs filesystem and CRDT work from a network task without starving the
+/// runtime's two workers: on the multi-threaded runtime the worker hands its
+/// other tasks over while this blocks. Single-threaded test runtimes just run it.
+fn blocking<T>(work: impl FnOnce() -> T) -> T {
+    match tokio::runtime::Handle::try_current().map(|handle| handle.runtime_flavor()) {
+        Ok(tokio::runtime::RuntimeFlavor::MultiThread) => tokio::task::block_in_place(work),
+        _ => work(),
+    }
+}
+
+/// Applies a live collaborative update or presence message from a paired
+/// device. Returns false for any other packet.
+fn handle_live_packet(
+    packet: Packet,
+    alpn: &[u8],
+    vault: &Path,
+    app: &AppHandle,
+) -> anyhow::Result<bool> {
+    match packet {
+        Packet::IdentifiedCrdt {
+            entry_id,
+            note_path,
+            update_base64,
+        } if alpn == ALPN => {
+            if update_base64.len() > MAX_PACKET_BYTES {
+                bail!("errors.packetTooLarge");
+            }
+            let update = STANDARD.decode(update_base64)?;
+            let state = app.state::<AppState>();
+            if !crate::catalog::resolved(vault)?.contains_key(&entry_id) {
+                if let Some(service) = state.network.read().as_ref() {
+                    service.sync_now();
+                }
+            } else {
+                apply_identified_update(
+                    vault,
+                    &entry_id,
+                    &note_path,
+                    &update,
+                    &state.crdt,
+                    Some(app),
+                )?;
+            }
+        }
+        Packet::CrdtUpdate { note_path, update } => {
+            let state = app.state::<AppState>();
+            if let Some(entry) = legacy_entry(vault, &note_path)? {
+                apply_identified_update(
+                    vault,
+                    &entry.id,
+                    &note_path,
+                    &update,
+                    &state.crdt,
+                    Some(app),
+                )?;
+                return Ok(true);
+            }
+            let merged = state.crdt.apply_update(vault, &note_path, &update)?;
+            if merged.changed {
+                let _ = app.emit(
+                    "p2p:crdt-update",
+                    NetworkEventPayload::RemoteCrdtUpdate {
+                        note_path,
+                        update: merged.state,
+                    },
+                );
+            }
+        }
+        Packet::Awareness { note_path, update } => {
+            let _ = app.emit(
+                "p2p:awareness",
+                NetworkEventPayload::RemoteAwareness { note_path, update },
+            );
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
 }
 
 async fn handle_incoming_connection(
@@ -895,78 +1096,27 @@ async fn handle_incoming_connection(
                 },
             );
         }
-        Packet::IdentifiedCrdt {
-            entry_id,
-            note_path,
-            update_base64,
-        } if connection.alpn() == ALPN => {
-            let is_peer = peers
-                .read()
-                .iter()
-                .any(|peer| peer.endpoint_id == remote_id.to_string());
-            if !is_peer {
-                bail!("errors.unauthorizedDevice");
+        packet @ (Packet::IdentifiedCrdt { .. }
+        | Packet::CrdtUpdate { .. }
+        | Packet::Awareness { .. }) => {
+            // Only paired devices get here: unknown endpoints may only send a pairing request.
+            let alpn = connection.alpn().to_vec();
+            if !blocking(|| handle_live_packet(packet, &alpn, &vault, &app))? {
+                bail!("errors.unexpectedPacketStart");
             }
-            if update_base64.len() > MAX_PACKET_BYTES {
-                bail!("errors.packetTooLarge");
-            }
-            let update = STANDARD.decode(update_base64)?;
-            let state = app.state::<AppState>();
-            if !crate::catalog::resolved(&vault)?.contains_key(&entry_id) {
-                if let Some(service) = state.network.read().as_ref() {
-                    service.sync_now();
+            // Current senders keep the connection open and send each later
+            // update on a new stream; older ones simply close it.
+            while let Ok(Ok((_send, mut recv))) =
+                tokio::time::timeout(LIVE_IDLE_TIMEOUT, connection.accept_bi()).await
+            {
+                let Ok(packet) = recv_packet::<Packet>(&mut recv).await else {
+                    break;
+                };
+                match blocking(|| handle_live_packet(packet, &alpn, &vault, &app)) {
+                    Ok(true) => {}
+                    Ok(false) => break,
+                    Err(error) => tracing::debug!("[p2p] live update not applied: {error:#}"),
                 }
-            } else {
-                apply_identified_update(
-                    &vault,
-                    &entry_id,
-                    &note_path,
-                    &update,
-                    &state.crdt,
-                    Some(&app),
-                )?;
-            }
-        }
-        Packet::CrdtUpdate { note_path, update } => {
-            let is_peer = peers
-                .read()
-                .iter()
-                .any(|p| p.endpoint_id == remote_id.to_string());
-            if is_peer {
-                let state = app.state::<AppState>();
-                if let Some(entry) = legacy_entry(&vault, &note_path)? {
-                    apply_identified_update(
-                        &vault,
-                        &entry.id,
-                        &note_path,
-                        &update,
-                        &state.crdt,
-                        Some(&app),
-                    )?;
-                    return Ok(());
-                }
-                let merged = state.crdt.apply_update(&vault, &note_path, &update)?;
-                if merged.changed {
-                    let _ = app.emit(
-                        "p2p:crdt-update",
-                        NetworkEventPayload::RemoteCrdtUpdate {
-                            note_path,
-                            update: merged.state,
-                        },
-                    );
-                }
-            }
-        }
-        Packet::Awareness { note_path, update } => {
-            let is_peer = peers
-                .read()
-                .iter()
-                .any(|p| p.endpoint_id == remote_id.to_string());
-            if is_peer {
-                let _ = app.emit(
-                    "p2p:awareness",
-                    NetworkEventPayload::RemoteAwareness { note_path, update },
-                );
             }
         }
         Packet::Delete { path } => {
@@ -1215,7 +1365,9 @@ async fn dial_sync_with(
         .map(|app| app.state::<AppState>().crdt.clone())
         .unwrap_or_default();
     let changed_structure = if structural_supported {
-        let catalog = crate::catalog_sync::prepare(&vault, &manager, &endpoint.id().to_string())?;
+        let catalog = blocking(|| {
+            crate::catalog_sync::prepare(&vault, &manager, &endpoint.id().to_string())
+        })?;
         send_packet(&mut send, &Packet::Catalog(catalog)).await?;
         let Packet::Catalog(remote) = recv_packet(&mut recv).await? else {
             bail!("errors.unexpectedPacketSync");
@@ -1238,7 +1390,8 @@ async fn dial_sync_with(
     } else {
         0
     };
-    let my_manifest = sync_manifest(&vault, images_supported, metadata_supported, &manager)?;
+    let my_manifest =
+        blocking(|| sync_manifest(&vault, images_supported, metadata_supported, &manager))?;
     send_packet(&mut send, &Packet::Manifest(my_manifest.clone())).await?;
 
     let mut changed = changed_structure;
@@ -1340,7 +1493,8 @@ async fn serve_sync_core(
     let manager = app
         .map(|app| app.state::<AppState>().crdt.clone())
         .unwrap_or_default();
-    let local_manifest = sync_manifest(vault, images_supported, metadata_supported, &manager)?;
+    let local_manifest =
+        blocking(|| sync_manifest(vault, images_supported, metadata_supported, &manager))?;
     if !images_supported
         && remote_manifest
             .keys()
@@ -1913,47 +2067,45 @@ fn write_native_inner(
 
 async fn send_crdt_to_peer(
     endpoint: Endpoint,
+    live: LiveConnections,
     peer: PeerConfig,
     note_path: String,
     update: Vec<u8>,
     entry_id: Option<String>,
 ) -> anyhow::Result<()> {
-    let addr = peer.endpoint_addr()?;
-    let connection = match endpoint.connect(addr.clone(), ALPN).await {
-        Ok(connection) => connection,
-        Err(_) => endpoint.connect(addr, LEGACY_ALPN).await?,
-    };
-    let (mut send, _) = connection.open_bi().await?;
-    let packet = if connection.alpn() == ALPN {
-        Packet::IdentifiedCrdt {
-            entry_id: entry_id.context("live note identity is unavailable")?,
-            note_path,
-            update_base64: STANDARD.encode(update),
-        }
-    } else {
-        Packet::CrdtUpdate { note_path, update }
-    };
-    send_packet(&mut send, &packet).await?;
-    send.finish()?;
-    let _ = tokio::time::timeout(Duration::from_secs(2), send.stopped()).await;
-    connection.close(0u32.into(), b"crdt sent");
-    Ok(())
+    send_live(&endpoint, &live, &peer, |alpn| {
+        Ok(if alpn == ALPN {
+            Packet::IdentifiedCrdt {
+                entry_id: entry_id
+                    .clone()
+                    .context("live note identity is unavailable")?,
+                note_path: note_path.clone(),
+                update_base64: STANDARD.encode(&update),
+            }
+        } else {
+            Packet::CrdtUpdate {
+                note_path: note_path.clone(),
+                update: update.clone(),
+            }
+        })
+    })
+    .await
 }
 
 async fn send_awareness_to_peer(
     endpoint: Endpoint,
+    live: LiveConnections,
     peer: PeerConfig,
     note_path: String,
     update: Vec<u8>,
 ) -> anyhow::Result<()> {
-    let addr = peer.endpoint_addr()?;
-    let connection = endpoint.connect(addr, LEGACY_ALPN).await?;
-    let (mut send, _) = connection.open_bi().await?;
-    send_packet(&mut send, &Packet::Awareness { note_path, update }).await?;
-    send.finish()?;
-    let _ = tokio::time::timeout(Duration::from_secs(2), send.stopped()).await;
-    connection.close(0u32.into(), b"awareness sent");
-    Ok(())
+    send_live(&endpoint, &live, &peer, |_| {
+        Ok(Packet::Awareness {
+            note_path: note_path.clone(),
+            update: update.clone(),
+        })
+    })
+    .await
 }
 
 fn connection_is_direct(connection: &iroh::endpoint::Connection) -> Option<bool> {
@@ -2268,6 +2420,113 @@ mod tests {
         // So does a connection from the peer or "Sync now".
         tracker.reset("peer");
         assert!(tracker.due("peer", now));
+    }
+
+    #[test]
+    fn queued_live_updates_keep_only_the_newest_per_note() {
+        let crdt = |path: &str, byte: u8| NetworkCommand::BroadcastCrdt {
+            note_path: path.into(),
+            update: vec![byte],
+        };
+        let awareness = |path: &str, byte: u8| NetworkCommand::BroadcastAwareness {
+            note_path: path.into(),
+            update: vec![byte],
+        };
+        let batch = vec![
+            crdt("a.md", 1),
+            awareness("a.md", 1),
+            NetworkCommand::SyncNow,
+            crdt("b.md", 1),
+            crdt("a.md", 2),
+            awareness("a.md", 2),
+            crdt("a.md", 3),
+        ];
+        let kept: Vec<String> = coalesce_live(batch)
+            .into_iter()
+            .map(|command| match command {
+                NetworkCommand::BroadcastCrdt { note_path, update } => {
+                    format!("crdt {note_path} {}", update[0])
+                }
+                NetworkCommand::BroadcastAwareness { note_path, update } => {
+                    format!("awareness {note_path} {}", update[0])
+                }
+                NetworkCommand::SyncNow => "sync".into(),
+                _ => "other".into(),
+            })
+            .collect();
+        assert_eq!(
+            kept,
+            ["sync", "crdt b.md 1", "awareness a.md 2", "crdt a.md 3"]
+        );
+    }
+
+    /// A stand-in peer that reads live packets: `reuse` keeps reading streams
+    /// on one connection (current behavior), otherwise it closes after one.
+    async fn live_listener(
+        endpoint: Endpoint,
+        reuse: bool,
+    ) -> (
+        Arc<parking_lot::Mutex<(usize, usize)>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let counts = Arc::new(parking_lot::Mutex::new((0usize, 0usize)));
+        let seen = counts.clone();
+        let task = tokio::spawn(async move {
+            while let Some(incoming) = endpoint.accept().await {
+                let connection = incoming.await.unwrap();
+                seen.lock().0 += 1;
+                let seen = seen.clone();
+                tokio::spawn(async move {
+                    while let Ok((_send, mut recv)) = connection.accept_bi().await {
+                        if recv_packet::<Packet>(&mut recv).await.is_ok() {
+                            seen.lock().1 += 1;
+                        }
+                        if !reuse {
+                            connection.close(0u32.into(), b"done");
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+        (counts, task)
+    }
+
+    #[tokio::test]
+    async fn live_messages_reuse_one_connection_and_fall_back_for_older_peers() {
+        for reuse in [true, false] {
+            let server = bind_endpoint().await;
+            let client = bind_endpoint().await;
+            let peer = peer_of(&server, "server");
+            let (counts, task) = live_listener(server.clone(), reuse).await;
+            let live = LiveConnections::default();
+            for n in 0..3u8 {
+                send_awareness_to_peer(
+                    client.clone(),
+                    live.clone(),
+                    peer.clone(),
+                    "a.md".into(),
+                    vec![n],
+                )
+                .await
+                .unwrap();
+            }
+            tokio::time::timeout(Duration::from_secs(10), async {
+                while counts.lock().1 < 3 {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .expect("all live messages arrive");
+            let (connections, packets) = *counts.lock();
+            assert_eq!(packets, 3);
+            if reuse {
+                assert_eq!(connections, 1, "one connection for every live message");
+            } else {
+                assert!(connections >= 2, "an older peer still gets every message");
+            }
+            task.abort();
+        }
     }
 
     #[test]
