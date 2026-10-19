@@ -6,6 +6,8 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-19
+
 ### Added
 - Remove a vault from the app's list; its folder and notes stay on disk. Missing folders are flagged ([#35](https://github.com/LowBloat/LowNotes/issues/35)).
 - "New code" in Manage Connections invalidates every pair code shared so far ([#7](https://github.com/LowBloat/LowNotes/issues/7)).
@@ -44,9 +46,14 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 - P2P: unpaired endpoints may only send a small pairing request, packets have size and time limits, the pairing request is bound to the connection identity and tokens are compared in constant time ([#6](https://github.com/LowBloat/LowNotes/issues/6)).
 - Export destinations are chosen by a native dialog in the Rust process ([#11](https://github.com/LowBloat/LowNotes/issues/11)); remote images in exports must use HTTPS and public addresses ([#12](https://github.com/LowBloat/LowNotes/issues/12)).
 - Dependency updates for rustls and lodash-es advisories; weekly dependency audit and Dependabot ([#10](https://github.com/LowBloat/LowNotes/issues/10)).
+- The opener plugin no longer accepts custom file flags from the interface (tauri-plugin-opener 2.7).
 
 ### Development
 - `bun run version:bump` and `bun run version:check` keep every version-bearing file in sync ([#22](https://github.com/LowBloat/LowNotes/issues/22)).
 - CI caches dependencies, runs the interface suite once, checks `rustfmt` and `clippy`, smoke-tests bundling and is reused by the release workflow ([#21](https://github.com/LowBloat/LowNotes/issues/21)).
 - Unused dependencies, template leftovers and dead Rust code were removed ([#28](https://github.com/LowBloat/LowNotes/issues/28), [#29](https://github.com/LowBloat/LowNotes/issues/29), [#31](https://github.com/LowBloat/LowNotes/issues/31)).
+- Dependency updates: Tauri plugins, iroh 1.3, rusqlite 0.40, base64 0.23, html-escape 0.3 and GitHub Actions.
 - Community, security and design documentation ([#32](https://github.com/LowBloat/LowNotes/issues/32), [#33](https://github.com/LowBloat/LowNotes/issues/33)).
+
+[Unreleased]: https://github.com/LowBloat/LowNotes/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/LowBloat/LowNotes/compare/v0.3.5...v0.4.0
