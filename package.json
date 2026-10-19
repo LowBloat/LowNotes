@@ -27,7 +27,12 @@
     "test:e2e": "playwright test",
     "check:e2e": "tsc --project tsconfig.e2e.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "version:bump": "bun scripts/bump-version.mjs",
+    "version:check": "bun scripts/check-version.mjs"
+  },
+  "overrides": {
+    "lodash-es": "4.18.1"
   },
   "license": "AGPL-3.0-only",
   "dependencies": {

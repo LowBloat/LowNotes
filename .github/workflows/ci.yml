@@ -22,19 +22,20 @@ jobs:
         os: [windows-2022, ubuntu-22.04, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - name: Install Linux desktop dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libdbus-1-dev xvfb gnome-keyring
       - run: bun install --frozen-lockfile
+      - run: bun run version:check
       - run: bun run check
       - run: bun run check:e2e
       - run: bun test
-      - run: python .github/scripts/test_update_manifest.py
+      - run: python -m unittest discover -s .github/scripts -p "test_*.py"
       - name: Rust regression tests
         run: cargo test --locked --lib --manifest-path src-tauri/Cargo.toml
       - name: Native credential store regression (Windows/macOS)
@@ -51,7 +52,7 @@ jobs:
         run: bun run test:e2e
       - name: Upload interface diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: interface-${{ matrix.os }}
           path: |
