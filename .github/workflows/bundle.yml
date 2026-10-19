@@ -50,9 +50,9 @@ jobs:
       - run: bun install --frozen-lockfile
       # Debug keeps the build fast; bundling still runs the icon generation,
       # the frontend build and Tauri's asset embedding with the CSP.
+      # Updater artifacts need the release signing key, which pull requests do
+      # not get; everything else about bundling is exercised.
       - name: Build the app
-        run: bun run tauri build --debug --bundles deb
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ""
+        run: bun run tauri build --debug --bundles deb --config '{"bundle":{"createUpdaterArtifacts":false}}'
       - name: Check the package exists
         run: ls -la src-tauri/target/debug/bundle/deb/*.deb
