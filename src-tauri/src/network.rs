@@ -570,7 +570,7 @@ async fn run_network(
                 }
             }
             NetworkCommand::BroadcastCrdt { note_path, update } => {
-                let snapshot = crate::catalog::load(&vault).and_then(|catalog| catalog.resolve());
+                let snapshot = crate::catalog::resolved(&vault);
                 let entry_id = snapshot.ok().and_then(|entries| {
                     entries
                         .values()
@@ -884,10 +884,7 @@ async fn handle_incoming_connection(
             }
             let update = STANDARD.decode(update_base64)?;
             let state = app.state::<AppState>();
-            if !crate::catalog::load(&vault)?
-                .resolve()?
-                .contains_key(&entry_id)
-            {
+            if !crate::catalog::resolved(&vault)?.contains_key(&entry_id) {
                 if let Some(service) = state.network.read().as_ref() {
                     service.sync_now();
                 }
@@ -1453,7 +1450,7 @@ async fn send_sync_content(
         None
     };
     let packet = if let Some(note_path) = note_path.filter(|_| structural_supported) {
-        let catalog = crate::catalog::load(root)?.resolve()?;
+        let catalog = crate::catalog::resolved(root)?;
         let entry = catalog
             .values()
             .find(|entry| !entry.deleted() && !entry.is_dir && entry.path == note_path)
@@ -1543,7 +1540,7 @@ fn write_identified_inner(
     content: &[u8],
     app: Option<&AppHandle>,
 ) -> anyhow::Result<WriteOutcome> {
-    let resolved = crate::catalog::load(root)?.resolve()?;
+    let resolved = crate::catalog::resolved(root)?;
     let entry = resolved.get(id).context("unknown note identity")?;
     if entry.is_dir {
         bail!("note packet belongs to a directory");
@@ -1609,10 +1606,11 @@ fn legacy_entry(root: &Path, path: &str) -> anyhow::Result<Option<crate::catalog
     if !crate::catalog::file_path(root).exists() {
         return Ok(None);
     }
-    let entries = crate::catalog::load(root)?.resolve()?;
+    let entries = crate::catalog::resolved(root)?;
     let mut matching: Vec<_> = entries
-        .into_values()
+        .values()
         .filter(|entry| !entry.is_dir && entry.aliases.contains(path))
+        .cloned()
         .collect();
     // A legacy packet cannot distinguish a deleted identity from a fresh note
     // at the same name. Preserve it as a review copy instead of editing either.
@@ -1629,7 +1627,7 @@ pub(crate) fn apply_identified_update(
     app: Option<&AppHandle>,
 ) -> anyhow::Result<bool> {
     crate::structural::exclusive(root, manager, || {
-        let entries = crate::catalog::load(root)?.resolve()?;
+        let entries = crate::catalog::resolved(root)?;
         let entry = entries.get(id).context("unknown note identity")?;
         if entry.is_dir || !entry.aliases.contains(original_path) {
             bail!("invalid live note identity");
