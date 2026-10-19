@@ -6,6 +6,8 @@
   import { canInstallUpdate, updateInstructionKey, type AvailableUpdate } from '$lib/updates';
   import { t } from '$lib/i18n';
   import { dismissibleModal } from '$lib/modal-dismiss';
+  import { isRemoteImage, renderReleaseNotes } from '$lib/markdown';
+  import { previewLinkAction } from '$lib/preview-links';
 
   let {
     isOpen = $bindable(false),
@@ -31,6 +33,31 @@
   const releaseUrl = $derived(
     update ? `https://github.com/LowBloat/LowNotes/releases/tag/v${update.version}` : ''
   );
+
+  const notesHtml = $derived(update?.body?.trim() ? renderReleaseNotes(update.body) : '');
+
+  // Links must never navigate the webview: web links open in the browser and
+  // anything else is ignored. Blocked remote images load on click.
+  function handleNotesClick(event: MouseEvent) {
+    const target = event.target as Element | null;
+    const blocked = target?.closest<HTMLElement>('[data-remote-src]');
+    if (blocked) {
+      const src = blocked.dataset.remoteSrc ?? '';
+      if (!isRemoteImage(src)) return;
+      const image = document.createElement('img');
+      image.src = src;
+      image.alt = blocked.title;
+      blocked.replaceWith(image);
+      return;
+    }
+    const link = target?.closest('a');
+    if (!link) return;
+    event.preventDefault();
+    const action = previewLinkAction(link.getAttribute('href'), null);
+    if (action.kind === 'external') {
+      openUrl(action.url).catch((e) => console.error('Failed to open release notes link:', e));
+    }
+  }
 
   async function handleOpenRelease() {
     if (!releaseUrl) return;
@@ -113,7 +140,9 @@
       </div>
 
       <div class="px-6 py-4 max-h-64 overflow-y-auto bg-[var(--bg-main)]">
-        <div class="text-[11px] text-[var(--text-muted)] leading-relaxed whitespace-pre-wrap">{update.body}</div>
+        <!-- Rendered with raw HTML disabled; clicks are handled in handleNotesClick. -->
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <div role="presentation" class="release-notes text-[11px] text-[var(--text-muted)] leading-relaxed select-text" data-testid="release-notes" onclick={handleNotesClick}>{@html notesHtml}</div>
       </div>
 
       {#if !canInstall}
@@ -207,5 +236,40 @@
   }
   .animate-fadeIn {
     animation: fadeIn 0.15s ease-out;
+  }
+  /* Compact Markdown for the dialog; the note preview styles are too large. */
+  .release-notes :global(:where(h1, h2, h3, h4)) {
+    color: var(--text-main);
+    font-weight: 700;
+    line-height: 1.3;
+    margin: 1rem 0 0.4rem;
+  }
+  .release-notes :global(h1) { font-size: 0.95rem; }
+  .release-notes :global(h2) { font-size: 0.85rem; }
+  .release-notes :global(:where(h3, h4)) { font-size: 0.78rem; }
+  .release-notes :global(:first-child) { margin-top: 0; }
+  .release-notes :global(:where(p, ul, ol, pre, blockquote)) { margin: 0 0 0.5rem; }
+  .release-notes :global(:where(ul, ol)) { padding-left: 1.1rem; }
+  .release-notes :global(ul) { list-style: disc; }
+  .release-notes :global(ol) { list-style: decimal; }
+  .release-notes :global(li) { margin: 0.2rem 0; }
+  .release-notes :global(strong) { color: var(--text-main); font-weight: 600; }
+  .release-notes :global(a) { color: var(--accent-light); text-decoration: underline; }
+  .release-notes :global(code) {
+    font-family: ui-monospace, monospace;
+    font-size: 0.95em;
+    padding: 0 0.25rem;
+    border-radius: 0.25rem;
+    background: var(--bg-hover);
+  }
+  .release-notes :global(pre) { overflow-x: auto; padding: 0.5rem; border-radius: 0.375rem; background: var(--bg-hover); }
+  .release-notes :global(pre code) { padding: 0; background: none; }
+  .release-notes :global(blockquote) { border-left: 2px solid var(--border); padding-left: 0.6rem; }
+  .release-notes :global(img) { max-width: 100%; height: auto; }
+  .release-notes :global(.remote-image-blocked) {
+    border: 1px dashed var(--border);
+    border-radius: 0.375rem;
+    padding: 0.25rem 0.5rem;
+    color: var(--text-dim);
   }
 </style>

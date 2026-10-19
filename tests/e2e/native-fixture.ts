@@ -16,6 +16,8 @@ export async function openVault(page: Page, options: {
   notePath?: string; otherNotes?: VaultItem[];
   extraVaults?: Array<{ id: string; name: string; path: string; peers: never[]; missing?: boolean }>;
   history?: { versionContent?: string; comparison?: { path: string; content: string }; trashContent?: string; folderTrash?: boolean };
+  /** An update offered by the native updater when the app starts. */
+  update?: { version: string; body: string };
 } = {}) {
   const source = options.source ?? '# Search\n\n[Title](https://visible.example)\n\n**hello** world\n\n- [ ] needle task\n\n'
     + Array.from({ length: 12 }, (_, i) => `## Section ${i + 1}\n\n${'Long filler text for scrolling. '.repeat(8)}\n\nneedle checkpoint ${i + 1}\n\n`).join('') + 'needles plural';
@@ -53,7 +55,7 @@ export async function openVault(page: Page, options: {
     credential_error: options.credentialError ?? '',
     device_name: 'Test device', theme: options.theme ?? 'light',
     theme_palettes: { active_palette_id: options.palette ?? 'lowbloat', custom_palettes: [] },
-    view_mode: 'split', line_wrapping: true, language: 'en-US', update_check: false, close_to_tray: true,
+    view_mode: 'split', line_wrapping: true, language: 'en-US', update_check: options.update !== undefined, close_to_tray: true,
     skipped_version: '', active_vault_id: vault.id as string | null, vaults: [vault, ...(options.extraVaults ?? [])] as Array<Record<string, any>>, has_seen_welcome: true,
     ai: { active_provider_id: 'ollama', providers: [{ id: 'ollama', name: 'Ollama', base_url: 'http://localhost:11434/v1', selected_model: 'fixture', api_key: '', is_custom: false }], auto_link_notes: false },
     web_search: { sources: [] }, image_upload: { provider: 'local', imgur_client_id: '', local_default_applied: true },
@@ -122,6 +124,9 @@ export async function openVault(page: Page, options: {
       case 'links_get': return [];
       case 'retry_credentials': settings.credential_error = ''; return settings;
       case 'get_update_policy': return { channel: 'windows', can_install: true, updater_target: null };
+      case 'plugin:updater|check': return options.update
+        ? { rid: 1, currentVersion: APP_VERSION, version: options.update.version, date: null, body: options.update.body, rawJson: {} }
+        : null;
       case 'plugin:app|version': return APP_VERSION;
       case 'plugin:opener|open_url': openedUrls.push(args.url); return null;
       default: return null;

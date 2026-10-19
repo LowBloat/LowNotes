@@ -125,3 +125,8 @@ export function renderMarkdown(source: string, resolveImage?: (src: string) => s
 export function renderChatMarkdown(source: string): string {
   return markdown.render(source, { mermaid: false });
 }
+
+/** Release notes in the update dialog: GitHub Markdown, without diagrams. */
+export function renderReleaseNotes(source: string): string {
+  return markdown.render(source.trim(), { mermaid: false });
+}
