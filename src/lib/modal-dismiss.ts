@@ -69,6 +69,11 @@ export function dismissibleModal(node: HTMLElement, onDismiss: () => void) {
   // focus the dialog itself so its title is announced and no action is armed.
   queueMicrotask(() => {
     if (!node.isConnected || dialog.contains(document.activeElement)) return;
+    const preferred = dialog.querySelector<HTMLElement>('[data-autofocus]');
+    if (preferred) {
+      preferred.focus();
+      return;
+    }
     const field = dialog.querySelector<HTMLElement>('input:not([type="hidden"]):not(:disabled):not([readonly]), textarea:not(:disabled):not([readonly])');
     if (field && field.getClientRects().length) {
       field.focus();

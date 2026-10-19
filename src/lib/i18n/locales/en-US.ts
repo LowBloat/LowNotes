@@ -516,6 +516,10 @@ const enUS = {
     aiSendFailed: 'Failed to send message to the AI',
     aiEmptyResponse: 'The AI returned an empty response',
   },
+  dialog: {
+    ok: 'OK',
+    cancel: 'Cancel',
+  },
   preview: {
     remoteImageBlocked: 'Remote image blocked. Click to load.',
   },

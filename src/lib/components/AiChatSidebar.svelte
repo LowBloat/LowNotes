@@ -24,6 +24,7 @@
     saveAiSettings,
   } from '../api';
   import { locale, t, trError, ts } from '$lib/i18n';
+  import { appConfirm, appPrompt } from '$lib/dialogs.svelte';
 
   let {
     isOpen = $bindable(false),
@@ -126,17 +127,17 @@
     void scrollToBottom();
   }
 
-  function deleteChat(id: string) {
-    if (!confirm(ts('ai.deleteChatConfirm'))) return;
+  async function deleteChat(id: string) {
+    if (!(await appConfirm(ts('ai.deleteChatConfirm'), { danger: true }))) return;
     archive.conversations = archive.conversations.filter((chat) => chat.id !== id);
     if (archive.activeConversationId === id) archive.activeConversationId = null;
     void persistHistory();
   }
 
-  function renameChat(id: string) {
+  async function renameChat(id: string) {
     const chat = archive.conversations.find((item) => item.id === id);
     if (!chat) return;
-    const title = prompt(ts('ai.renameChatPrompt'), chat.title)?.trim();
+    const title = (await appPrompt(ts('ai.renameChatPrompt'), chat.title))?.trim();
     if (!title || title === chat.title) return;
     chat.title = title.slice(0, 100);
     chat.updatedAt = Date.now();
