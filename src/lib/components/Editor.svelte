@@ -12,6 +12,7 @@
   import * as Y from 'yjs';
   import { createLocalCollaboration } from '$lib/editor-collaboration';
   import { openEditorLinks } from '$lib/editor-links';
+  import { previewLinkAction } from '$lib/preview-links';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { createImagePaste, type ImagePasteStatus } from '$lib/image-paste';
   import { renderMermaidSvg } from '$lib/mermaid-renderer';
@@ -459,16 +460,18 @@
   function handlePreviewClick(e: MouseEvent) {
     const target = e.target as Element | null;
     const link = target?.closest('a');
-    if (!link) return;
-    const wikilink = link.getAttribute('data-wikilink');
-    const href = link.getAttribute('href') ?? '';
-    if (wikilink !== null || (!/^[a-z][\w+.-]*:/i.test(href) && /\.(?:md|markdown)(?:[?#].*)?$/i.test(href))) {
-      e.preventDefault();
-      onOpenWikilink?.(wikilink ?? href, wikilink !== null ? 'wiki' : 'markdown');
-    } else if (/^https?:\/\//i.test(href)) {
-      e.preventDefault();
+    if (!link || !previewContainer?.contains(link)) return;
+    // Never let the WebView follow a preview link: it would replace the app.
+    e.preventDefault();
+    const action = previewLinkAction(link.getAttribute('href'), link.getAttribute('data-wikilink'));
+    if (action.kind === 'note') {
+      onOpenWikilink?.(action.target, action.mode);
+    } else if (action.kind === 'external') {
       linkOpenFailed = false;
-      void openUrl(href).catch(() => { linkOpenFailed = true; });
+      void openUrl(action.url).catch(() => { linkOpenFailed = true; });
+    } else if (action.kind === 'anchor') {
+      const destination = previewContainer.querySelector(`[id="${CSS.escape(action.id)}"], [name="${CSS.escape(action.id)}"]`);
+      destination?.scrollIntoView({ block: 'start' });
     }
   }
 
