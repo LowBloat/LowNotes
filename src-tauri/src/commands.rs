@@ -496,9 +496,8 @@ pub async fn crdt_apply_client_update(
             return Err("ai.vaultChanged".into());
         }
         if let Some(id) = note_id {
-            let catalog = crate::catalog::load(&vault.path)
-                .and_then(|catalog| catalog.resolve())
-                .map_err(|error| error.to_string())?;
+            let catalog =
+                crate::catalog::resolved(&vault.path).map_err(|error| error.to_string())?;
             let entry = catalog.get(&id).ok_or("unknown note identity")?;
             if entry.deleted() && !recovery_update.unwrap_or(false) {
                 return Err("errors.noteDeleted".into());

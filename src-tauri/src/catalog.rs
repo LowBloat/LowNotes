@@ -5,9 +5,9 @@ use anyhow::{bail, Context};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
 };
 
 pub const RELATIVE_PATH: &str = ".lownotes/catalog.json";
@@ -813,6 +813,35 @@ pub fn load(root: &Path) -> anyhow::Result<Catalog> {
     }
 }
 
+pub type Resolved = Arc<BTreeMap<String, ResolvedEntry>>;
+
+/// Resolved catalogs by file, with the BLAKE3 hash of the bytes they came from.
+static RESOLVED: OnceLock<Mutex<HashMap<PathBuf, (blake3::Hash, Resolved)>>> = OnceLock::new();
+
+/// The resolved catalog, replayed only when `catalog.json` changed.
+///
+/// `resolve` replays the whole operation history, and hot paths (every editor
+/// update, every live broadcast, every note sent during a sync) used to do it
+/// from disk each time. The cache is keyed by the hash of the file's bytes, so
+/// any write, local or from a peer, invalidates it without relying on mtimes.
+pub fn resolved(root: &Path) -> anyhow::Result<Resolved> {
+    let path = file_path(root);
+    let Ok(bytes) = std::fs::read(&path) else {
+        // Missing or unreadable: the validated loader decides (default or recovery).
+        return Ok(Arc::new(load(root)?.resolve()?));
+    };
+    let hash = blake3::hash(&bytes);
+    let cache = RESOLVED.get_or_init(Default::default);
+    if let Some((cached, entries)) = cache.lock().get(&path) {
+        if *cached == hash {
+            return Ok(entries.clone());
+        }
+    }
+    let entries: Resolved = Arc::new(load(root)?.resolve()?);
+    cache.lock().insert(path, (hash, entries.clone()));
+    Ok(entries)
+}
+
 pub fn transact<T>(
     root: &Path,
     update: impl FnOnce(&mut Catalog) -> anyhow::Result<T>,
@@ -829,6 +858,25 @@ pub fn transact<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn resolved_cache_follows_every_change_to_the_file() {
+        let root = tempfile::tempdir().unwrap();
+        let first = resolved(root.path()).unwrap();
+        assert!(first.is_empty());
+        let id = transact(root.path(), |catalog| catalog.seed_path("a.md", false)).unwrap();
+        let second = resolved(root.path()).unwrap();
+        assert_eq!(second[&id].path, "a.md");
+        // Unchanged file: the same resolved snapshot is reused.
+        assert!(Arc::ptr_eq(&second, &resolved(root.path()).unwrap()));
+        transact(root.path(), |catalog| Ok(delete(catalog, &id, "b"))).unwrap();
+        assert!(resolved(root.path()).unwrap()[&id].deleted());
+        // A change written by someone else (a peer, another process) is seen too.
+        let mut other = load(root.path()).unwrap();
+        let restored = other.seed_path("b.md", false).unwrap();
+        std::fs::write(file_path(root.path()), other.encode().unwrap()).unwrap();
+        assert!(resolved(root.path()).unwrap().contains_key(&restored));
+    }
+
     fn hash(text: &str) -> String {
         blake3::hash(text.as_bytes()).to_hex().to_string()
     }
