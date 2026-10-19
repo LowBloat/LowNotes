@@ -199,6 +199,7 @@ pub fn run() {
             commands::network_sync_now,
             commands::network_request_pair,
             commands::network_answer_pair,
+            commands::network_regenerate_pair_code,
             commands::network_remove_peer,
             commands::network_broadcast_awareness,
             commands::save_ai_settings,
