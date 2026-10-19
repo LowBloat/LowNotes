@@ -47,6 +47,6 @@ This document describes what LowNotes protects, against whom, and the limits tha
 
 - Installers are not yet code-signed for Windows or notarized for macOS (#9).
 - `zip` used by the updater has open advisories without a compatible fix; it only unpacks signature-verified bundles (`src-tauri/deny.toml`).
-- Path validation does not yet resolve symlinks and junctions inside the vault (BACKLOG B22).
+- Path validation does not yet resolve symlinks and junctions inside the vault (roadmap B22).
 - Anyone with access to the unlocked operating system account can read the vault files and, through the OS credential store, the stored secrets.
 - Iroh discovery and relay services are third-party infrastructure.

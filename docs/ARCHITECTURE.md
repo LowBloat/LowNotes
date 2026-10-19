@@ -30,7 +30,9 @@ flowchart LR
 
 | Area | Files |
 | --- | --- |
-| Shell, global state, Tauri event listeners | `src/routes/+page.svelte` |
+| Shell and layout | `src/routes/+page.svelte` |
+| Shell state: P2P session, presence, updates, recovery notices | `src/lib/state/` |
+| In-app dialogs | `src/lib/dialogs.svelte.ts`, `components/AppDialog.svelte` |
 | Editor and preview, collaboration, presence | `src/lib/components/Editor.svelte`, `editor-collaboration.ts`, `presence.ts` |
 | Markdown rendering (markdown-it, Mermaid) | `src/lib/markdown.ts`, `mermaid-renderer.ts`, `preview-links.ts` |
 | Native bridge (every `invoke`) | `src/lib/api.ts`, `src/lib/types.ts` |
@@ -55,11 +57,12 @@ The interface never reads the vault directly. Settings arrive through `AppSettin
 | Assistant | `assistant.rs`, `rag.rs`, `web_search.rs`, `chat_history.rs` |
 | P2P sync | `network.rs` |
 | Shared HTTP clients | `http.rs` |
+| Diagnostic log | `logging.rs` |
 
 ### Threads and locks
 
 - Tauri runs synchronous commands on the main thread. IO-heavy commands are `async` and run their body on the blocking pool through `on_worker` in `commands.rs`.
-- The network service runs on its own thread with a two-worker Tokio runtime (`NetworkService::start`).
+- The network service runs on its own thread with a two-worker Tokio runtime (`NetworkService::start`). Disk and CRDT phases inside network tasks go through `block_in_place`.
 - `structural::exclusive` serializes structural work per vault with a reentrant lock and runs pending recovery on the outermost entry.
 
 ### Durability

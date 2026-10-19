@@ -27,6 +27,10 @@ Run `bunx playwright install chromium` once before the e2e suite.
 - **Versions:** never edit version numbers by hand. Use `bun run version:bump X.Y.Z`; it updates `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock`.
 - **Secrets:** never send keys, the vault identity or pairing tokens to the webview. Settings reach the interface through `AppSettings::for_frontend()`.
 - **Commands:** IO-heavy Tauri commands run through `on_worker` in `commands.rs`, not on the main thread.
+- **Dialogs:** use `appAlert`, `appConfirm` and `appPrompt` from `src/lib/dialogs.svelte.ts`, never the native `alert`/`confirm`/`prompt`.
+- **Logging:** use `tracing` in Rust (`warn!`, `error!`), never `eprintln!`; never log note content, keys or pairing codes.
+- **Page state:** shell state (P2P session, presence, updates, recovery notices) lives in `src/lib/state/`.
+- **Windows file operations:** rename and remove through `storage::rename`, `storage::remove_file`, `storage::remove_dir` and `storage::remove_dir_all`, which retry transient Windows locks.
 - **Storage:** writes go through `storage.rs` (atomic replace with validated backups) and structural changes through `structural::exclusive`; keep crash recovery working.
 - **Sync protocol:** read [docs/SYNC-PROTOCOL.md](docs/SYNC-PROTOCOL.md) before touching `network.rs`. Older peers must keep syncing.
 - **Dependencies:** keep dependency and version changes separate from fixes. `src-tauri/deny.toml` lists accepted advisories with a reason.

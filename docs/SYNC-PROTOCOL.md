@@ -32,7 +32,7 @@ The dialer tries `/5`, then `/4`, `/3` and `/2`. Older peers keep exchanging wha
 
 ## Full reconciliation
 
-Runs when the app starts, every 60 seconds per peer, after pairing and on **Sync now**.
+Runs when the app starts, after pairing, on **Sync now** and periodically: every 60 seconds per peer, slowing to every 10 minutes for a peer whose syncs keep exchanging nothing, and backing off up to 15 minutes for an unreachable peer. Local edits and incoming connections restore the one-minute pass.
 
 ```mermaid
 sequenceDiagram
@@ -63,6 +63,8 @@ sequenceDiagram
 
 - Editor changes are applied as Yrs updates and broadcast to connected peers as `IdentifiedCrdt { entry_id, note_path, update_base64 }` (or `CrdtUpdate` for older peers).
 - Cursor and selection presence uses `Awareness { note_path, update }`.
+- Live packets reuse one connection per peer and open a new stream per message; the receiver keeps reading streams until the connection is idle for 60 seconds. Older peers close after one packet and the sender reconnects.
+- Queued live updates are coalesced: only the newest state and presence per note are sent.
 - A peer that receives an update for an unknown identity triggers a full reconciliation.
 
 ## Packets
