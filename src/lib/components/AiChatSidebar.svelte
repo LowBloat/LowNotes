@@ -2,7 +2,7 @@
   import { Bot, Brain, Check, FileText, History, Link2, Pencil, Plus, Send, Settings2, Trash2, TriangleAlert, X } from 'lucide-svelte';
   import { onDestroy, onMount, tick } from 'svelte';
   import { openUrl } from '@tauri-apps/plugin-opener';
-  import { renderChatMarkdown } from '../markdown';
+  import { isRemoteImage, renderChatMarkdown } from '../markdown';
   import { connectDraftCollection, groupDraftPaths } from '$lib/draft-paths';
   import { activeConversation, emptyChatHistory, modelConversation, titleFromPrompt } from '$lib/chat-history';
   import DocumentActions from './DocumentActions.svelte';
@@ -334,6 +334,17 @@
       }
     }
   }
+
+  /** Load one blocked remote image in place, only when the reader asks. */
+  function loadRemoteImage(event: MouseEvent) {
+    const button = (event.target as Element | null)?.closest<HTMLElement>('[data-remote-src]');
+    const src = button?.dataset.remoteSrc ?? '';
+    if (!button || !isRemoteImage(src)) return;
+    const image = document.createElement('img');
+    image.src = src;
+    image.alt = button.title;
+    button.replaceWith(image);
+  }
 </script>
 
 {#if isOpen}
@@ -535,7 +546,8 @@
               {#if msg.role === 'assistant'}
                 <div class="flex items-start gap-2">
                   {#if msg.isError}<TriangleAlert size={16} class="shrink-0 mt-0.5 text-[var(--danger)]" />{/if}
-                  <div class="prose min-w-0 max-w-none text-xs leading-relaxed">
+                  <!-- svelte-ignore a11y_click_events_have_key_events -->
+                  <div role="presentation" onclick={loadRemoteImage} class="prose min-w-0 max-w-none text-xs leading-relaxed">
                     {@html renderChatMarkdown(msg.isError ? trError(msg.content).replace(/^\u26a0\uFE0F?\s*/u, '') : trError(msg.content))}
                   </div>
                 </div>
@@ -572,7 +584,8 @@
                           class="w-full bg-[var(--bg-card)] text-[var(--text-main)] border border-[var(--border)] rounded px-2 py-1 text-[11px] disabled:opacity-70" />
                         <details>
                           <summary class="cursor-pointer text-[11px] text-[var(--text-muted)]">{$t('ai.previewDraft')}</summary>
-                          <div class="prose text-xs max-h-72 overflow-auto py-2">{@html renderChatMarkdown(draft.content)}</div>
+                          <!-- svelte-ignore a11y_click_events_have_key_events -->
+                          <div role="presentation" onclick={loadRemoteImage} class="prose text-xs max-h-72 overflow-auto py-2">{@html renderChatMarkdown(draft.content)}</div>
                           <textarea aria-label={$t('ai.editDraft')} bind:value={draft.content} oninput={schedulePersist} onchange={() => void persistHistory()} rows="8" disabled={!!draft.savedPath || draft.saving}
                             class="w-full bg-[var(--bg-card)] border border-[var(--border)] rounded p-2 font-mono text-[11px] disabled:opacity-60"></textarea>
                         </details>

@@ -216,6 +216,10 @@ export async function saveLineWrapping(lineWrapping: boolean): Promise<void> {
   return await invoke('save_line_wrapping', { lineWrapping });
 }
 
+export async function saveRemoteImages(loadRemoteImages: boolean): Promise<void> {
+  return await invoke('save_remote_images', { loadRemoteImages });
+}
+
 export async function fetchAiModels(
   providerId?: string,
   customUrl?: string,

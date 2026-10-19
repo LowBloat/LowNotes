@@ -27,6 +27,7 @@
     undoLastDelete,
   } from '$lib/api';
   import { locale, resolveLocale, t, trError } from '$lib/i18n';
+  import { configureRemoteImages } from '$lib/markdown';
   import { resolveNoteLink } from '$lib/note-links';
   import { DEFAULT_PALETTE_ID, applyTheme } from '$lib/themes';
   import Sidebar from '$lib/components/Sidebar.svelte';
@@ -48,6 +49,10 @@
   import SettingsView from '$lib/components/SettingsView.svelte';
   import HistoryModal from '$lib/components/HistoryModal.svelte';
   let settings = $state<AppSettings | null>(null);
+  // Assistant messages follow the same remote image policy as the preview.
+  $effect(() => {
+    configureRemoteImages({ load: settings?.load_remote_images === true, label: $t('preview.remoteImageBlocked') });
+  });
   let theme = $state<AppTheme>('light');
   let viewMode = $state<ViewMode>('split');
   let isGraphOpen = $state(false);
@@ -527,6 +532,7 @@
           {theme}
           {viewMode}
           lineWrapping={settings?.line_wrapping ?? true}
+          loadRemoteImages={settings?.load_remote_images === true}
           imageUploadProvider={settings?.image_upload?.provider ?? 'local'}
           vaultId={settings?.active_vault_id ?? ''}
           onViewModeChange={handleViewModeChange}

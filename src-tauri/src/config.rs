@@ -426,6 +426,10 @@ pub struct AppSettings {
     pub view_mode: String,
     #[serde(default = "default_true")]
     pub line_wrapping: bool,
+    /// Off by default: notes can come from peers or the assistant, and a
+    /// remote image reveals the reader's IP address to its host.
+    #[serde(default)]
+    pub load_remote_images: bool,
     #[serde(default)]
     pub language: String,
     pub active_vault_id: Option<String>,
@@ -462,6 +466,7 @@ impl Default for AppSettings {
             theme: default_theme(),
             view_mode: default_view_mode(),
             line_wrapping: default_true(),
+            load_remote_images: false,
             theme_palettes: ThemePalettesSettings::default(),
             language: String::new(),
             active_vault_id: None,

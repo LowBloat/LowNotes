@@ -568,6 +568,17 @@ pub fn save_line_wrapping(line_wrapping: bool, state: State<'_, AppState>) -> Re
 }
 
 #[tauri::command]
+pub fn save_remote_images(load_remote_images: bool, state: State<'_, AppState>) -> Result<(), String> {
+    let mut settings = state.settings.write();
+    let previous = std::mem::replace(&mut settings.load_remote_images, load_remote_images);
+    if let Err(error) = settings.save() {
+        settings.load_remote_images = previous;
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub fn save_language(language: String, state: State<'_, AppState>) -> Result<(), String> {
     if !matches!(language.as_str(), "en-US" | "pt-BR" | "es-ES") {
         return Err("errors.invalidLanguage".to_string());
