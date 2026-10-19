@@ -496,6 +496,8 @@ pub fn save_ai_settings(mut settings: AiSettings, state: State<'_, AppState>) ->
 pub fn save_web_search_settings(mut settings: WebSearchSettings, state: State<'_, AppState>) -> Result<(), String> {
     settings.normalize();
     settings.merge_saved_keys(&state.settings.read().web_search);
+    // Choices saved from Settings are explicit; never re-run the opt-in migration on them.
+    settings.opt_in_applied = true;
     if ["brave", "parallel"].into_iter().any(|id| settings.source(id).is_some_and(|source| source.enabled && source.api_key.trim().is_empty())) {
         return Err("ai.webKeyRequired".into());
     }

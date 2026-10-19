@@ -252,6 +252,11 @@ pub struct WebSearchSourceConfig {
 pub struct WebSearchSettings {
     pub sources: Vec<WebSearchSourceConfig>,
     pub searxng_url: String,
+    /// Set once the opt-in defaults have been applied to saved settings.
+    /// Missing in files from older versions, so it must default to false
+    /// rather than to `WebSearchSettings::default()`.
+    #[serde(default)]
+    pub opt_in_applied: bool,
 }
 
 impl Default for WebSearchSettings {
@@ -261,12 +266,15 @@ impl Default for WebSearchSettings {
                 .into_iter()
                 .map(|id| WebSearchSourceConfig {
                     id: id.into(),
-                    enabled: !matches!(id, "brave" | "parallel"),
+                    // Every enabled service receives the search terms of a
+                    // Research request, so only DuckDuckGo starts enabled.
+                    enabled: id == "duckduckgo",
                     api_key: String::new(),
                     has_api_key: false,
                 })
                 .collect(),
             searxng_url: "https://search.lumy.live/".into(),
+            opt_in_applied: true,
         }
     }
 }
@@ -274,6 +282,20 @@ impl Default for WebSearchSettings {
 impl WebSearchSettings {
     pub fn source(&self, id: &str) -> Option<&WebSearchSourceConfig> {
         self.sources.iter().find(|source| source.id == id)
+    }
+
+    /// Older versions enabled most services by default. Apply the opt-in
+    /// defaults once: keep DuckDuckGo and any service the user configured
+    /// with a key (an explicit choice), and turn the rest off.
+    pub fn apply_opt_in_defaults(&mut self, has_saved_key: impl Fn(&str) -> bool) {
+        if self.opt_in_applied {
+            return;
+        }
+        for source in &mut self.sources {
+            source.enabled = source.enabled
+                && (source.id == "duckduckgo" || !source.api_key.trim().is_empty() || has_saved_key(&source.id));
+        }
+        self.opt_in_applied = true;
     }
 
     /// Restores keys the interface marked as kept; see `merge_saved_secret`.
@@ -504,6 +526,8 @@ impl AppSettings {
             !settings.credential_refs.contains_key(&format!("vault:{}:identity", vault.id))
             || !settings.credential_refs.contains_key(&format!("vault:{}:pairing", vault.id))) { return None; }
         settings.web_search.normalize();
+        let refs = settings.credential_refs.clone();
+        settings.web_search.apply_opt_in_defaults(|id| refs.contains_key(&format!("web:{id}")));
         settings.theme_palettes.normalize();
         settings.ai.normalize();
         if !settings.image_upload.local_default_applied || !matches!(settings.image_upload.provider.as_str(), "local" | "catbox" | "imgur") {
@@ -734,7 +758,9 @@ mod tests {
         let brave = restored.web_search.source("brave").unwrap();
         assert!(brave.enabled);
         assert_eq!(brave.api_key, "old-key");
-        assert!(restored.web_search.source("firecrawl").unwrap().enabled);
+        // Services without a key stay off; DuckDuckGo is the opt-in default.
+        assert!(!restored.web_search.source("firecrawl").unwrap().enabled);
+        assert!(restored.web_search.source("duckduckgo").unwrap().enabled);
     }
 
     fn colors(hex: &str) -> ThemeColors {
@@ -880,5 +906,33 @@ mod tests {
         let mut web = stored.for_frontend().web_search;
         web.merge_saved_keys(&stored.web_search);
         assert_eq!(web.sources[0].api_key, "web-keep");
+    }
+
+    #[test]
+    fn web_search_services_are_opt_in() {
+        let fresh = super::WebSearchSettings::default();
+        let enabled: Vec<_> = fresh.sources.iter().filter(|s| s.enabled).map(|s| s.id.as_str()).collect();
+        assert_eq!(enabled, ["duckduckgo"]);
+
+        // Settings saved by an older version: most services on, one with a key.
+        let mut saved = serde_json::to_value(AppSettings::default()).unwrap();
+        let sources = saved["web_search"]["sources"].as_array_mut().unwrap();
+        for source in sources.iter_mut() {
+            source["enabled"] = (!matches!(source["id"].as_str(), Some("brave" | "parallel"))).into();
+            if source["id"] == "exa" { source["api_key"] = "exa-key".into(); }
+        }
+        saved["web_search"].as_object_mut().unwrap().remove("opt_in_applied");
+        let migrated = AppSettings::from_saved_value(saved).unwrap();
+        let enabled: Vec<_> = migrated.web_search.sources.iter().filter(|s| s.enabled).map(|s| s.id.as_str()).collect();
+        assert_eq!(enabled, ["exa", "duckduckgo"]);
+        assert!(migrated.web_search.opt_in_applied);
+
+        // After the one-time migration, user choices are kept as saved.
+        let mut chosen = serde_json::to_value(&migrated).unwrap();
+        for source in chosen["web_search"]["sources"].as_array_mut().unwrap() {
+            if source["id"] == "searxng" { source["enabled"] = true.into(); }
+        }
+        let reloaded = AppSettings::from_saved_value(chosen).unwrap();
+        assert!(reloaded.web_search.source("searxng").unwrap().enabled);
     }
 }
