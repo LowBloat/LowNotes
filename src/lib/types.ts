@@ -32,8 +32,6 @@ export interface VaultConfig {
   id: string;
   name: string;
   path: string;
-  secret_key: string;
-  pairing_token: string;
   peers: PeerConfig[];
 }
 
@@ -55,7 +53,10 @@ export interface AiProviderConfig {
   id: string;
   name: string;
   base_url: string;
+  /** Write-only: always empty when received; a non-empty value replaces the saved key. */
   api_key: string;
+  /** A key is saved. Sending `true` with an empty `api_key` keeps it; `false` clears it. */
+  has_api_key?: boolean;
   selected_model: string;
   is_custom: boolean;
 }
@@ -69,7 +70,9 @@ export interface AiSettings {
 export interface WebSearchSourceConfig {
   id: string;
   enabled: boolean;
+  /** Same write-only contract as `AiProviderConfig.api_key`. */
   api_key: string;
+  has_api_key?: boolean;
 }
 
 export interface WebSearchSettings {

@@ -108,13 +108,22 @@
   function changeUpdates(value: boolean) {
     void persist(saveUpdatePrefs(value, settings.skipped_version), { ...settings, update_check: value });
   }
-  function saveAi() {
-    const nextAi = $state.snapshot(aiDraft);
-    void persist(saveAiSettings(nextAi), { ...settings, ai: nextAi });
+  // Saved keys never come back from the backend: once sent, drop the typed value
+  // and keep only the "a key is saved" flag in interface state.
+  function withoutKeys<T extends { api_key: string; has_api_key?: boolean }>(items: T[]): T[] {
+    return items.map((item) => ({ ...item, has_api_key: Boolean(item.has_api_key || item.api_key.trim()), api_key: '' }));
   }
-  function saveWeb() {
+  async function saveAi() {
+    const nextAi = $state.snapshot(aiDraft);
+    const publicAi = { ...nextAi, providers: withoutKeys(nextAi.providers) };
+    await persist(saveAiSettings(nextAi), { ...settings, ai: publicAi });
+    if (!error) aiDraft = structuredClone(publicAi);
+  }
+  async function saveWeb() {
     const nextWeb = $state.snapshot(webDraft);
-    void persist(saveWebSearchSettings(nextWeb), { ...settings, web_search: nextWeb });
+    const publicWeb = { ...nextWeb, sources: withoutKeys(nextWeb.sources) };
+    await persist(saveWebSearchSettings(nextWeb), { ...settings, web_search: publicWeb });
+    if (!error) webDraft = structuredClone(publicWeb);
   }
   async function changeImageProvider(control: HTMLSelectElement) {
     const next = { provider: control.value as ImageUploadProvider, imgur_client_id: settings.image_upload?.imgur_client_id ?? '', local_default_applied: true };
@@ -369,7 +378,7 @@
               {#if provider}<div class="provider-detail">
                 <div class="provider-detail-head"><div><h3>{provider.name}</h3><small>{provider.is_custom ? $t('settings.customProvider') : $t('settings.builtInProvider')}</small></div>{#if provider.is_custom}<button class="settings-icon danger" onclick={() => removeProvider(provider.id)} title={$t('settings.removeProvider')} aria-label={$t('settings.removeProvider')}><Trash2 size={17} /></button>{/if}</div>
                 <label class="setting-field">{$t('ai.baseUrl')}<input bind:value={provider.base_url} placeholder="http://localhost:11434/v1" /></label>
-                <label class="setting-field">{$t('ai.apiKey')}<div class="settings-inline"><input type={showKey ? 'text' : 'password'} bind:value={provider.api_key} autocomplete="off" /><button onclick={() => showKey = !showKey}>{showKey ? $t('ai.hide') : $t('ai.show')}</button></div></label>
+                <label class="setting-field">{$t('ai.apiKey')}<div class="settings-inline"><input type={showKey ? 'text' : 'password'} bind:value={provider.api_key} autocomplete="off" placeholder={provider.has_api_key ? $t('settings.savedKey') : ''} /><button onclick={() => showKey = !showKey}>{showKey ? $t('ai.hide') : $t('ai.show')}</button>{#if provider.has_api_key}<button onclick={() => { if (provider) { provider.has_api_key = false; provider.api_key = ''; } }}>{$t('settings.removeKey')}</button>{/if}</div></label>
                 <label class="setting-field">{$t('ai.selectedModel')}<input bind:value={provider.selected_model} placeholder={$t('ai.modelPlaceholder')} /></label>
                 <div class="settings-models"><button onclick={loadModels} disabled={loadingModels}>{loadingModels ? $t('ai.fetching') : $t('ai.listModels')}</button>{#if models.length}<select value={provider.selected_model} onchange={(event) => provider.selected_model = event.currentTarget.value}><option value="">{$t('settings.chooseModel')}</option>{#each models as model}<option value={model}>{model}</option>{/each}</select>{/if}</div>
                 <label class="settings-active-choice"><input type="radio" name="active-provider" checked={aiDraft.active_provider_id === provider.id} onchange={() => aiDraft.active_provider_id = provider.id} /> {$t('settings.useProvider')}</label>
@@ -391,7 +400,8 @@
                       <label class="setting-field">{$t('settings.publicInstance')}<input type="url" bind:value={webDraft.searxng_url} placeholder="https://search.lumy.live/" /><small>{$t('settings.publicInstanceHint')}</small></label>
                     {/if}
                     {#if info.keyUrl}
-                      <label class="setting-field">{info.keyless ? $t('settings.optionalKey') : $t('settings.apiKey')}<input type="password" bind:value={source.api_key} autocomplete="off" placeholder={info.keyless ? $t('settings.optionalKey') : $t('settings.requiresKey')} /></label>
+                      <label class="setting-field">{info.keyless ? $t('settings.optionalKey') : $t('settings.apiKey')}<input type="password" bind:value={source.api_key} autocomplete="off" placeholder={source.has_api_key ? $t('settings.savedKey') : info.keyless ? $t('settings.optionalKey') : $t('settings.requiresKey')} /></label>
+                      {#if source.has_api_key}<button class="settings-link" onclick={() => { source.has_api_key = false; source.api_key = ''; }}>{$t('settings.removeKey')}</button>{/if}
                       <button class="settings-link" onclick={() => openUrl(info.keyUrl!)}>{$t('settings.getKey')}</button>
                     {/if}
                   </div>
