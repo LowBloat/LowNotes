@@ -1019,8 +1019,13 @@ fn restart_network_service(
     app: AppHandle,
 ) -> Result<(), String> {
     let mut vault_clone = vault.clone();
+    // Stop the previous service (closing its endpoint) before another one can
+    // bind the same identity. Take it out first so no lock is held while waiting.
+    let previous = state.network.write().take();
+    if let Some(previous) = previous {
+        previous.shutdown(std::time::Duration::from_secs(5));
+    }
     if vault_clone.credentials_locked {
-        *state.network.write() = None;
         return Ok(());
     }
     if vault_clone.ensure_keys() {

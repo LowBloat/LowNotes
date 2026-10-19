@@ -35,6 +35,71 @@ const FIRST_PACKET_TIMEOUT: Duration = Duration::from_secs(30);
 /// Concurrent handshakes from endpoints that are not paired yet.
 const MAX_PENDING_UNAUTHENTICATED: usize = 16;
 const MAX_DEVICE_NAME_CHARS: usize = 64;
+/// Upper bound for one reconciliation with a peer.
+const SYNC_SESSION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// Periodic reconciliation retries an unreachable peer after 1, 2, 4, 8 and
+/// then every 15 minutes, instead of every minute.
+const BACKOFF_BASE: Duration = Duration::from_secs(60);
+const BACKOFF_MAX: Duration = Duration::from_secs(15 * 60);
+/// After this many failures with the remembered protocol, try the full ladder again.
+const REMEMBERED_ALPN_ATTEMPTS: u32 = 3;
+
+#[derive(Default)]
+struct PeerSyncState {
+    failures: u32,
+    retry_at: Option<std::time::Instant>,
+    alpn: Option<&'static [u8]>,
+}
+
+/// Per-peer reconciliation state shared by every sync trigger: which peers
+/// are being synchronized, their backoff, and the protocol each one speaks.
+#[derive(Clone, Default)]
+pub(crate) struct SyncTracker(Arc<parking_lot::Mutex<(HashSet<String>, HashMap<String, PeerSyncState>)>>);
+
+impl SyncTracker {
+    /// Claims the peer for one sync; false when a sync is already running.
+    fn begin(&self, peer: &str) -> bool {
+        self.0.lock().0.insert(peer.to_owned())
+    }
+
+    /// Whether the periodic pass should try this peer now.
+    fn due(&self, peer: &str, now: std::time::Instant) -> bool {
+        self.0.lock().1.get(peer).and_then(|state| state.retry_at).is_none_or(|at| now >= at)
+    }
+
+    /// The peer reached us or the user asked for a sync: retry immediately.
+    fn reset(&self, peer: &str) {
+        if let Some(state) = self.0.lock().1.get_mut(peer) {
+            state.retry_at = None;
+        }
+    }
+
+    fn preferred_alpn(&self, peer: &str) -> Option<&'static [u8]> {
+        self.0.lock().1.get(peer).and_then(|state| state.alpn)
+    }
+
+    fn succeeded(&self, peer: &str, alpn: &'static [u8]) {
+        let mut guard = self.0.lock();
+        guard.0.remove(peer);
+        guard.1.insert(peer.to_owned(), PeerSyncState { failures: 0, retry_at: None, alpn: Some(alpn) });
+    }
+
+    /// Records a failure and schedules the next periodic attempt. Returns true
+    /// only for the first failure of a streak, so an offline peer produces one
+    /// notice instead of one per minute.
+    fn failed(&self, peer: &str, now: std::time::Instant) -> bool {
+        let mut guard = self.0.lock();
+        guard.0.remove(peer);
+        let state = guard.1.entry(peer.to_owned()).or_default();
+        state.failures = state.failures.saturating_add(1);
+        let factor = 1u32 << (state.failures - 1).min(4);
+        state.retry_at = Some(now + (BACKOFF_BASE * factor).min(BACKOFF_MAX));
+        if state.failures >= REMEMBERED_ALPN_ATTEMPTS {
+            state.alpn = None;
+        }
+        state.failures == 1
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PairInfo {
@@ -143,6 +208,7 @@ enum NetworkCommand {
     BroadcastCrdt { note_path: String, update: Vec<u8> },
     BroadcastAwareness { note_path: String, update: Vec<u8> },
     RepublishPairCode,
+    Shutdown(std::sync::mpsc::Sender<()>),
 }
 
 #[derive(Clone)]
@@ -231,6 +297,15 @@ impl NetworkService {
         }
     }
 
+    /// Close the endpoint and stop the service, waiting up to `timeout`. A new
+    /// service for the same vault can then bind the same key safely.
+    pub fn shutdown(&self, timeout: Duration) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        if self.commands.send(NetworkCommand::Shutdown(tx)).is_ok() {
+            let _ = rx.recv_timeout(timeout);
+        }
+    }
+
     /// Replace the token embedded in pair codes and publish a new code. Codes
     /// shared before the change can no longer start a pairing.
     pub fn set_pairing_token(&self, token: String) {
@@ -303,7 +378,7 @@ async fn run_network(
         publish_pair_code(&online_ep, &online_id, &token, &online_app, &online_pair_info);
     });
 
-    let sync_in_flight = Arc::new(parking_lot::Mutex::new(HashSet::<String>::new()));
+    let sync_in_flight = SyncTracker::default();
 
     // Periodic reconciliation: keep vaults converged even after restarts or
     // missed CRDT broadcasts while a peer was offline.
@@ -318,7 +393,8 @@ async fn run_network(
         loop {
             interval.tick().await;
             let known: Vec<PeerConfig> = tick_peers.read().clone();
-            for peer in known {
+            let now = std::time::Instant::now();
+            for peer in known.into_iter().filter(|peer| tick_in_flight.due(&peer.endpoint_id, now)) {
                 spawn_sync(
                     tick_ep.clone(),
                     tick_vault.clone(),
@@ -398,6 +474,7 @@ async fn run_network(
             NetworkCommand::SyncNow => {
                 let known: Vec<PeerConfig> = peers.read().clone();
                 for peer in known {
+                    sync_in_flight.reset(&peer.endpoint_id);
                     spawn_sync(
                         endpoint.clone(),
                         vault.clone(),
@@ -468,6 +545,12 @@ async fn run_network(
                     });
                 }
             }
+            NetworkCommand::Shutdown(done) => {
+                // Close connections gracefully before the runtime is dropped.
+                endpoint.close().await;
+                let _ = done.send(());
+                break;
+            }
             NetworkCommand::RepublishPairCode => {
                 let token = pairing_token.read().clone();
                 publish_pair_code(&endpoint, &identity, &token, &app, &pair_info);
@@ -522,13 +605,17 @@ async fn handle_incoming_connection(
     pending_answers: Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
     identity: NetworkIdentity,
     settings: Arc<RwLock<AppSettings>>,
-    sync_in_flight: Arc<parking_lot::Mutex<HashSet<String>>>,
+    sync_in_flight: SyncTracker,
     pair_info: Arc<RwLock<Option<PairInfo>>>,
     unauthenticated: Arc<tokio::sync::Semaphore>,
 ) -> anyhow::Result<()> {
     let connection = incoming.await?;
     let remote_id = connection.remote_id();
     let known = peers.read().iter().any(|p| p.endpoint_id == remote_id.to_string());
+    if known {
+        // The peer is reachable again: do not wait for its backoff to expire.
+        sync_in_flight.reset(&remote_id.to_string());
+    }
     // Unknown endpoints share a small pool of handshake slots and may only send
     // a small pairing request; nothing large is read before authorization.
     let _slot = if known {
@@ -734,7 +821,7 @@ async fn dial_pair(
     app: AppHandle,
     vault: PathBuf,
     settings: Arc<RwLock<AppSettings>>,
-    sync_in_flight: Arc<parking_lot::Mutex<HashSet<String>>>,
+    sync_in_flight: SyncTracker,
 ) -> anyhow::Result<()> {
     let addr = invite.peer.endpoint_addr()?;
     let connection = endpoint.connect(addr, LEGACY_ALPN).await?;
@@ -804,10 +891,10 @@ fn spawn_sync(
     vault: PathBuf,
     peer: PeerConfig,
     app: AppHandle,
-    in_flight: Arc<parking_lot::Mutex<HashSet<String>>>,
+    in_flight: SyncTracker,
 ) {
     let target = peer.endpoint_id.clone();
-    if !in_flight.lock().insert(target.clone()) {
+    if !in_flight.begin(&target) {
         return;
     }
 
@@ -819,11 +906,18 @@ fn spawn_sync(
             },
         );
 
-        let res = dial_sync(endpoint.clone(), vault.clone(), peer.clone(), Some(&app)).await;
-        in_flight.lock().remove(&target);
+        let preferred = in_flight.preferred_alpn(&target);
+        let res = match tokio::time::timeout(
+            SYNC_SESSION_TIMEOUT,
+            dial_sync_with(endpoint.clone(), vault.clone(), peer.clone(), Some(&app), preferred),
+        ).await {
+            Ok(result) => result,
+            Err(_) => Err(anyhow::anyhow!("errors.syncFailed")),
+        };
 
         match res {
-            Ok((changed, direct, conflict_created)) => {
+            Ok(((changed, direct, conflict_created), alpn)) => {
+                in_flight.succeeded(&target, alpn);
                 let _ = app.emit(
                     "p2p:synced",
                     NetworkEventPayload::Synced {
@@ -839,36 +933,62 @@ fn spawn_sync(
                 }
             }
             Err(e) => {
-                eprintln!("[p2p] sync failed: {e:#}");
-                let _ = app.emit(
-                    "p2p:error",
-                    NetworkEventPayload::Error {
-                        peer: Some(peer.name),
-                        message: "errors.syncFailed".to_string(),
-                    },
-                );
+                eprintln!("[p2p] sync with {} failed: {e:#}", peer.name);
+                if in_flight.failed(&target, std::time::Instant::now()) {
+                    let _ = app.emit(
+                        "p2p:error",
+                        NetworkEventPayload::Error {
+                            peer: Some(peer.name),
+                            message: "errors.syncFailed".to_string(),
+                        },
+                    );
+                }
             }
         }
     });
 }
 
+#[cfg(test)]
 async fn dial_sync(
     endpoint: Endpoint,
     vault: PathBuf,
     peer: PeerConfig,
     app: Option<&AppHandle>,
 ) -> anyhow::Result<(usize, Option<bool>, bool)> {
+    dial_sync_with(endpoint, vault, peer, app, None).await.map(|(result, _)| result)
+}
+
+fn known_alpn(alpn: &[u8]) -> &'static [u8] {
+    [ALPN, METADATA_ALPN, IMAGE_ALPN].into_iter().find(|known| *known == alpn).unwrap_or(LEGACY_ALPN)
+}
+
+/// Connect with the protocol the peer spoke last time; without one, try every
+/// version from newest to oldest. Remembering it avoids up to three extra
+/// connection attempts per sync with an offline or older peer.
+async fn connect_sync(endpoint: &Endpoint, addr: iroh::EndpointAddr, preferred: Option<&'static [u8]>) -> anyhow::Result<iroh::endpoint::Connection> {
+    if let Some(alpn) = preferred {
+        return Ok(endpoint.connect(addr, alpn).await?);
+    }
+    let mut last_error = None;
+    for alpn in [ALPN, METADATA_ALPN, IMAGE_ALPN, LEGACY_ALPN] {
+        match endpoint.connect(addr.clone(), alpn).await {
+            Ok(connection) => return Ok(connection),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.map(anyhow::Error::from).unwrap_or_else(|| anyhow::anyhow!("errors.syncFailed")))
+}
+
+async fn dial_sync_with(
+    endpoint: Endpoint,
+    vault: PathBuf,
+    peer: PeerConfig,
+    app: Option<&AppHandle>,
+    preferred: Option<&'static [u8]>,
+) -> anyhow::Result<((usize, Option<bool>, bool), &'static [u8])> {
     let addr = peer.endpoint_addr()?;
-    let connection = match endpoint.connect(addr.clone(), ALPN).await {
-        Ok(connection) => connection,
-        Err(_) => match endpoint.connect(addr.clone(), METADATA_ALPN).await {
-            Ok(connection) => connection,
-            Err(_) => match endpoint.connect(addr.clone(), IMAGE_ALPN).await {
-                Ok(connection) => connection,
-                Err(_) => endpoint.connect(addr, LEGACY_ALPN).await?,
-            },
-        },
-    };
+    let connection = connect_sync(&endpoint, addr, preferred).await?;
+    let negotiated = known_alpn(connection.alpn());
     let (mut send, mut recv) = connection.open_bi().await?;
 
     let images_supported = connection.alpn() != LEGACY_ALPN;
@@ -914,7 +1034,7 @@ async fn dial_sync(
 
     let direct = connection_is_direct(&connection);
     connection.close(0u32.into(), b"sync done");
-    Ok((changed, direct, conflict_created))
+    Ok(((changed, direct, conflict_created), negotiated))
 }
 
 async fn serve_sync(
@@ -1441,6 +1561,37 @@ mod tests {
             .bind()
             .await
             .unwrap()
+    }
+
+    #[test]
+    fn offline_peers_back_off_and_report_once() {
+        let tracker = SyncTracker::default();
+        let start = std::time::Instant::now();
+        assert!(tracker.begin("peer"));
+        assert!(!tracker.begin("peer"), "a second sync for the same peer must wait");
+        assert!(tracker.failed("peer", start), "first failure is reported");
+        assert!(!tracker.due("peer", start + Duration::from_secs(30)));
+        assert!(tracker.due("peer", start + Duration::from_secs(61)));
+        let mut now = start;
+        let mut delays = Vec::new();
+        for _ in 0..6 {
+            assert!(tracker.begin("peer"));
+            assert!(!tracker.failed("peer", now), "repeated failures stay quiet");
+            let mut wait = 0;
+            while !tracker.due("peer", now + Duration::from_secs(wait)) { wait += 30; }
+            delays.push(wait);
+            now += Duration::from_secs(wait);
+        }
+        assert_eq!(delays, [120, 240, 480, 900, 900, 900]);
+        tracker.reset("peer");
+        assert!(tracker.due("peer", now));
+        assert!(tracker.begin("peer"));
+        tracker.succeeded("peer", METADATA_ALPN);
+        assert_eq!(tracker.preferred_alpn("peer"), Some(METADATA_ALPN));
+        assert!(tracker.due("peer", now));
+        // A peer that keeps failing with its remembered version gets the full ladder again.
+        for _ in 0..REMEMBERED_ALPN_ATTEMPTS { tracker.begin("peer"); tracker.failed("peer", now); }
+        assert_eq!(tracker.preferred_alpn("peer"), None);
     }
 
     #[test]
