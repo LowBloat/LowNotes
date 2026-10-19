@@ -438,6 +438,7 @@ const enUS = {
     savedKey: 'Key saved. Type to replace it.', removeKey: 'Remove saved key',
     keyless: 'No key needed', requiresKey: 'API key required', optionalKey: 'Optional API key', apiKey: 'API key', getKey: 'Get an API key', publicInstance: 'Public instance URL', publicInstanceHint: 'Public instances may rate limit or disable JSON results.', saveWeb: 'Save web search',
     aboutHint: 'Application information and updates.', version: 'Version', updateHint: 'Look for new versions automatically.', device: 'Device name', saved: 'Changes saved',
+    logs: 'Diagnostic log', logsHint: 'Errors and file names that help troubleshoot sync and storage. It never contains note content, keys or pairing codes.', openLogs: 'Open log folder',
   },
   errors: {
     imageTooLarge: 'The image exceeds the 200 MB limit.',

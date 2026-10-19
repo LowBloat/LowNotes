@@ -3137,6 +3137,8 @@ dependencies = [
  "tauri-plugin-updater",
  "tempfile",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "walkdir",
  "yrs",
 ]

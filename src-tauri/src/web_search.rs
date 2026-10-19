@@ -58,9 +58,9 @@ pub async fn search_web(
                 if !results.is_empty() {
                     return Ok(results);
                 }
-                eprintln!("web search {} returned no usable results", source.id);
+                tracing::info!("web search {} returned no usable results", source.id);
             }
-            Err(_) => eprintln!("web search {} failed", source.id),
+            Err(error) => tracing::warn!("web search {} failed: {error:#}", source.id),
         }
     }
     bail!("ai.webSearchFailed")

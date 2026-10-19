@@ -221,6 +221,11 @@ export async function saveRemoteImages(loadRemoteImages: boolean): Promise<void>
   return await invoke('save_remote_images', { loadRemoteImages });
 }
 
+/** Opens the diagnostic log folder in the file manager. */
+export async function openLogFolder(): Promise<void> {
+  await invoke('open_log_folder');
+}
+
 export async function setTrayLanguage(language: string): Promise<void> {
   await invoke('set_tray_language', { language });
 }

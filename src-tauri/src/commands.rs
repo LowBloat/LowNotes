@@ -268,11 +268,11 @@ pub async fn create_note(path: String, title: Option<String>, app: AppHandle) ->
                             if let Err(e) =
                                 links::apply_operations(&vault_path, &ops, links::LinkOrigin::agent)
                             {
-                                eprintln!("auto-link apply failed for {note_path}: {e}");
+                                tracing::warn!("auto-link apply failed for {note_path}: {e}");
                             }
                         }
                         Ok(_) => {}
-                        Err(e) => eprintln!("auto-link suggestion failed for {note_path}: {e}"),
+                        Err(e) => tracing::warn!("auto-link suggestion failed for {note_path}: {e}"),
                     }
                 });
             }
@@ -430,7 +430,10 @@ pub fn network_remove_peer(
         let removed = vault.remove_peer(&endpoint_id);
         if removed {
             let updated_peers = vault.peers.clone();
-            let _ = settings.save();
+            settings.save().map_err(|error| {
+                tracing::error!("could not save the device list: {error:#}");
+                error.to_string()
+            })?;
             drop(settings);
 
             if let Some(net) = state.network.read().as_ref() {
@@ -781,7 +784,7 @@ pub async fn ai_save_draft(vault_id: String, draft: NoteDraft, app: AppHandle) -
         let path = assistant::save_draft(&vault.path, &draft).map_err(|e| e.to_string())?;
         state.crdt.invalidate_path(&vault.path, &path).map_err(|e| e.to_string())?;
         if let Err(e) = links::reconcile_wikilinks(&vault.path, &path, &draft.content) {
-            eprintln!("reconcile_wikilinks failed for {path}: {e}");
+            tracing::warn!("reconcile_wikilinks failed for {path}: {e}");
         }
         if let Some(net) = state.network.read().as_ref() {
             net.sync_now();
@@ -832,6 +835,15 @@ pub fn export_document(request: tauri::ipc::Request<'_>) -> Result<(), String> {
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("export.invalidFile".into()) };
     let token = request.headers().get("x-export-token").and_then(|v| v.to_str().ok()).ok_or("export.invalidFile")?;
     crate::export_target::write(token, bytes).map(|_| ())
+}
+
+/// Opens the folder with the diagnostic log (no note content or keys).
+#[tauri::command]
+pub fn open_log_folder(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = crate::logging::log_dir().ok_or("errors.configDir")?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -888,7 +900,7 @@ pub async fn ai_suggest_links(
     suggest_links_for_note(&vault_path, &note_path, &provider)
         .await
         .map_err(|e| {
-            eprintln!("ai_suggest_links failed for {note_path}: {e}");
+            tracing::warn!("ai_suggest_links failed for {note_path}: {e}");
             "errors.suggestLinksFailed".to_string()
         })
 }
@@ -1033,7 +1045,12 @@ fn restart_network_service(
         if let Some(v) = s.vaults.iter_mut().find(|v| v.id == vault_clone.id) {
             v.secret_key = vault_clone.secret_key.clone();
             v.pairing_token = vault_clone.pairing_token.clone();
-            let _ = s.save();
+            // Never go online with an identity that will not survive a restart.
+            if let Err(error) = s.save() {
+                tracing::error!("could not save the vault identity: {error:#}");
+                s.credential_error = "credentials.unavailable".into();
+                return Err("credentials.unavailable".into());
+            }
         }
     }
     let secret = vault_clone.secret_key().map_err(|e| e.to_string())?;

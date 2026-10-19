@@ -440,6 +440,7 @@ const esES: Dictionary = {
     savedKey: 'Clave guardada. Escribe para reemplazarla.', removeKey: 'Quitar clave guardada',
     keyless: 'Sin clave', requiresKey: 'Requiere clave de API', optionalKey: 'Clave de API opcional', apiKey: 'Clave de API', getKey: 'Obtener clave', publicInstance: 'URL de la instancia pública', publicInstanceHint: 'Las instancias públicas pueden limitar solicitudes o desactivar resultados JSON.', saveWeb: 'Guardar búsqueda web',
     aboutHint: 'Información de la aplicación y actualizaciones.', version: 'Versión', updateHint: 'Buscar nuevas versiones automáticamente.', device: 'Nombre del dispositivo', saved: 'Cambios guardados',
+    logs: 'Registro de diagnóstico', logsHint: 'Errores y nombres de archivo que ayudan a investigar la sincronización y el almacenamiento. Nunca contiene el contenido de las notas, claves ni códigos de emparejamiento.', openLogs: 'Abrir carpeta de registros',
   },
   errors: {
     imageTooLarge: 'La imagen supera el límite de 200 MB.',

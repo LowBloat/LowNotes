@@ -291,7 +291,7 @@ impl CrdtManager {
         docs.insert(target, candidate);
         drop(docs);
         if missing { crate::catalog_sync::register_generated(root, path)?; }
-        if let Err(error) = links::reconcile_wikilinks(root, path, content) { eprintln!("reconcile_wikilinks failed for {path}: {error}"); }
+        if let Err(error) = links::reconcile_wikilinks(root, path, content) { tracing::warn!("reconcile_wikilinks failed for {path}: {error}"); }
         Ok(AppliedUpdate { state, changed: true, conflict_path: None })
     }
 
@@ -345,7 +345,7 @@ impl CrdtManager {
         crate::note_transaction::commit(vault_path, &edit.path, &content, &state)?;
         docs.insert(target, candidate);
         if let Err(error) = links::reconcile_wikilinks(vault_path, &edit.path, &content) {
-            eprintln!("reconcile_wikilinks failed for {}: {error}", edit.path);
+            tracing::warn!("reconcile_wikilinks failed for {}: {error}", edit.path);
         }
         Ok(AppliedUpdate { state, changed: true, conflict_path: None })
     }
@@ -460,7 +460,7 @@ impl CrdtManager {
                 return Err(error);
             }
             if let Err(error) = links::reconcile_wikilinks(vault_path, path, &text) {
-                eprintln!("reconcile_wikilinks failed for {path}: {error}");
+                tracing::warn!("reconcile_wikilinks failed for {path}: {error}");
             }
             docs.insert(target, candidate);
         }
