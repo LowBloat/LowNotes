@@ -203,7 +203,7 @@ fn wikilink_spans(content: &str) -> Vec<(String, usize, usize)> {
 pub fn extract_wikilinks(content: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for (token, _, _) in wikilink_spans(content) {
-        if !out.iter().any(|t| *t == token) {
+        if !out.contains(&token) {
             out.push(token);
         }
     }

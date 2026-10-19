@@ -1,3 +1,7 @@
+// The network handlers pass many shared handles explicitly; restructuring them
+// belongs with the persistent-connection work (#14), not with lint fixes.
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
+
 pub mod config;
 pub mod crdt;
 pub mod network;

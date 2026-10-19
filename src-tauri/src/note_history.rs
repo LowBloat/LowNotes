@@ -397,7 +397,7 @@ mod tests {
             root.path(),
             &id,
             &version.id,
-            &blake3::hash(b"current").to_hex().to_string(),
+            blake3::hash(b"current").to_hex().as_ref(),
             &manager,
         )
         .unwrap();
@@ -487,7 +487,7 @@ mod tests {
             root.path(),
             &id,
             "merged result",
-            &blake3::hash(b"typed 9").to_hex().to_string(),
+            blake3::hash(b"typed 9").to_hex().as_ref(),
             &manager,
         )
         .unwrap();
@@ -511,7 +511,7 @@ mod tests {
             root.path(),
             &id,
             &version.id,
-            &blake3::hash(b"start").to_hex().to_string(),
+            blake3::hash(b"start").to_hex().as_ref(),
             &manager
         )
         .is_err());
@@ -527,7 +527,7 @@ mod tests {
             root.path(),
             &id,
             &version.id,
-            &blake3::hash(b"replacement").to_hex().to_string(),
+            blake3::hash(b"replacement").to_hex().as_ref(),
             &manager
         )
         .is_err());

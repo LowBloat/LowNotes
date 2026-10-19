@@ -188,9 +188,11 @@ mod tests {
             std::env::temp_dir().join(format!("lownotes-chat-history-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let path = dir.join("chat.json");
-        let mut history = ChatHistory::default();
-        history.memory = "Prefiro respostas em português.".into();
-        history.active_conversation_id = Some("chat-1".into());
+        let mut history = ChatHistory {
+            memory: "Prefiro respostas em português.".into(),
+            active_conversation_id: Some("chat-1".into()),
+            ..Default::default()
+        };
         history.conversations.push(ChatConversation {
             id: "chat-1".into(),
             title: "Aprender Python".into(),

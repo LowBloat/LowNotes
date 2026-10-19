@@ -190,13 +190,12 @@ fn save_at(
             .ok()
             .and_then(AppSettings::from_saved_value)
         {
-            if old.credential_storage_version == 0 && next.unavailable_credentials.is_empty() {
-                if storage::write_without_backup(&backup, &bytes, AppSettings::valid_saved_bytes)
+            if old.credential_storage_version == 0 && next.unavailable_credentials.is_empty()
+                && storage::write_without_backup(&backup, &bytes, AppSettings::valid_saved_bytes)
                     .is_err()
                 {
                     next.credential_error = "credentials.migrationIncomplete".into();
                 }
-            }
         }
     }
     // Each changed secret gets a new immutable reference. Keep the ones named by
@@ -231,13 +230,11 @@ fn load_at(path: &Path, store: &mut impl Store) -> anyhow::Result<AppSettings> {
                 .ok()
                 .and_then(|bytes| serde_json::from_slice::<AppSettings>(&bytes).ok())
                 .is_some_and(|old| old.credential_storage_version == 0)
-        {
-            if storage::write_without_backup(&backup, &bytes, AppSettings::valid_saved_bytes)
+            && storage::write_without_backup(&backup, &bytes, AppSettings::valid_saved_bytes)
                 .is_err()
             {
                 settings.credential_error = "credentials.migrationIncomplete".into();
             }
-        }
     }
     Ok(settings)
 }

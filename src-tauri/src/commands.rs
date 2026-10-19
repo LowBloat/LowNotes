@@ -83,7 +83,7 @@ pub async fn retry_credentials(app: AppHandle) -> Result<AppSettings, String> {
         let vault = settings.active_vault().cloned();
         let result = settings.for_frontend();
         drop(settings);
-        if let Some(vault) = vault { restart_network_service(&state, &vault, app)?; }
+        if let Some(vault) = vault { restart_network_service(state, &vault, app)?; }
         Ok(result)
     }).await
 }
@@ -136,7 +136,7 @@ pub async fn select_vault(path_str: String, app: AppHandle) -> Result<InitialSta
         drop(settings);
 
         // Restart network service for the selected vault
-        restart_network_service(&state, &active_vault, app)?;
+        restart_network_service(state, &active_vault, app)?;
 
         let items = vault::list_vault_items(&active_vault.path).map_err(|e| e.to_string())?;
         let current_settings = state.settings.read().for_frontend();
@@ -169,7 +169,7 @@ pub async fn create_vault(path_str: String, name: Option<String>, app: AppHandle
         let active_vault = settings.active_vault().cloned().ok_or("errors.vaultNotFound")?;
         drop(settings);
 
-        restart_network_service(&state, &active_vault, app)?;
+        restart_network_service(state, &active_vault, app)?;
 
         let items = vault::list_vault_items(&active_vault.path).map_err(|e| e.to_string())?;
         let current_settings = state.settings.read().for_frontend();
@@ -202,7 +202,7 @@ pub async fn forget_vault(vault_id: String, app: AppHandle) -> Result<InitialSta
         // Saving again rotates the backup as well; once neither settings file
         // names the removed vault's secrets, the save deletes them from the store.
         if let Err(error) = settings.save() {
-            eprintln!("[vault] removed vault secrets are kept until the next save: {error:#}");
+            tracing::warn!("[vault] removed vault secrets are kept until the next save: {error:#}");
         }
         let active = settings.active_vault().cloned();
         drop(settings);
@@ -240,7 +240,7 @@ pub async fn read_note(path: String, app: AppHandle) -> Result<NoteReadResponse,
     on_worker(app, move |state, _app| {
         let settings = state.settings.read().clone();
         let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-        let catalog = crate::catalog_sync::prepare(&vault.path, &state.crdt, &catalog_device(&state, vault)).map_err(|e| e.to_string())?;
+        let catalog = crate::catalog_sync::prepare(&vault.path, &state.crdt, &catalog_device(state, vault)).map_err(|e| e.to_string())?;
         let note_id = catalog.resolve().map_err(|e| e.to_string())?.into_values().find(|entry| !entry.deleted() && !entry.is_dir && entry.path == path).map(|entry| entry.id);
         vault::read_note(&vault.path, &path).map_err(|e| e.to_string())?;
 
@@ -342,7 +342,7 @@ pub async fn rename_item(old_path: String, new_path: String, app: AppHandle) -> 
     on_worker(app, move |state, _app| {
         let settings = state.settings.read().clone();
         let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-        crate::structural::rename(&vault.path, &old_path, &new_path, &state.crdt, &catalog_device(&state, vault)).map_err(|e| e.to_string())?;
+        crate::structural::rename(&vault.path, &old_path, &new_path, &state.crdt, &catalog_device(state, vault)).map_err(|e| e.to_string())?;
         if let Some(net) = state.network.read().as_ref() {
             net.sync_now();
         }
@@ -355,7 +355,7 @@ pub async fn delete_item(path: String, app: AppHandle) -> Result<(), String> {
     on_worker(app, move |state, _app| {
         let settings = state.settings.read().clone();
         let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-        crate::catalog_sync::delete(&vault.path, &path, &state.crdt, &catalog_device(&state, vault)).map_err(|e| e.to_string())?;
+        crate::catalog_sync::delete(&vault.path, &path, &state.crdt, &catalog_device(state, vault)).map_err(|e| e.to_string())?;
 
         if let Some(net) = state.network.read().as_ref() {
             net.sync_now();
@@ -370,7 +370,7 @@ pub async fn undo_last_delete(app: AppHandle) -> Result<Option<RestoredItem>, St
     on_worker(app, move |state, _app| {
         let settings = state.settings.read().clone();
         let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-        let restored = crate::catalog_sync::restore_latest(&vault.path, &state.crdt, &catalog_device(&state, vault))
+        let restored = crate::catalog_sync::restore_latest(&vault.path, &state.crdt, &catalog_device(state, vault))
             .map_err(|e| e.to_string())?.map(|(path, is_dir)| RestoredItem {
                 path, is_dir, has_more: crate::catalog_sync::has_restorable(&vault.path).unwrap_or(false),
             });

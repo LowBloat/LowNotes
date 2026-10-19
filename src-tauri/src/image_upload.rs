@@ -213,8 +213,7 @@ async fn upload_to(
             }
             429 => provider.error("RateLimit"),
             _ => provider.error("Upload"),
-        }
-        .into());
+        });
     }
     let mut body = Vec::new();
     while let Some(chunk) = response

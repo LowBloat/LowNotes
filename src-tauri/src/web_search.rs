@@ -52,7 +52,7 @@ pub async fn search_web(
     let start = NEXT_SEARCH.fetch_add(1, Ordering::Relaxed) % enabled.len();
     for offset in 0..enabled.len() {
         let source = enabled[(start + offset) % enabled.len()];
-        match search_source(&client, &query, language, source, settings).await {
+        match search_source(client, &query, language, source, settings).await {
             Ok(results) => {
                 let results = clean_results(results);
                 if !results.is_empty() {
