@@ -142,7 +142,6 @@ enum NetworkCommand {
     AnswerPair { request_id: String, accept: bool },
     BroadcastCrdt { note_path: String, update: Vec<u8> },
     BroadcastAwareness { note_path: String, update: Vec<u8> },
-    BroadcastDelete { note_path: String },
     RepublishPairCode,
 }
 
@@ -273,11 +272,6 @@ impl NetworkService {
             .send(NetworkCommand::BroadcastAwareness { note_path, update });
     }
 
-    pub fn broadcast_delete(&self, note_path: String) {
-        let _ = self
-            .commands
-            .send(NetworkCommand::BroadcastDelete { note_path });
-    }
 }
 
 async fn run_network(
@@ -477,16 +471,6 @@ async fn run_network(
             NetworkCommand::RepublishPairCode => {
                 let token = pairing_token.read().clone();
                 publish_pair_code(&endpoint, &identity, &token, &app, &pair_info);
-            }
-            NetworkCommand::BroadcastDelete { note_path } => {
-                let known: Vec<PeerConfig> = peers.read().clone();
-                for peer in known {
-                    let ep = endpoint.clone();
-                    let n_path = note_path.clone();
-                    tokio::spawn(async move {
-                        let _ = send_delete_to_peer(ep, peer, n_path).await;
-                    });
-                }
             }
         }
     }
@@ -1292,21 +1276,6 @@ async fn send_awareness_to_peer(
     send.finish()?;
     let _ = tokio::time::timeout(Duration::from_secs(2), send.stopped()).await;
     connection.close(0u32.into(), b"awareness sent");
-    Ok(())
-}
-
-async fn send_delete_to_peer(
-    endpoint: Endpoint,
-    peer: PeerConfig,
-    path: String,
-) -> anyhow::Result<()> {
-    let addr = peer.endpoint_addr()?;
-    let connection = endpoint.connect(addr, LEGACY_ALPN).await?;
-    let (mut send, _) = connection.open_bi().await?;
-    send_packet(&mut send, &Packet::Delete { path }).await?;
-    send.finish()?;
-    let _ = tokio::time::timeout(Duration::from_secs(2), send.stopped()).await;
-    connection.close(0u32.into(), b"delete sent");
     Ok(())
 }
 

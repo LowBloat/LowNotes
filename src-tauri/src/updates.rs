@@ -209,11 +209,9 @@ pub async fn check_external_update(
     if policy.can_install {
         return Ok(None);
     }
-    let metadata = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|error| error.to_string())?
+    let metadata = crate::http::client()
         .get(UPDATE_URL)
+        .timeout(Duration::from_secs(15))
         .send()
         .await
         .map_err(|error| error.to_string())?

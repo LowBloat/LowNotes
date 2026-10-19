@@ -181,14 +181,12 @@ async fn upload_to(
             .part("fileToUpload", part),
         Provider::Imgur => Form::new().text("type", "file").part("image", part),
     };
-    let client = reqwest::Client::builder()
+    static UPLOAD_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    let client = crate::http::cached(&UPLOAD_CLIENT, |builder| builder
         // Catbox closes upload connections when the client has no User-Agent.
         .user_agent(concat!("LowNotes/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(300))
-        .connect_timeout(Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|_| provider.error("Connection"))?;
+        .redirect(reqwest::redirect::Policy::none()));
     let mut request = client.post(endpoint).multipart(form);
     if provider == Provider::Imgur {
         request = request.header(

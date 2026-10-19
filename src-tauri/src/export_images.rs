@@ -62,8 +62,15 @@ impl reqwest::dns::Resolve for PublicResolver {
     }
 }
 
-fn remote_client() -> anyhow::Result<reqwest::Client> {
-    Ok(reqwest::Client::builder()
+/// Built once. Unlike `crate::http::cached`, a build failure is an error here:
+/// falling back to a default client would drop the public-address resolver.
+fn remote_client() -> anyhow::Result<&'static reqwest::Client> {
+    static EXPORT_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    if let Some(client) = EXPORT_CLIENT.get() {
+        return Ok(client);
+    }
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(20))
         .no_proxy()
         .https_only(true)
@@ -75,7 +82,8 @@ fn remote_client() -> anyhow::Result<reqwest::Client> {
                 attempt.follow()
             }
         }))
-        .build()?)
+        .build()?;
+    Ok(EXPORT_CLIENT.get_or_init(|| client))
 }
 
 #[derive(Serialize)]

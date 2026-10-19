@@ -14,9 +14,10 @@ pub mod reference_sync;
 pub mod assistant;
 pub mod web_search;
 pub mod chat_history;
-pub mod undo;
+
 pub mod export_images;
 pub mod export_target;
+pub mod http;
 pub mod updates;
 pub mod image_upload;
 pub mod local_images;
@@ -29,14 +30,14 @@ pub mod history_commands;
 pub mod credentials;
 
 use std::sync::Arc;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use tauri::{Manager, menu::{Menu, MenuItem}, tray::{MouseButton, TrayIconBuilder, TrayIconEvent}};
 
 use config::AppSettings;
 use crdt::CrdtManager;
 use network::{NetworkIdentity, NetworkService};
 use commands::AppState;
-use undo::UndoHistory;
+
 
 fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     if let Some(window) = app.get_webview_window("main") {
@@ -63,7 +64,7 @@ pub fn run() {
         settings: settings.clone(),
         crdt,
         network: network.clone(),
-        undo: Mutex::new(UndoHistory::default()),
+
     };
 
     let builder = tauri::Builder::default();

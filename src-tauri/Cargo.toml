@@ -24,9 +24,8 @@ tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
 anyhow = "1"
-thiserror = "2"
 iroh = "1.2"
 iroh-tickets = "1"
 parking_lot = "0.12"
@@ -48,6 +47,8 @@ gif = "0.14"
 percent-encoding = "2.3"
 tauri-plugin-updater = "2.13.0"
 tauri-plugin-process = "2.4.0"
+# Exact pin: the credential store backends must not change without a deliberate
+# upgrade and a run of the ignored native_store_round_trip test on every OS.
 keyring = { version = "=3.6.3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 pulldown-cmark = { version = "0.13.4", default-features = false }
 

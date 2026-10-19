@@ -4,7 +4,7 @@ use std::{
 };
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
@@ -16,7 +16,7 @@ use crate::{
     links,
     network::{NetworkIdentity, NetworkService, PairInfo},
     rag::{self, ChatMessage, ChatResponse, RagChunk},
-    undo::{RestoredItem, UndoHistory},
+
     vault::{self, VaultItem},
     web_search,
 };
@@ -25,7 +25,13 @@ pub struct AppState {
     pub settings: Arc<RwLock<AppSettings>>,
     pub crdt: CrdtManager,
     pub network: Arc<RwLock<Option<NetworkService>>>,
-    pub undo: Mutex<UndoHistory>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestoredItem {
+    pub path: String,
+    pub is_dir: bool,
+    pub has_more: bool,
 }
 
 pub(crate) fn catalog_device(state: &AppState, vault: &VaultConfig) -> String {

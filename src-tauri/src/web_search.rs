@@ -47,7 +47,8 @@ pub async fn search_web(
     if enabled.is_empty() {
         bail!("ai.webNoProviders");
     }
-    let client = Client::builder().timeout(Duration::from_secs(12)).build()?;
+    static SEARCH_CLIENT: std::sync::OnceLock<Client> = std::sync::OnceLock::new();
+    let client = crate::http::cached(&SEARCH_CLIENT, |builder| builder.timeout(Duration::from_secs(12)));
     let start = NEXT_SEARCH.fetch_add(1, Ordering::Relaxed) % enabled.len();
     for offset in 0..enabled.len() {
         let source = enabled[(start + offset) % enabled.len()];
