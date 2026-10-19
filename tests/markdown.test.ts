@@ -119,3 +119,35 @@ test('wikilink com alias mostra o rótulo e preserva o destino', () => {
   expect(html).toContain('data-wikilink="Python/Plano"');
   expect(html).toContain('>Plano de estudos</a>');
 });
+
+test('remote images stay blocked until allowed, except upload provider hosts', () => {
+  const source = '![tracker](https://evil.example/pixel.png) ![plain](http://evil.example/a.png) ![own](https://i.imgur.com/x.png)';
+  const blocked = renderMarkdown(source);
+  expect(blocked).not.toContain('<img src="https://evil.example');
+  expect(blocked).not.toContain('<img src="http://evil.example');
+  expect(blocked).toContain('data-remote-src="https://evil.example/pixel.png"');
+  expect(blocked).toContain('(tracker)');
+  expect(blocked).toContain('src="https://i.imgur.com/x.png"');
+
+  const one = renderMarkdown(source, undefined, { allowRemoteImage: (src) => src === 'https://evil.example/pixel.png', remoteImageLabel: 'Bloqueada' });
+  expect(one).toContain('<img src="https://evil.example/pixel.png"');
+  expect(one).toContain('data-remote-src="http://evil.example/a.png"');
+  expect(one).toContain('Bloqueada (plain)');
+
+  const all = renderMarkdown(source, undefined, { remoteImages: true });
+  expect(all).not.toContain('data-remote-src');
+  expect(renderMarkdown('![x](https://evil.example/"onerror="alert(1).png)')).not.toContain('"onerror="');
+});
+
+test('the tauri CSP forbids inline and remote scripts and keeps the IPC and image protocols', async () => {
+  const config = JSON.parse(await Bun.file(new URL('../src-tauri/tauri.conf.json', import.meta.url)).text());
+  const csp = config.app.security.csp as Record<string, string>;
+  expect(csp['script-src']).toBe("'self'");
+  expect(csp['default-src']).toBe("'self'");
+  expect(csp['object-src']).toBe("'none'");
+  for (const value of Object.values(csp)) expect(value).not.toMatch(/unsafe-eval|\*/);
+  expect(csp['connect-src']).toContain('ipc:');
+  expect(csp['connect-src']).toContain('http://ipc.localhost');
+  expect(csp['img-src']).toContain('lownotes-image:');
+  expect(csp['img-src']).toContain('http://lownotes-image.localhost');
+});

@@ -18,7 +18,7 @@
   import { renderMermaidSvg } from '$lib/mermaid-renderer';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { crdtApplyClientUpdate, readNote, broadcastAwareness, uploadClipboardImage, localImageUrl } from '../api';
-  import { renderMarkdown } from '../markdown';
+  import { isRemoteImage, renderMarkdown } from '../markdown';
   import { taskCheckboxChange } from '$lib/markdown-tasks';
   import DocumentActions from './DocumentActions.svelte';
   import type { AppTheme, ViewMode, ImageUploadProvider } from '../types';
@@ -40,6 +40,7 @@
     theme,
     viewMode,
     lineWrapping = true,
+    loadRemoteImages = false,
     imageUploadProvider = 'local',
     vaultId = '',
     onViewModeChange,
@@ -60,6 +61,7 @@
     theme: AppTheme;
     viewMode: ViewMode;
     lineWrapping?: boolean;
+    loadRemoteImages?: boolean;
     imageUploadProvider?: ImageUploadProvider;
     vaultId?: string;
     onViewModeChange: (mode: ViewMode) => void;
@@ -457,8 +459,18 @@
     editorView.focus();
   }
 
+  // Remote images the reader chose to load in this editor session.
+  let allowedRemoteImages = $state<string[]>([]);
+
   function handlePreviewClick(e: MouseEvent) {
     const target = e.target as Element | null;
+    const blocked = target?.closest<HTMLElement>('[data-remote-src]');
+    if (blocked && previewContainer?.contains(blocked)) {
+      e.preventDefault();
+      const src = blocked.dataset.remoteSrc ?? '';
+      if (isRemoteImage(src) && !allowedRemoteImages.includes(src)) allowedRemoteImages = [...allowedRemoteImages, src];
+      return;
+    }
     const link = target?.closest('a');
     if (!link || !previewContainer?.contains(link)) return;
     // Never let the WebView follow a preview link: it would replace the app.
@@ -836,7 +848,7 @@
         class="min-w-0 h-full overflow-y-auto px-8 py-6 select-text {viewMode === 'preview' ? 'w-full max-w-4xl mx-auto' : 'w-1/2'}"
       >
         <article tabindex="-1" class="prose max-w-none text-[var(--text-main)]">
-          {@html renderMarkdown(currentContent, (src) => localImageUrl(src, vaultId, imageRevision), { interactiveTasks: true, taskRevision: contentRevision, sourceMap: 'editor' })}
+          {@html renderMarkdown(currentContent, (src) => localImageUrl(src, vaultId, imageRevision), { interactiveTasks: true, taskRevision: contentRevision, sourceMap: 'editor', remoteImages: loadRemoteImages, allowRemoteImage: (src) => allowedRemoteImages.includes(src), remoteImageLabel: $t('preview.remoteImageBlocked') })}
         </article>
       </div>
     {/if}

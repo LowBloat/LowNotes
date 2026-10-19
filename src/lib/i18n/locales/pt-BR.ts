@@ -420,6 +420,7 @@ const ptBR: Dictionary = {
     demoNote: 'Nota de exemplo', demoBody: 'Suas notas ficarão assim com estas cores.', demoLink: 'um link', demoButton: 'Botão', demoSuccess: 'Salvo', demoDanger: 'Alerta',
     languageHint: 'Idioma usado no aplicativo.', defaultView: 'Visualização padrão', defaultViewHint: 'Como uma nota é aberta.',
     lineWrapping: 'Quebra visual de linhas', lineWrappingHint: 'Exibe linhas longas em várias linhas na tela, sem alterar o arquivo ou a numeração. Desative para usar a rolagem horizontal.',
+    remoteImages: 'Carregar imagens remotas', remoteImagesHint: 'Notas podem vir de dispositivos pareados ou do assistente. Carregar uma imagem remota revela seu endereço IP ao servidor dela. Imagens dos provedores de upload do LowNotes sempre carregam.',
     behavior: 'Comportamento da janela', behaviorHint: 'Defina o que acontece ao fechar a janela.',
     closeToTray: 'Continuar na bandeja do sistema', closeToTrayHint: 'Fechar a janela oculta o LowNotes. Use o ícone da bandeja para abrir ou sair.',
     aiHint: 'Defina o modelo padrão e o comportamento das notas.', activeProvider: 'Provider ativo', activeProviderHint: 'Usado no chat e nas sugestões de notas.', saveAi: 'Salvar configurações de IA',
@@ -503,6 +504,9 @@ const ptBR: Dictionary = {
     suggestLinksFailed: 'falha ao sugerir links',
     aiSendFailed: 'falha ao enviar mensagem para a IA',
     aiEmptyResponse: 'a IA retornou uma resposta vazia',
+  },
+  preview: {
+    remoteImageBlocked: 'Imagem remota bloqueada. Clique para carregar.',
   },
 };
 

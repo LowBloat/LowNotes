@@ -69,6 +69,33 @@ markdown.renderer.rules.fence = (tokens, index, options, env, renderer) => {
     : renderer.renderToken(tokens, index, options);
 };
 
+/** Image hosts used by LowNotes' own upload providers. They give uploaders no
+ * access logs, so loading from them reveals nothing to the note's author. */
+const TRUSTED_IMAGE_HOSTS = new Set(['files.catbox.moe', 'i.imgur.com']);
+
+const remoteImagePolicy = { load: false, label: 'Remote image blocked. Click to load.' };
+
+/** Set once from settings: whether remote images load without a click, and
+ * the localized label of the placeholder shown instead. */
+export function configureRemoteImages(options: { load?: boolean; label?: string }) {
+  if (options.load !== undefined) remoteImagePolicy.load = options.load;
+  if (options.label) remoteImagePolicy.label = options.label;
+}
+
+export function isRemoteImage(source: string): boolean {
+  return /^https?:\/\//i.test(source);
+}
+
+function remoteImageAllowed(source: string, env: Record<string, unknown> | undefined): boolean {
+  if (remoteImagePolicy.load || env?.remoteImages === true) return true;
+  try {
+    const url = new URL(source);
+    if (url.protocol === 'https:' && TRUSTED_IMAGE_HOSTS.has(url.hostname)) return true;
+  } catch { return false; }
+  const allow = env?.allowRemoteImage;
+  return typeof allow === 'function' && allow(source) === true;
+}
+
 const renderImage = markdown.renderer.rules.image;
 markdown.renderer.rules.image = (tokens, index, options, env, renderer) => {
   const source = String(tokens[index].attrGet('src') ?? '');
@@ -76,13 +103,22 @@ markdown.renderer.rules.image = (tokens, index, options, env, renderer) => {
   if (/^lownotes-image:[0-9a-f]{64}\.(png|jpg|gif|webp|bmp)$/.test(source) && typeof resolve === 'function') {
     const resolved = resolve(source);
     if (typeof resolved === 'string') tokens[index].attrSet('src', resolved);
+  } else if (isRemoteImage(source) && !remoteImageAllowed(source, env)) {
+    // Nothing is requested until the reader asks for this image.
+    const escape = markdown.utils.escapeHtml;
+    const alt = renderer.renderInlineAsText(tokens[index].children ?? [], options, env);
+    const text = typeof env?.remoteImageLabel === 'string' && env.remoteImageLabel ? env.remoteImageLabel : remoteImagePolicy.label;
+    const label = escape(alt ? `${text} (${alt})` : text);
+    return `<button type="button" class="remote-image-blocked" data-remote-src="${escape(source)}" title="${escape(source)}">${label}</button>`;
   }
   return renderImage ? renderImage(tokens, index, options, env, renderer) : renderer.renderToken(tokens, index, options);
 };
 
 markdown.use(previewSourceMap);
 
-export function renderMarkdown(source: string, resolveImage?: (src: string) => string, options: TaskPreviewOptions & { sourceMap?: boolean | 'editor' } = {}): string {
+export type RemoteImageOptions = { remoteImages?: boolean; allowRemoteImage?: (src: string) => boolean; remoteImageLabel?: string };
+
+export function renderMarkdown(source: string, resolveImage?: (src: string) => string, options: TaskPreviewOptions & RemoteImageOptions & { sourceMap?: boolean | 'editor' } = {}): string {
   return markdown.render(source, { resolveImage, ...options, taskSource: source });
 }
 

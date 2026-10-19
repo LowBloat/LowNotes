@@ -269,3 +269,12 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .cm-selectionBackground, ::selection {
   background-color: var(--selection) !important;
 }
+
+/* Placeholder for a remote image that was not loaded (privacy default). */
+.prose .remote-image-blocked {
+  display: inline-flex; align-items: center; gap: 0.35rem; max-width: 100%;
+  padding: 0.35rem 0.6rem; margin: 0.15rem 0; border: 1px dashed var(--border); border-radius: 6px;
+  background: var(--bg-card); color: var(--text-muted); font-size: 0.8em; cursor: pointer; text-align: left;
+  overflow-wrap: anywhere;
+}
+.prose .remote-image-blocked:hover, .prose .remote-image-blocked:focus-visible { color: var(--text-main); border-color: var(--accent); }
