@@ -9,6 +9,7 @@ Keep repository documentation, issues and pull requests in English so contributo
 - Search [existing issues](https://github.com/LowBloat/LowNotes/issues) and [pull requests](https://github.com/LowBloat/LowNotes/pulls) for related work.
 - For a larger feature or a sync/storage change, open an issue describing the problem and proposed approach before implementing it.
 - Keep each pull request focused on one problem. Include a concrete before/after example when it helps explain the change.
+- Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the code layout, and [docs/SYNC-PROTOCOL.md](docs/SYNC-PROTOCOL.md) before changing synchronization. Participation follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Report a bug or suggest a feature
 

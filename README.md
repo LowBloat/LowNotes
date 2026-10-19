@@ -213,7 +213,9 @@ The [verification workflow](.github/workflows/ci.yml) runs on pushes and pull re
 
 ## Contribute and support the project
 
-Bug reports, documentation improvements, translations of the app interface, reproducible tests and focused code changes are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks and pull request guidance.
+Bug reports, documentation improvements, translations of the app interface, reproducible tests and focused code changes are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks and pull request guidance, and the [code of conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+
+Design notes: [architecture](docs/ARCHITECTURE.md), [sync protocol](docs/SYNC-PROTOCOL.md), [threat model](docs/THREAT-MODEL.md), [roadmap](docs/ROADMAP.md) and the [changelog](CHANGELOG.md).
 
 - [Report a bug](https://github.com/LowBloat/LowNotes/issues/new?template=bug_report.yml) with your app version and steps to reproduce.
 - [Suggest a feature](https://github.com/LowBloat/LowNotes/issues/new?template=feature_request.yml) with the problem you want to solve.

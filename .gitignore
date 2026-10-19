@@ -13,3 +13,6 @@ src-tauri/gen
 __pycache__/
 playwright-report/
 test-results/
+*.pyc
+/dist
+/release-assets
