@@ -518,6 +518,10 @@ const ptBR: Dictionary = {
     aiSendFailed: 'falha ao enviar mensagem para a IA',
     aiEmptyResponse: 'a IA retornou uma resposta vazia',
   },
+  dialog: {
+    ok: 'OK',
+    cancel: 'Cancelar',
+  },
   preview: {
     remoteImageBlocked: 'Imagem remota bloqueada. Clique para carregar.',
   },

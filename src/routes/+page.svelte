@@ -28,6 +28,8 @@
   } from '$lib/api';
   import { locale, resolveLocale, t, trError } from '$lib/i18n';
   import { configureRemoteImages } from '$lib/markdown';
+  import { appAlert, dialogState } from '$lib/dialogs.svelte';
+  import AppDialog from '$lib/components/AppDialog.svelte';
   import { setTrayLanguage } from '$lib/api';
   import { resolveNoteLink } from '$lib/note-links';
   import { DEFAULT_PALETTE_ID, applyTheme } from '$lib/themes';
@@ -126,7 +128,7 @@
         lastUndoableAction = restored.has_more ? 'delete' : 'text';
       } else lastUndoableAction = 'text';
     } catch (error) {
-      alert(trError(String(error)));
+      void appAlert(trError(String(error)));
     } finally {
       undoPending = false;
     }
@@ -666,3 +668,8 @@
     }}
   />
 </div>
+
+<!-- In-app alert/confirm/prompt (see $lib/dialogs.svelte.ts). -->
+{#if dialogState.current}
+  {#key dialogState.current}<AppDialog request={dialogState.current} />{/key}
+{/if}

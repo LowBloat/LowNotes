@@ -6,6 +6,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { t, trError, ts } from '$lib/i18n';
   import { dismissibleModal } from '$lib/modal-dismiss';
+  import { appConfirm } from '$lib/dialogs.svelte';
   let {
     isOpen = $bindable(false),
     pairCode = $bindable(''),
@@ -103,7 +104,7 @@
   }
 
   async function handleRemove(peerId: string) {
-    if (confirm(ts('pair.confirmRemove'))) {
+    if (await appConfirm(ts('pair.confirmRemove'), { danger: true })) {
       try {
         await networkRemovePeer(peerId);
         onPeersChange?.();

@@ -63,3 +63,37 @@ test('a vault can be removed from the list after confirming, and missing folders
     expect(vault.errors).toEqual([]);
   } finally { vault.destroy(); }
 });
+
+test('rename and delete use in-app dialogs instead of native ones', async ({ page }) => {
+  let nativeDialogs = 0;
+  page.on('dialog', (dialog) => { nativeDialogs++; void dialog.dismiss(); });
+  const vault = await openVault(page);
+  try {
+    const row = page.getByRole('button', { name: 'Lista (Lista.md)' });
+    await row.hover();
+    await page.getByRole('button', { name: 'Rename' }).first().click();
+    const prompt = page.getByRole('dialog');
+    const field = prompt.getByRole('textbox');
+    await expect(field).toBeFocused();
+    await expect(field).toHaveValue('Lista.md');
+    await field.fill('Renamed.md');
+    await field.press('Enter');
+    await expect.poll(() => vault.calls.filter((c) => c.command === 'rename_item').map((c) => c.args)).toEqual([{ oldPath: 'Lista.md', newPath: 'Renamed.md' }]);
+
+    await row.hover();
+    await page.getByRole('button', { name: 'Delete' }).first().click();
+    const confirm = page.getByRole('dialog');
+    await expect(confirm).toContainText('Lista.md');
+    await expect(confirm.getByRole('button', { name: 'Cancel' })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(confirm).toBeHidden();
+    expect(vault.calls.some((c) => c.command === 'delete_item')).toBe(false);
+
+    await row.hover();
+    await page.getByRole('button', { name: 'Delete' }).first().click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Delete' }).click();
+    await expect.poll(() => vault.calls.filter((c) => c.command === 'delete_item').length).toBe(1);
+    expect(nativeDialogs).toBe(0);
+    expect(vault.errors).toEqual([]);
+  } finally { vault.destroy(); }
+});

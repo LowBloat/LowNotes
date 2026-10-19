@@ -30,6 +30,7 @@ export async function openVault(page: Page, options: {
   let deleted = false;
   const recovered: string[] = [];
   const forgotten: string[] = [];
+  const calls: Array<{ command: string; args: Record<string, any> }> = [];
   let notices = options.notices ?? [];
   let history = { version: 1, activeConversationId: null, conversations: [], memory: '' };
   const vault = { id: 'fixture', name: 'Test vault', path: 'fixture', peers: [] };
@@ -59,6 +60,7 @@ export async function openVault(page: Page, options: {
   };
   page.on('pageerror', error => errors.push(error.message));
   await page.exposeFunction('nativeInvokeMock', async (command: string, args: Record<string, any>) => {
+    calls.push({ command, args });
     if (command.startsWith('history_')) historyActions.push({ command, args });
     switch (command) {
       case 'get_app_state': return { settings, active_vault: vault, items, pair_info: null };
@@ -149,7 +151,7 @@ export async function openVault(page: Page, options: {
   await page.goto('/');
   await expect(page.locator('.cm-content')).toBeVisible();
   return {
-    source, errors, openedUrls, saves, recovered, reads, historyActions, forgotten,
+    source, errors, openedUrls, saves, recovered, reads, historyActions, forgotten, calls,
     deleteWhileEditing() { deleted = true; },
     content: () => text.toString(),
     async remoteAppend(content: string) {

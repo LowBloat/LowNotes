@@ -518,6 +518,10 @@ const esES: Dictionary = {
     aiSendFailed: 'fallo al enviar mensaje a la IA',
     aiEmptyResponse: 'la IA devolvió una respuesta vacía',
   },
+  dialog: {
+    ok: 'Aceptar',
+    cancel: 'Cancelar',
+  },
   preview: {
     remoteImageBlocked: 'Imagen remota bloqueada. Haz clic para cargarla.',
   },

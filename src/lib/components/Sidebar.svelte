@@ -14,6 +14,7 @@
     networkSyncNow,
   } from '../api';
   import { t, trError, ts } from '$lib/i18n';
+  import { appAlert, appConfirm, appPrompt } from '$lib/dialogs.svelte';
 
   let {
     activeVault = null,
@@ -121,7 +122,7 @@
       onRefreshItems();
       onSelectNote(path);
     } catch (e: any) {
-      alert(trError(typeof e === 'string' ? e : e.message || 'sidebar.errorCreateNote'));
+      void appAlert(trError(typeof e === 'string' ? e : e.message || 'sidebar.errorCreateNote'));
     }
   }
 
@@ -133,26 +134,26 @@
       newFolderName = '';
       onRefreshItems();
     } catch (e: any) {
-      alert(trError(typeof e === 'string' ? e : e.message || 'sidebar.errorCreateFolder'));
+      void appAlert(trError(typeof e === 'string' ? e : e.message || 'sidebar.errorCreateFolder'));
     }
   }
 
   async function handleDelete(path: string, event: MouseEvent) {
     event.stopPropagation();
-    if (confirm(ts('sidebar.confirmDelete', { path }))) {
+    if (await appConfirm(ts('sidebar.confirmDelete', { path }), { danger: true, confirmLabel: ts('sidebar.delete') })) {
       try {
         await deleteItem(path);
         onItemDeleted?.();
         onRefreshItems();
       } catch (e) {
-        alert(trError(String(e)));
+        void appAlert(trError(String(e)));
       }
     }
   }
 
   async function handleRename(oldPath: string, event: MouseEvent) {
     event.stopPropagation();
-    const newName = prompt(ts('sidebar.renamePrompt'), oldPath);
+    const newName = (await appPrompt(ts('sidebar.renamePrompt'), oldPath))?.trim();
     if (newName && newName !== oldPath) {
       try {
         await renameItem(oldPath, newName);
@@ -163,7 +164,7 @@
           onSelectNote(`${newName}${selectedPath.slice(oldPath.length)}`);
         }
       } catch (e: any) {
-        alert(trError(typeof e === 'string' ? e : e.message || 'sidebar.errorRename'));
+        void appAlert(trError(typeof e === 'string' ? e : e.message || 'sidebar.errorRename'));
       }
     }
   }
