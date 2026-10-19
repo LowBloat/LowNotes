@@ -139,8 +139,49 @@ pub fn list_vault_items(root: &Path) -> anyhow::Result<Vec<VaultItem>> {
     Ok(items)
 }
 
+/// The title is a `# ` heading in the first lines, so reading the start of the
+/// file is enough; listing a vault no longer reads every note in full.
+const TITLE_SCAN_BYTES: u64 = 4096;
+
+/// Titles by note, valid while size and modification time match (see `file_hash`).
+static TITLES: std::sync::OnceLock<
+    parking_lot::Mutex<std::collections::HashMap<PathBuf, (u64, std::time::SystemTime, String)>>,
+> = std::sync::OnceLock::new();
+
 fn extract_title_or_name(path: &Path, file_name: &str) -> String {
-    if let Ok(content) = fs::read_to_string(path) {
+    let metadata = fs::metadata(path).ok();
+    let key = metadata
+        .as_ref()
+        .and_then(|m| Some((m.len(), m.modified().ok()?)));
+    let settled = key.is_some_and(|(_, modified)| {
+        modified
+            .elapsed()
+            .is_ok_and(|age| age >= HASH_CACHE_MIN_AGE)
+    });
+    let cache = TITLES.get_or_init(Default::default);
+    if let (true, Some((len, modified))) = (settled, key) {
+        if let Some((cached_len, cached_time, title)) = cache.lock().get(path) {
+            if *cached_len == len && *cached_time == modified {
+                return title.clone();
+            }
+        }
+    }
+    let title = read_title_or_name(path, file_name);
+    if let (true, Some((len, modified))) = (settled, key) {
+        cache
+            .lock()
+            .insert(path.to_path_buf(), (len, modified, title.clone()));
+    }
+    title
+}
+
+fn read_title_or_name(path: &Path, file_name: &str) -> String {
+    use std::io::Read;
+    let mut head = Vec::new();
+    let read =
+        fs::File::open(path).and_then(|file| file.take(TITLE_SCAN_BYTES).read_to_end(&mut head));
+    if read.is_ok() {
+        let content = String::from_utf8_lossy(&head);
         for line in content.lines().take(10) {
             let trimmed = line.trim();
             if let Some(title) = trimmed.strip_prefix("# ") {
@@ -230,6 +271,40 @@ pub fn rename_item(root: &Path, old_relative: &str, new_relative: &str) -> anyho
     )
 }
 
+/// Hashes of files by path, valid while size and modification time match.
+static FILE_HASHES: std::sync::OnceLock<
+    parking_lot::Mutex<std::collections::HashMap<PathBuf, (u64, std::time::SystemTime, String)>>,
+> = std::sync::OnceLock::new();
+/// Files modified this recently are always rehashed: on file systems with a
+/// coarse clock (FAT/exFAT keep 2 s) two edits of the same size could
+/// otherwise share a modification time.
+const HASH_CACHE_MIN_AGE: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// BLAKE3 of a file, reusing the previous result while it is unchanged, so
+/// each periodic sync does not reread and rehash the whole vault.
+pub(crate) fn file_hash(path: &Path) -> std::io::Result<String> {
+    let metadata = fs::metadata(path)?;
+    let modified = metadata.modified()?;
+    let settled = modified
+        .elapsed()
+        .is_ok_and(|age| age >= HASH_CACHE_MIN_AGE);
+    let cache = FILE_HASHES.get_or_init(Default::default);
+    if settled {
+        if let Some((size, time, hash)) = cache.lock().get(path) {
+            if *size == metadata.len() && *time == modified {
+                return Ok(hash.clone());
+            }
+        }
+    }
+    let hash = blake3::hash(&fs::read(path)?).to_hex().to_string();
+    if settled {
+        cache
+            .lock()
+            .insert(path.to_path_buf(), (metadata.len(), modified, hash.clone()));
+    }
+    Ok(hash)
+}
+
 pub fn build_manifest(root: &Path) -> anyhow::Result<Manifest> {
     crate::note_transaction::recover_all(root)?;
     crate::links::prepare_sync(root)?;
@@ -241,8 +316,7 @@ pub fn build_manifest(root: &Path) -> anyhow::Result<Manifest> {
             continue;
         }
         let target = safe_join(root, &item.path)?;
-        if let Ok(bytes) = fs::read(&target) {
-            let hash = blake3::hash(&bytes).to_hex().to_string();
+        if let Ok(hash) = file_hash(&target) {
             manifest.insert(
                 item.path.clone(),
                 NoteMeta {
@@ -262,8 +336,7 @@ pub fn build_manifest(root: &Path) -> anyhow::Result<Manifest> {
     ] {
         let links_file = root.join(links_rel);
         if links_file.is_file() {
-            if let (Ok(bytes), Ok(metadata)) = (fs::read(&links_file), fs::metadata(&links_file)) {
-                let hash = blake3::hash(&bytes).to_hex().to_string();
+            if let (Ok(hash), Ok(metadata)) = (file_hash(&links_file), fs::metadata(&links_file)) {
                 let modified_ms = metadata
                     .modified()
                     .ok()
@@ -330,6 +403,31 @@ pub fn build_manifest(root: &Path) -> anyhow::Result<Manifest> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn file_hashes_follow_content_changes_and_titles_read_only_the_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("note.md");
+        fs::write(&path, "first").unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        filetime::set_file_mtime(&path, filetime::FileTime::from_system_time(old)).unwrap();
+        let first = file_hash(&path).unwrap();
+        assert_eq!(first, blake3::hash(b"first").to_hex().to_string());
+        assert_eq!(file_hash(&path).unwrap(), first);
+        // Same size, new content and a new modification time: rehashed.
+        fs::write(&path, "other").unwrap();
+        assert_eq!(
+            file_hash(&path).unwrap(),
+            blake3::hash(b"other").to_hex().to_string()
+        );
+
+        let big = dir.path().join("big.md");
+        fs::write(&big, format!("# Title here\n{}", "x".repeat(1 << 20))).unwrap();
+        assert_eq!(extract_title_or_name(&big, "big.md"), "Title here");
+        assert_eq!(
+            extract_title_or_name(&dir.path().join("missing.md"), "missing.md"),
+            "missing"
+        );
+    }
 
     #[test]
     fn test_safe_join_prevents_escape() {
