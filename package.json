@@ -1,6 +1,6 @@
 {
   "name": "lownotes",
-  "version": "0.3.5",
+  "version": "0.4.0",
   "description": "Local-first Markdown note-taking app with encrypted P2P sync, real-time collaboration and optional AI for Windows, Linux and macOS.",
   "homepage": "https://lowbloat.app/en/produtos/lownotes/",
   "repository": {
