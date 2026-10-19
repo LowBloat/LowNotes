@@ -370,6 +370,17 @@ pub fn network_request_pair(pair_code: String, state: State<'_, AppState>) -> Re
     Ok(())
 }
 
+/// Replaces the pairing token so every previously shared code stops working.
+#[tauri::command]
+pub fn network_regenerate_pair_code(state: State<'_, AppState>) -> Result<(), String> {
+    let vault_id = state.settings.read().active_vault().map(|v| v.id.clone()).ok_or("errors.noActiveVault")?;
+    let token = crate::network::rotate_pairing_token(&state.settings, &vault_id).ok_or("credentials.unavailable")?;
+    if let Some(service) = state.network.read().as_ref() {
+        service.set_pairing_token(token);
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn network_answer_pair(
     request_id: String,

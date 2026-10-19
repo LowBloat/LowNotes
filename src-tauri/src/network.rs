@@ -26,6 +26,15 @@ const METADATA_ALPN: &[u8] = b"lownotes/sync/4";
 const IMAGE_ALPN: &[u8] = b"lownotes/sync/3";
 const LEGACY_ALPN: &[u8] = b"lownotes/sync/2";
 const MAX_PACKET_BYTES: usize = 24 * 1024 * 1024;
+/// Unknown endpoints may only send a pairing request, which is tiny.
+const MAX_UNAUTHENTICATED_PACKET_BYTES: usize = 16 * 1024;
+/// Idle guard for reading one packet; generous enough for 24 MiB over a relay.
+const PACKET_READ_TIMEOUT: Duration = Duration::from_secs(180);
+/// How long an unknown endpoint may take to send its first packet.
+const FIRST_PACKET_TIMEOUT: Duration = Duration::from_secs(30);
+/// Concurrent handshakes from endpoints that are not paired yet.
+const MAX_PENDING_UNAUTHENTICATED: usize = 16;
+const MAX_DEVICE_NAME_CHARS: usize = 64;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PairInfo {
@@ -134,6 +143,7 @@ enum NetworkCommand {
     BroadcastCrdt { note_path: String, update: Vec<u8> },
     BroadcastAwareness { note_path: String, update: Vec<u8> },
     BroadcastDelete { note_path: String },
+    RepublishPairCode,
 }
 
 #[derive(Clone)]
@@ -149,6 +159,7 @@ pub struct NetworkService {
     peers: Arc<RwLock<Vec<PeerConfig>>>,
     commands: tokio::sync::mpsc::UnboundedSender<NetworkCommand>,
     pair_info: Arc<RwLock<Option<PairInfo>>>,
+    pairing_token: Arc<RwLock<String>>,
 }
 
 impl NetworkService {
@@ -165,6 +176,8 @@ impl NetworkService {
         let pair_info = Arc::new(RwLock::new(None::<PairInfo>));
         let worker_pair_info = pair_info.clone();
         let worker_settings = settings.clone();
+        let pairing_token = Arc::new(RwLock::new(identity.pairing_token.clone()));
+        let worker_token = pairing_token.clone();
 
         std::thread::Builder::new()
             .name("lownotes-network".to_owned())
@@ -180,6 +193,7 @@ impl NetworkService {
                         if let Err(err) = rt.block_on(run_network(
                             vault,
                             identity,
+                            worker_token,
                             worker_peers,
                             worker_pair_info,
                             command_rx,
@@ -214,7 +228,15 @@ impl NetworkService {
             peers,
             commands: command_tx,
             pair_info,
+            pairing_token,
         }
+    }
+
+    /// Replace the token embedded in pair codes and publish a new code. Codes
+    /// shared before the change can no longer start a pairing.
+    pub fn set_pairing_token(&self, token: String) {
+        *self.pairing_token.write() = token;
+        let _ = self.commands.send(NetworkCommand::RepublishPairCode);
     }
 
     pub fn pair_info(&self) -> Option<PairInfo> {
@@ -261,6 +283,7 @@ impl NetworkService {
 async fn run_network(
     vault: PathBuf,
     identity: NetworkIdentity,
+    pairing_token: Arc<RwLock<String>>,
     peers: Arc<RwLock<Vec<PeerConfig>>>,
     pair_info: Arc<RwLock<Option<PairInfo>>>,
     mut commands: tokio::sync::mpsc::UnboundedReceiver<NetworkCommand>,
@@ -273,15 +296,17 @@ async fn run_network(
         .bind()
         .await?;
 
-    publish_pair_code(&endpoint, &identity, &app, &pair_info);
+    publish_pair_code(&endpoint, &identity, &pairing_token.read(), &app, &pair_info);
 
     let online_ep = endpoint.clone();
     let online_id = identity.clone();
     let online_app = app.clone();
     let online_pair_info = pair_info.clone();
+    let online_token = pairing_token.clone();
     tokio::spawn(async move {
         let _ = tokio::time::timeout(Duration::from_secs(10), online_ep.online()).await;
-        publish_pair_code(&online_ep, &online_id, &online_app, &online_pair_info);
+        let token = online_token.read().clone();
+        publish_pair_code(&online_ep, &online_id, &token, &online_app, &online_pair_info);
     });
 
     let sync_in_flight = Arc::new(parking_lot::Mutex::new(HashSet::<String>::new()));
@@ -321,7 +346,9 @@ async fn run_network(
     let accept_peers = peers.clone();
     let accept_app = app.clone();
     let accept_vault = vault.clone();
-    let accept_token = identity.pairing_token.clone();
+    let accept_token = pairing_token.clone();
+    let accept_pair_info = pair_info.clone();
+    let unauthenticated = Arc::new(tokio::sync::Semaphore::new(MAX_PENDING_UNAUTHENTICATED));
     let accept_answers = pending_answers.clone();
     let accept_ident = identity.clone();
     let accept_settings = settings.clone();
@@ -336,6 +363,8 @@ async fn run_network(
             let p_ident = accept_ident.clone();
             let p_settings = accept_settings.clone();
             let p_sync = accept_sync.clone();
+            let p_pair_info = accept_pair_info.clone();
+            let p_unauthenticated = unauthenticated.clone();
 
             let p_ep = accept_ep.clone();
             tokio::spawn(async move {
@@ -350,6 +379,8 @@ async fn run_network(
                     p_ident,
                     p_settings,
                     p_sync,
+                    p_pair_info,
+                    p_unauthenticated,
                 )
                 .await;
                 if let Err(e) = res {
@@ -443,6 +474,10 @@ async fn run_network(
                     });
                 }
             }
+            NetworkCommand::RepublishPairCode => {
+                let token = pairing_token.read().clone();
+                publish_pair_code(&endpoint, &identity, &token, &app, &pair_info);
+            }
             NetworkCommand::BroadcastDelete { note_path } => {
                 let known: Vec<PeerConfig> = peers.read().clone();
                 for peer in known {
@@ -461,6 +496,7 @@ async fn run_network(
 fn publish_pair_code(
     endpoint: &Endpoint,
     identity: &NetworkIdentity,
+    pairing_token: &str,
     app: &AppHandle,
     pair_info: &Arc<RwLock<Option<PairInfo>>>,
 ) {
@@ -473,7 +509,7 @@ fn publish_pair_code(
             endpoint_id: endpoint_id.clone(),
             ticket: ticket.to_string(),
         },
-        token: identity.pairing_token.clone(),
+        token: pairing_token.to_owned(),
         vault_id: identity.vault_id.clone(),
         vault_name: identity.vault_name.clone(),
     };
@@ -498,24 +534,51 @@ async fn handle_incoming_connection(
     peers: Arc<RwLock<Vec<PeerConfig>>>,
     app: AppHandle,
     vault: PathBuf,
-    pairing_token: String,
+    pairing_token: Arc<RwLock<String>>,
     pending_answers: Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
     identity: NetworkIdentity,
     settings: Arc<RwLock<AppSettings>>,
     sync_in_flight: Arc<parking_lot::Mutex<HashSet<String>>>,
+    pair_info: Arc<RwLock<Option<PairInfo>>>,
+    unauthenticated: Arc<tokio::sync::Semaphore>,
 ) -> anyhow::Result<()> {
     let connection = incoming.await?;
     let remote_id = connection.remote_id();
-    let (mut send, mut recv) = connection.accept_bi().await?;
+    let known = peers.read().iter().any(|p| p.endpoint_id == remote_id.to_string());
+    // Unknown endpoints share a small pool of handshake slots and may only send
+    // a small pairing request; nothing large is read before authorization.
+    let _slot = if known {
+        None
+    } else {
+        match unauthenticated.clone().try_acquire_owned() {
+            Ok(permit) => Some(permit),
+            Err(_) => {
+                connection.close(1u32.into(), b"busy");
+                bail!("errors.unauthorizedDevice");
+            }
+        }
+    };
+    let (mut send, mut recv) = tokio::time::timeout(FIRST_PACKET_TIMEOUT, connection.accept_bi())
+        .await
+        .context("errors.unexpectedPacketStart")??;
 
-    let packet: Packet = recv_packet(&mut recv).await?;
+    let limit = if known { MAX_PACKET_BYTES } else { MAX_UNAUTHENTICATED_PACKET_BYTES };
+    let packet: Packet = recv_packet_within(&mut recv, limit, FIRST_PACKET_TIMEOUT).await?;
+    if !known && !matches!(packet, Packet::PairRequest { .. }) {
+        connection.close(1u32.into(), b"unauthorized");
+        bail!("errors.unauthorizedDevice");
+    }
 
     match packet {
         Packet::PairRequest { token, requester } => {
-            let already_known = peers.read().iter().any(|p| p.endpoint_id == remote_id.to_string());
+            let already_known = known;
+            // The connection proves the remote identity; never trust the id
+            // written inside the packet.
+            let requester = authenticated_requester(&remote_id, requester);
+            let current_token = pairing_token.read().clone();
             let (accepted, request_id) = if already_known {
                 (true, None)
-            } else if token != pairing_token {
+            } else if requester.is_none() || !tokens_match(&token, &current_token) {
                 (false, None)
             } else {
                 let req_id = remote_id.to_string();
@@ -530,7 +593,7 @@ async fn handle_incoming_connection(
                     "p2p:pair-requested",
                     NetworkEventPayload::PairRequested {
                         request_id: req_id.clone(),
-                        peer: requester.clone(),
+                        peer: requester.clone().expect("validated requester"),
                     },
                 );
 
@@ -549,7 +612,7 @@ async fn handle_incoming_connection(
 
             let responder_info = if accepted {
                 Some(PeerConfig {
-                    name: identity.device_name,
+                    name: identity.device_name.clone(),
                     endpoint_id: endpoint.id().to_string(),
                     ticket: EndpointTicket::new(endpoint.addr()).to_string(),
                 })
@@ -561,9 +624,15 @@ async fn handle_incoming_connection(
             send.finish()?;
             let _ = tokio::time::timeout(Duration::from_secs(5), send.stopped()).await;
 
-            if accepted && !already_known {
+            if let (true, false, Some(requester)) = (accepted, already_known, requester) {
                 peers.write().push(requester.clone());
                 persist_peer(&settings, &identity.vault_id, &requester);
+                // A code is good for one pairing: rotate it so a copy that was
+                // shared or seen elsewhere cannot enrol another device.
+                if let Some(next) = rotate_pairing_token(&settings, &identity.vault_id) {
+                    *pairing_token.write() = next.clone();
+                    publish_pair_code(&endpoint, &identity, &next, &app, &pair_info);
+                }
                 let _ = app.emit(
                     "p2p:pair-approved",
                     NetworkEventPayload::PairApproved {
@@ -1258,15 +1327,68 @@ async fn send_packet(stream: &mut iroh::endpoint::SendStream, packet: &Packet) -
 }
 
 async fn recv_packet<T: DeserializeOwned>(stream: &mut iroh::endpoint::RecvStream) -> anyhow::Result<T> {
-    let mut len_buf = [0u8; 4];
-    stream.read_exact(&mut len_buf).await?;
-    let len = u32::from_be_bytes(len_buf) as usize;
-    if len > MAX_PACKET_BYTES {
-        bail!("errors.packetReceivedTooLarge");
+    recv_packet_within(stream, MAX_PACKET_BYTES, PACKET_READ_TIMEOUT).await
+}
+
+/// Read one length-prefixed JSON packet, refusing it before allocating when it
+/// is larger than `limit`, and giving up when the peer stalls.
+async fn recv_packet_within<T: DeserializeOwned>(
+    stream: &mut iroh::endpoint::RecvStream,
+    limit: usize,
+    timeout: Duration,
+) -> anyhow::Result<T> {
+    tokio::time::timeout(timeout, async {
+        let mut len_buf = [0u8; 4];
+        stream.read_exact(&mut len_buf).await?;
+        let len = u32::from_be_bytes(len_buf) as usize;
+        if len > limit {
+            bail!("errors.packetReceivedTooLarge");
+        }
+        let mut buf = vec![0u8; len];
+        stream.read_exact(&mut buf).await?;
+        Ok(serde_json::from_slice(&buf)?)
+    })
+    .await
+    .context("errors.packetTimeout")?
+}
+
+/// Compare pairing tokens without leaking the matching prefix through timing.
+fn tokens_match(presented: &str, expected: &str) -> bool {
+    // blake3::Hash equality is constant-time.
+    !expected.is_empty() && blake3::hash(presented.as_bytes()) == blake3::hash(expected.as_bytes())
+}
+
+/// The requester as proven by the encrypted connection: its id is the
+/// connection's remote id, its ticket must name the same endpoint, and the
+/// display name is bounded.
+fn authenticated_requester(remote_id: &iroh::EndpointId, requester: PeerConfig) -> Option<PeerConfig> {
+    let ticket: EndpointTicket = requester.ticket.parse().ok()?;
+    if ticket.endpoint_addr().id != *remote_id {
+        return None;
     }
-    let mut buf = vec![0u8; len];
-    stream.read_exact(&mut buf).await?;
-    Ok(serde_json::from_slice(&buf)?)
+    let name: String = requester.name.trim().chars().filter(|c| !c.is_control()).take(MAX_DEVICE_NAME_CHARS).collect();
+    Some(PeerConfig {
+        name: if name.is_empty() { remote_id.to_string().chars().take(10).collect() } else { name },
+        endpoint_id: remote_id.to_string(),
+        ticket: requester.ticket,
+    })
+}
+
+/// Replace the vault's pairing token and persist it. Returns the new token, or
+/// `None` (keeping the old token) when it cannot be saved.
+pub(crate) fn rotate_pairing_token(settings: &Arc<RwLock<AppSettings>>, vault_id: &str) -> Option<String> {
+    let mut s = settings.write();
+    let vault = s.vaults.iter_mut().find(|v| v.id == vault_id)?;
+    let previous = std::mem::replace(&mut vault.pairing_token, crate::config::new_pairing_token());
+    let next = vault.pairing_token.clone();
+    if let Err(error) = s.save() {
+        eprintln!("[p2p] could not persist a rotated pairing token: {error:#}");
+        if let Some(vault) = s.vaults.iter_mut().find(|v| v.id == vault_id) {
+            vault.pairing_token = previous;
+        }
+        return None;
+    }
+    Some(next)
 }
 
 #[cfg(test)]
@@ -1350,6 +1472,76 @@ mod tests {
             .bind()
             .await
             .unwrap()
+    }
+
+    #[test]
+    fn pairing_tokens_compare_exactly_and_reject_empty_expectations() {
+        assert!(tokens_match("abc", "abc"));
+        assert!(!tokens_match("abd", "abc"));
+        assert!(!tokens_match("", ""));
+        assert!(!tokens_match("abc", ""));
+    }
+
+    #[tokio::test]
+    async fn pairing_requester_is_bound_to_the_connection_identity() {
+        let ep_a = bind_endpoint().await;
+        let ep_b = bind_endpoint().await;
+        let honest = peer_of(&ep_b, "  Laptop\u{7}  ");
+        let checked = authenticated_requester(&ep_b.id(), honest.clone()).unwrap();
+        assert_eq!(checked.endpoint_id, ep_b.id().to_string());
+        assert_eq!(checked.name, "Laptop");
+
+        // B presents A's ticket and id inside its packet: rejected.
+        let forged = PeerConfig { name: "Forged".into(), ..peer_of(&ep_a, "A") };
+        assert!(authenticated_requester(&ep_b.id(), forged).is_none());
+        // A mismatched id with B's own ticket is rewritten to the proven id.
+        let renamed = PeerConfig { endpoint_id: ep_a.id().to_string(), ..honest };
+        assert_eq!(authenticated_requester(&ep_b.id(), renamed).unwrap().endpoint_id, ep_b.id().to_string());
+        let long = PeerConfig { name: "x".repeat(500), ..peer_of(&ep_b, "B") };
+        assert_eq!(authenticated_requester(&ep_b.id(), long).unwrap().name.chars().count(), MAX_DEVICE_NAME_CHARS);
+    }
+
+    #[tokio::test]
+    async fn oversized_unauthenticated_packets_are_refused_before_allocation() {
+        let ep_a = bind_endpoint().await;
+        let ep_b = bind_endpoint().await;
+        let addr: iroh::EndpointAddr = peer_of(&ep_a, "A").endpoint_addr().unwrap();
+        let server = tokio::spawn({
+            let ep_a = ep_a.clone();
+            async move {
+                let connection = ep_accept(&ep_a).await.await.unwrap();
+                let (_send, mut recv) = connection.accept_bi().await.unwrap();
+                recv_packet_within::<Packet>(&mut recv, MAX_UNAUTHENTICATED_PACKET_BYTES, FIRST_PACKET_TIMEOUT).await
+            }
+        });
+        let connection = ep_b.connect(addr, ALPN).await.unwrap();
+        let (mut send, _recv) = connection.open_bi().await.unwrap();
+        // Announce 1 MiB but send only the prefix: the server must refuse on the length.
+        send.write_all(&(1024u32 * 1024).to_be_bytes()).await.unwrap();
+        let error = server.await.unwrap().unwrap_err();
+        assert!(error.to_string().contains("packetReceivedTooLarge"), "{error:#}");
+    }
+
+    #[tokio::test]
+    async fn stalled_packets_time_out() {
+        let ep_a = bind_endpoint().await;
+        let ep_b = bind_endpoint().await;
+        let addr: iroh::EndpointAddr = peer_of(&ep_a, "A").endpoint_addr().unwrap();
+        let server = tokio::spawn({
+            let ep_a = ep_a.clone();
+            async move {
+                let connection = ep_accept(&ep_a).await.await.unwrap();
+                let (_send, mut recv) = connection.accept_bi().await.unwrap();
+                recv_packet_within::<Packet>(&mut recv, MAX_UNAUTHENTICATED_PACKET_BYTES, Duration::from_millis(300)).await
+            }
+        });
+        let connection = ep_b.connect(addr, ALPN).await.unwrap();
+        let (mut send, _recv) = connection.open_bi().await.unwrap();
+        send.write_all(&64u32.to_be_bytes()).await.unwrap();
+        send.write_all(b"{").await.unwrap();
+        let error = server.await.unwrap().unwrap_err();
+        assert!(error.to_string().contains("packetTimeout"), "{error:#}");
+        drop(send);
     }
 
     #[tokio::test]

@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { Check, Copy, X } from 'lucide-svelte';
+  import { Check, Copy, RefreshCw, X } from 'lucide-svelte';
   import type { NetworkEventPayload, PeerConfig } from '../types';
-  import { networkRequestPair, networkRemovePeer, networkGetPairInfo } from '../api';
+  import { networkRequestPair, networkRemovePeer, networkGetPairInfo, networkRegeneratePairCode } from '../api';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { onDestroy, onMount } from 'svelte';
   import { t, trError, ts } from '$lib/i18n';
@@ -54,6 +54,21 @@
       fetchPairInfo();
     }
   });
+  let regenerating = $state(false);
+  async function regenerateCode() {
+    regenerating = true;
+    statusMessage = null;
+    try {
+      await networkRegeneratePairCode();
+      copied = false;
+      statusMessage = { type: 'info', text: ts('pair.regenerated') };
+    } catch (e) {
+      statusMessage = { type: 'error', text: trError(String(e)) };
+    } finally {
+      regenerating = false;
+    }
+  }
+
   function copyCode() {
     if (!pairCode) return;
     navigator.clipboard.writeText(pairCode);
@@ -170,7 +185,7 @@
         {#if activeTab === 'share'}
           <div class="flex flex-col gap-4">
             <p class="text-xs text-[var(--text-muted)] leading-relaxed">
-              {$t('pair.shareDescription')}
+              {$t('pair.shareDescription')} {$t('pair.singleUse')}
             </p>
 
             <div class="flex flex-col gap-1.5">
@@ -203,6 +218,13 @@
                 {$t('pair.idLabel')} {endpointId ? (endpointId.length > 16 ? endpointId.slice(0, 16) + '...' : endpointId) : '...'}
               </span>
               <button
+                onclick={regenerateCode}
+                disabled={!pairCode || regenerating}
+                class="ml-auto mr-2 px-3 py-2 border border-[var(--border)] hover:bg-[var(--bg-hover)] disabled:opacity-40 disabled:cursor-not-allowed text-[var(--text-main)] text-xs font-medium rounded-lg transition flex items-center gap-1.5"
+              >
+                <RefreshCw size={14} /> {$t('pair.regenerate')}
+              </button>
+              <button
                 onclick={copyCode}
                 disabled={!pairCode}
                 class="px-4 py-2 bg-[var(--accent)] hover:bg-[var(--accent-hover)] disabled:opacity-40 disabled:cursor-not-allowed text-black text-xs font-semibold rounded-lg transition shadow-md flex items-center gap-1.5"
@@ -211,6 +233,9 @@
                 {copied ? $t('pair.copied') : $t('pair.copy')}
               </button>
             </div>
+            {#if statusMessage}
+              <p role="status" class="text-xs {statusMessage.type === 'error' ? 'text-red-400' : 'text-[var(--text-muted)]'}">{statusMessage.text}</p>
+            {/if}
           </div>
         {:else if activeTab === 'join'}
           <div class="flex flex-col gap-4">

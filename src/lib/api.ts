@@ -151,6 +151,11 @@ export async function networkGetPairInfo(): Promise<PairInfo | null> {
   return await invoke('network_get_pair_info');
 }
 
+/** Invalidate every shared pair code; the new one arrives through `p2p:ready`. */
+export async function networkRegeneratePairCode(): Promise<void> {
+  await invoke('network_regenerate_pair_code');
+}
+
 export async function saveLanguage(language: string): Promise<void> {
   return await invoke('save_language', { language });
 }
