@@ -218,6 +218,7 @@ pub fn run() {
             commands::chat_history_save,
             commands::select_vault,
             commands::create_vault,
+            commands::forget_vault,
             commands::list_notes,
             commands::read_note,
             commands::save_note,

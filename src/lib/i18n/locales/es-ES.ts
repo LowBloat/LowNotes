@@ -81,6 +81,7 @@ const esES: Dictionary = {
   sidebar: {
     selectVault: 'Seleccionar Vault',
     yourVaults: 'Tus Vaults',
+    removeVault: 'Quitar de la lista', removeVaultConfirm: '¿Quitar "{name}" de LowNotes? La carpeta y sus notas siguen en el disco. Si la agregas de nuevo se crea otra identidad y los dispositivos deben emparejarse otra vez.', removeVaultAction: 'Quitar', vaultMissing: 'Carpeta no encontrada',
     active: 'activo',
     openComputerFolder: 'Abrir Carpeta del Computador',
     searchPlaceholder: 'Buscar notas...',

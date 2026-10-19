@@ -185,6 +185,47 @@ pub async fn create_vault(path_str: String, name: Option<String>, app: AppHandle
     }).await
 }
 
+/// Removes a vault from the app's list without touching its folder. Its
+/// identity and pairing token leave the OS credential store, so adding the same
+/// folder again creates a new device identity that must be paired again.
+#[tauri::command]
+pub async fn forget_vault(vault_id: String, app: AppHandle) -> Result<InitialStateResponse, String> {
+    on_worker(app, move |state, app| {
+        let mut settings = state.settings.write();
+        let was_active = settings.active_vault_id.as_deref() == Some(vault_id.as_str());
+        let previous = settings.clone();
+        settings.forget_vault(&vault_id).ok_or("errors.vaultNotFound")?;
+        if let Err(error) = settings.save() {
+            *settings = previous;
+            return Err(error.to_string());
+        }
+        // Saving again rotates the backup as well; once neither settings file
+        // names the removed vault's secrets, the save deletes them from the store.
+        if let Err(error) = settings.save() {
+            eprintln!("[vault] removed vault secrets are kept until the next save: {error:#}");
+        }
+        let active = settings.active_vault().cloned();
+        drop(settings);
+        if was_active {
+            match &active {
+                Some(vault) => restart_network_service(state, vault, app.clone())?,
+                None => { state.network.write().take(); }
+            }
+        }
+        let items = match &active {
+            Some(vault) => vault::list_vault_items(&vault.path).unwrap_or_default(),
+            None => Vec::new(),
+        };
+        let pair_info = state.network.read().as_ref().and_then(|s| s.pair_info());
+        Ok(InitialStateResponse {
+            settings: state.settings.read().for_frontend(),
+            active_vault: active.as_ref().map(VaultConfig::for_frontend),
+            items,
+            pair_info,
+        })
+    }).await
+}
+
 #[tauri::command]
 pub async fn list_notes(app: AppHandle) -> Result<Vec<VaultItem>, String> {
     on_worker(app, move |state, _app| {
