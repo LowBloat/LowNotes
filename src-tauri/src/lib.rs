@@ -8,6 +8,7 @@ pub mod catalog_sync;
 pub mod chat_history;
 pub mod commands;
 pub mod config;
+pub mod context_menu;
 pub mod crdt;
 pub mod link_operations;
 pub mod links;
@@ -44,6 +45,7 @@ use tauri::{
 
 use commands::AppState;
 use config::AppSettings;
+use context_menu::PendingOpen;
 use crdt::CrdtManager;
 use network::{NetworkIdentity, NetworkService};
 
@@ -63,7 +65,9 @@ struct TrayMenu {
     quit: MenuItem<tauri::Wry>,
 }
 
-/// Called by the interface whenever its resolved language changes.
+/// Called by the interface on start and whenever its resolved language
+/// changes. Also refreshes the "Open with LowNotes" entries, whose label
+/// follows the language and whose program path moves with a portable copy.
 #[tauri::command]
 fn set_tray_language(language: String, app: tauri::AppHandle) -> Result<(), String> {
     if let Some(menu) = app.try_state::<TrayMenu>() {
@@ -71,7 +75,29 @@ fn set_tray_language(language: String, app: tauri::AppHandle) -> Result<(), Stri
         menu.open.set_text(open).map_err(|e| e.to_string())?;
         menu.quit.set_text(quit).map_err(|e| e.to_string())?;
     }
+    let context_menu = app.state::<AppState>().settings.read().context_menu;
+    if context_menu && context_menu::SUPPORTED {
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(error) = context_menu::apply(true, &language) {
+                tracing::warn!("could not refresh the context menu entries: {error:#}");
+            }
+        });
+    }
     Ok(())
+}
+
+/// Keeps a folder or note from a launch for the interface, which takes it with
+/// `take_open_request` after loading or when this event arrives.
+fn queue_open_request<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    args: Vec<String>,
+    cwd: &std::path::Path,
+) {
+    use tauri::Emitter;
+    if let Some(path) = context_menu::requested_path(args, cwd) {
+        app.state::<PendingOpen>().set(path);
+        let _ = app.emit("app:open-request", ());
+    }
 }
 
 fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
@@ -107,7 +133,8 @@ pub fn run() {
 
     // Register first so duplicate launches exit before the tray and network start.
     #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+        queue_open_request(app, args, std::path::Path::new(&cwd));
         show_main_window(app);
     }));
 
@@ -143,7 +170,11 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(update_policy)
         .manage(app_state)
+        .manage(PendingOpen::default())
         .setup(move |app| {
+            if let Ok(cwd) = std::env::current_dir() {
+                queue_open_request(app.handle(), std::env::args().collect(), &cwd);
+            }
             let projection_app = app.handle().clone();
             app.state::<AppState>()
                 .crdt
@@ -306,6 +337,9 @@ pub fn run() {
             commands::ai_suggest_links,
             commands::save_update_prefs,
             commands::save_close_to_tray,
+            commands::context_menu_supported,
+            commands::save_context_menu,
+            commands::take_open_request,
             commands::open_log_folder,
         ])
         .run(tauri::generate_context!())

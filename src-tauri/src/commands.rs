@@ -1314,6 +1314,50 @@ pub fn save_close_to_tray(close_to_tray: bool, state: State<'_, AppState>) -> Re
     Ok(())
 }
 
+#[tauri::command]
+pub fn context_menu_supported() -> bool {
+    crate::context_menu::SUPPORTED
+}
+
+/// `language` is the interface's resolved language, used for the entry label.
+#[tauri::command]
+pub async fn save_context_menu(
+    enabled: bool,
+    language: String,
+    app: AppHandle,
+) -> Result<(), String> {
+    on_worker(app, move |state, _app| {
+        crate::context_menu::apply(enabled, &language).map_err(|error| {
+            tracing::warn!("could not update the context menu entries: {error:#}");
+            "errors.contextMenu".to_string()
+        })?;
+        let mut settings = state.settings.write();
+        let previous = std::mem::replace(&mut settings.context_menu, enabled);
+        if let Err(error) = settings.save() {
+            settings.context_menu = previous;
+            let _ = crate::context_menu::apply(previous, &language);
+            return Err(error.to_string());
+        }
+        Ok(())
+    })
+    .await
+}
+
+/// The folder or note LowNotes was launched with, once.
+#[tauri::command]
+pub async fn take_open_request(
+    app: AppHandle,
+) -> Result<Option<crate::context_menu::OpenRequest>, String> {
+    on_worker(app, move |state, app| {
+        let Some(path) = app.state::<crate::context_menu::PendingOpen>().take() else {
+            return Ok(None);
+        };
+        let vaults = state.settings.read().vaults.clone();
+        Ok(crate::context_menu::resolve(&path, &vaults))
+    })
+    .await
+}
+
 fn restart_network_service(
     state: &AppState,
     vault: &VaultConfig,

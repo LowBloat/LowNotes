@@ -536,6 +536,10 @@ pub struct AppSettings {
     pub update_check: bool,
     #[serde(default = "default_true")]
     pub close_to_tray: bool,
+    /// "Open with LowNotes" in the file manager. Off by default: it adds
+    /// entries outside the app's own folders.
+    #[serde(default)]
+    pub context_menu: bool,
     #[serde(default)]
     pub skipped_version: String,
 }
@@ -567,6 +571,7 @@ impl Default for AppSettings {
             has_seen_welcome: false,
             update_check: default_true(),
             close_to_tray: default_true(),
+            context_menu: false,
             skipped_version: String::new(),
         }
     }
@@ -840,6 +845,15 @@ mod tests {
         saved.as_object_mut().unwrap().remove("close_to_tray");
         let restored: AppSettings = serde_json::from_value(saved).unwrap();
         assert!(restored.close_to_tray);
+    }
+
+    #[test]
+    fn the_context_menu_stays_off_until_enabled() {
+        assert!(!AppSettings::default().context_menu);
+        let mut saved = serde_json::to_value(AppSettings::default()).unwrap();
+        saved.as_object_mut().unwrap().remove("context_menu");
+        let restored: AppSettings = serde_json::from_value(saved).unwrap();
+        assert!(!restored.context_menu);
     }
 
     #[test]
