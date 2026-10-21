@@ -6,11 +6,19 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-21
+
 ### Added
 - "Open with LowNotes" in the file manager for folders and Markdown files on Windows and Linux, off by default (Settings → System integration). Launching LowNotes with a folder or note opens it, and asks before turning a new folder into a vault ([#75](https://github.com/LowBloat/LowNotes/issues/75)).
 
 ### Fixed
 - The update dialog renders release notes as formatted Markdown instead of raw text; their links open in the browser ([#73](https://github.com/LowBloat/LowNotes/issues/73)).
+
+### Security
+- markdown-it 15.0.3 fixes quadratic-time rendering of crafted link reference definitions and inline HTML, which synced notes could trigger; rustls-webpki and the bundled root certificates no longer trust distrusted intermediates ([#79](https://github.com/LowBloat/LowNotes/pull/79)).
+
+### Development
+- The Linux release build can run on a self-hosted runner chosen by the `LINUX_RELEASE_RUNNER` repository variable; `.github/runner` describes the container. The Arch package has its own job, and manual release runs can skip publishing with `dry_run` ([#76](https://github.com/LowBloat/LowNotes/issues/76)).
 
 ## [0.4.0] - 2026-10-19
 
@@ -61,5 +69,6 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 - Dependency updates: Tauri plugins, iroh 1.3, rusqlite 0.40, base64 0.23, html-escape 0.3 and GitHub Actions.
 - Community, security and design documentation ([#32](https://github.com/LowBloat/LowNotes/issues/32), [#33](https://github.com/LowBloat/LowNotes/issues/33)).
 
-[Unreleased]: https://github.com/LowBloat/LowNotes/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/LowBloat/LowNotes/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/LowBloat/LowNotes/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/LowBloat/LowNotes/compare/v0.3.5...v0.4.0
