@@ -1,0 +1,20 @@
+services:
+  runner:
+    build: .
+    image: lownotes-runner:2.338.0
+    container_name: lownotes-runner
+    restart: unless-stopped
+    init: true
+    environment:
+      RUNNER_URL: https://github.com/LowBloat/LowNotes
+      RUNNER_NAME: ${RUNNER_NAME:-desenv}
+      RUNNER_LABELS: lownotes-linux-release
+    volumes:
+      - state:/home/runner/state
+    # Leave room for the other services on the host. A release build (LTO, one
+    # codegen unit) peaks at a few GB.
+    cpus: 7
+    mem_limit: 8g
+
+volumes:
+  state:

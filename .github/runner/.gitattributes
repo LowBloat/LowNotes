@@ -1,0 +1,2 @@
+# The script runs inside a Linux container, even when the checkout is on Windows.
+entrypoint.sh text eol=lf
