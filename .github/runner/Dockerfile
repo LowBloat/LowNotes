@@ -9,12 +9,13 @@ ARG RUNNER_SHA256=af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Build tools plus the desktop libraries the release workflow installs, so its
-# apt-get step finds them already present.
+# apt-get step finds them already present. The AppImage bundler needs xdg-open,
+# which GitHub's runner image has preinstalled.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       build-essential ca-certificates curl file git jq pkg-config python3 sudo unzip xz-utils zstd \
       libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libappindicator3-dev \
-      librsvg2-dev libssl-dev libdbus-1-dev patchelf \
+      librsvg2-dev libssl-dev libdbus-1-dev patchelf xdg-utils \
  && rm -rf /var/lib/apt/lists/*
 
 # The workflow calls sudo apt-get, as on GitHub-hosted runners.
