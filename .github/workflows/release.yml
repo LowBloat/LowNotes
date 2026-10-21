@@ -51,14 +51,15 @@ jobs:
         run: bun scripts/check-version.mjs "$RELEASE_TAG"
 
   # Same checks as every pull request (frontend, interface and Rust on the
-  # three systems), run against the tagged code before any installer is built.
+  # three systems), run against the tagged code. The installers build in
+  # parallel; nothing is published unless the checks pass.
   checks:
     name: Verificações
     uses: ./.github/workflows/ci.yml
 
   windows:
     name: Windows x64
-    needs: [verify, checks]
+    needs: [verify]
     runs-on: windows-2022
     env:
       VERSION: ${{ needs.verify.outputs.version }}
@@ -132,7 +133,7 @@ jobs:
 
   linux:
     name: Linux x64
-    needs: [verify, checks]
+    needs: [verify]
     # The repository variable LINUX_RELEASE_RUNNER, a JSON list of labels such
     # as ["self-hosted","lownotes-linux-release"], moves this build to the
     # self-hosted runner described in .github/runner. Unset, it runs on GitHub.
@@ -282,9 +283,48 @@ jobs:
           name: lownotes-linux-arch
           path: dist/*
           if-no-files-found: error
+  # `tauri build --target universal-apple-darwin` compiles both architectures
+  # one after the other, and each spends most of its time in single-threaded
+  # LTO. Compiling them in parallel jobs and merging them with lipo halves the
+  # slowest part of the release.
+  macos-binary:
+    name: macOS ${{ matrix.target }}
+    needs: [verify]
+    runs-on: macos-14
+    strategy:
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.source_ref || env.RELEASE_TAG }}
+
+      - name: Instalar Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - name: Instalar Rust
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Instalar dependências do frontend
+        run: bun install --frozen-lockfile
+
+      - name: Compilar aplicativo com Tauri (${{ matrix.target }})
+        run: bun run tauri build --target ${{ matrix.target }} --no-bundle
+
+      # Not prefixed with lownotes-: the publish job only downloads release files.
+      - name: Guardar executável
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: macos-binary-${{ matrix.target }}
+          path: src-tauri/target/${{ matrix.target }}/release/lownotes
+          if-no-files-found: error
+          retention-days: 1
+
   macos:
     name: macOS universal (Apple Silicon + Intel)
-    needs: [verify, checks]
+    needs: [verify, macos-binary]
     runs-on: macos-14
     env:
       VERSION: ${{ needs.verify.outputs.version }}
@@ -297,16 +337,36 @@ jobs:
 
       - name: Instalar Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      # The bundler reads the target directory from cargo metadata.
       - name: Instalar Rust
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Instalar dependências do frontend
         run: bun install --frozen-lockfile
 
-      - name: Compilar aplicativo com Tauri (universal)
-        run: bun run tauri build --target universal-apple-darwin
+      - name: Baixar executáveis
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: macos-binary-*
+          path: macos-binaries
+
+      - name: Unir executáveis (lipo)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            mkdir -p "src-tauri/target/$target/release"
+            cp "macos-binaries/macos-binary-$target/lownotes" "src-tauri/target/$target/release/lownotes"
+          done
+          mkdir -p src-tauri/target/universal-apple-darwin/release
+          lipo -create -output src-tauri/target/universal-apple-darwin/release/lownotes \
+            src-tauri/target/aarch64-apple-darwin/release/lownotes \
+            src-tauri/target/x86_64-apple-darwin/release/lownotes
+          chmod +x src-tauri/target/universal-apple-darwin/release/lownotes
+          lipo -info src-tauri/target/universal-apple-darwin/release/lownotes
+
+      - name: Empacotar aplicativo com Tauri (universal)
+        run: bun run tauri bundle --target universal-apple-darwin
 
       - name: Empacotar DMG universal
         shell: bash
@@ -342,7 +402,7 @@ jobs:
 
   publish:
     name: Publicar no GitHub Releases
-    needs: [verify, windows, linux, linux-arch, macos]
+    needs: [verify, checks, windows, linux, linux-arch, macos]
     # A manual run with dry_run builds every installer and stops here.
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-22.04
@@ -360,6 +420,7 @@ jobs:
       - name: Baixar todos os artefatos
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
+          pattern: lownotes-*
           path: release-assets
           merge-multiple: true
 
