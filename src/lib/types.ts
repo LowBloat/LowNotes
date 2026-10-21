@@ -101,6 +101,7 @@ export interface AppSettings {
   language: string;
   update_check: boolean;
   close_to_tray: boolean;
+  context_menu: boolean;
   skipped_version: string;
   active_vault_id: string | null;
   vaults: VaultConfig[];
@@ -233,6 +234,15 @@ export interface WebSource {
 export interface PairInfo {
   pair_code: string;
   endpoint_id: string;
+}
+
+/** A folder or note LowNotes was launched with ("Open with LowNotes"). */
+export interface OpenRequest {
+  vault_path: string;
+  /** Relative to the vault, with `/` separators. */
+  note_path: string | null;
+  /** False when the folder is not in the vault list yet. */
+  known_vault: boolean;
 }
 
 export interface InitialStateResponse {

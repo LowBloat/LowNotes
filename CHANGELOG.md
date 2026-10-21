@@ -6,6 +6,9 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 
 ## [Unreleased]
 
+### Added
+- "Open with LowNotes" in the file manager for folders and Markdown files on Windows and Linux, off by default (Settings → System integration). Launching LowNotes with a folder or note opens it, and asks before turning a new folder into a vault ([#75](https://github.com/LowBloat/LowNotes/issues/75)).
+
 ### Fixed
 - The update dialog renders release notes as formatted Markdown instead of raw text; their links open in the browser ([#73](https://github.com/LowBloat/LowNotes/issues/73)).
 

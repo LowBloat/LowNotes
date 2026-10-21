@@ -18,6 +18,8 @@ export async function openVault(page: Page, options: {
   history?: { versionContent?: string; comparison?: { path: string; content: string }; trashContent?: string; folderTrash?: boolean };
   /** An update offered by the native updater when the app starts. */
   update?: { version: string; body: string };
+  /** Whether the platform offers "Open with LowNotes". */
+  contextMenu?: boolean;
 } = {}) {
   const source = options.source ?? '# Search\n\n[Title](https://visible.example)\n\n**hello** world\n\n- [ ] needle task\n\n'
     + Array.from({ length: 12 }, (_, i) => `## Section ${i + 1}\n\n${'Long filler text for scrolling. '.repeat(8)}\n\nneedle checkpoint ${i + 1}\n\n`).join('') + 'needles plural';
@@ -34,6 +36,7 @@ export async function openVault(page: Page, options: {
   const forgotten: string[] = [];
   const calls: Array<{ command: string; args: Record<string, any> }> = [];
   let notices = options.notices ?? [];
+  let openRequest: { vault_path: string; note_path: string | null; known_vault: boolean } | null = null;
   let history = { version: 1, activeConversationId: null, conversations: [], memory: '' };
   const vault = { id: 'fixture', name: 'Test vault', path: 'fixture', peers: [] };
   const notePath = options.notePath ?? 'Lista.md';
@@ -55,7 +58,7 @@ export async function openVault(page: Page, options: {
     credential_error: options.credentialError ?? '',
     device_name: 'Test device', theme: options.theme ?? 'light',
     theme_palettes: { active_palette_id: options.palette ?? 'lowbloat', custom_palettes: [] },
-    view_mode: 'split', line_wrapping: true, language: 'en-US', update_check: options.update !== undefined, close_to_tray: true,
+    view_mode: 'split', line_wrapping: true, language: 'en-US', update_check: options.update !== undefined, close_to_tray: true, context_menu: false,
     skipped_version: '', active_vault_id: vault.id as string | null, vaults: [vault, ...(options.extraVaults ?? [])] as Array<Record<string, any>>, has_seen_welcome: true,
     ai: { active_provider_id: 'ollama', providers: [{ id: 'ollama', name: 'Ollama', base_url: 'http://localhost:11434/v1', selected_model: 'fixture', api_key: '', is_custom: false }], auto_link_notes: false },
     web_search: { sources: [] }, image_upload: { provider: 'local', imgur_client_id: '', local_default_applied: true },
@@ -67,6 +70,15 @@ export async function openVault(page: Page, options: {
     switch (command) {
       case 'get_app_state': return { settings, active_vault: vault, items, pair_info: null };
       case 'list_notes': return items;
+      case 'select_vault': {
+        let target = settings.vaults.find((entry) => entry.path === args.pathStr);
+        if (!target) settings.vaults.push(target = { id: `vault-${settings.vaults.length}`, name: args.pathStr, path: args.pathStr, peers: [] });
+        settings.active_vault_id = target.id;
+        return { settings, active_vault: target, items, pair_info: null };
+      }
+      case 'take_open_request': { const result = openRequest; openRequest = null; return result; }
+      case 'context_menu_supported': return options.contextMenu ?? false;
+      case 'save_context_menu': settings.context_menu = args.enabled; return null;
       case 'forget_vault': {
         forgotten.push(args.vaultId);
         settings.vaults = settings.vaults.filter((entry) => entry.id !== args.vaultId);
@@ -169,6 +181,11 @@ export async function openVault(page: Page, options: {
             payload: { type: 'RemoteCrdtUpdate', note_path: 'Lista.md', update } });
         }
       }, update);
+    },
+    /** Launch LowNotes again with a folder or note, as "Open with LowNotes" does. */
+    async requestOpen(request: { vault_path: string; note_path: string | null; known_vault: boolean }) {
+      openRequest = request;
+      await this.emit('app:open-request', {});
     },
     /** Deliver a native event to the page, as the Rust side would. */
     async emit(event: string, payload: Record<string, unknown>) {

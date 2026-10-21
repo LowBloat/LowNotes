@@ -47,6 +47,7 @@ The interface never reads the vault directly. Settings arrive through `AppSettin
 | --- | --- |
 | Commands exposed to the interface | `commands.rs`, `history_commands.rs`, `image_upload.rs`, `updates.rs` |
 | Settings and credentials | `config.rs`, `credentials.rs` |
+| "Open with LowNotes" entries and launch arguments | `context_menu.rs` |
 | Atomic storage and recovery notices | `storage.rs` |
 | Vault listing and paths | `vault.rs` |
 | Stable note identities, deletes, moves | `catalog.rs`, `catalog_sync.rs`, `structural.rs`, `creation.rs` |

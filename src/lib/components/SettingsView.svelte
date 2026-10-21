@@ -3,8 +3,8 @@
   import { getVersion } from '@tauri-apps/api/app';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { ArrowLeft, Bot, Check, Download, Globe2, Monitor, NotebookPen, Palette, Pencil, Plus, Settings2, Sparkles, Trash2 } from 'lucide-svelte';
-  import { fetchAiModels, openLogFolder, retryCredentials, saveAiSettings, saveCloseToTray, saveImageUploadSettings, saveLanguage, saveLineWrapping, saveRemoteImages, saveTheme, saveThemePalettes, saveUpdatePrefs, saveViewMode, saveWebSearchSettings } from '$lib/api';
-  import { LOCALE_LABELS, SUPPORTED_LOCALES, t, trError, type LocaleCode } from '$lib/i18n';
+  import { contextMenuSupported, fetchAiModels, openLogFolder, retryCredentials, saveAiSettings, saveCloseToTray, saveContextMenu, saveImageUploadSettings, saveLanguage, saveLineWrapping, saveRemoteImages, saveTheme, saveThemePalettes, saveUpdatePrefs, saveViewMode, saveWebSearchSettings } from '$lib/api';
+  import { LOCALE_LABELS, SUPPORTED_LOCALES, locale, t, trError, type LocaleCode } from '$lib/i18n';
   import { BUILTIN_PALETTES, DEFAULT_PALETTE_ID, TOKEN_GROUPS, applyTheme, isHexColor, newCustomPalette, resolvePalette, themeVarsStyle, type ThemeToken } from '$lib/themes';
   import type { AiProviderConfig, AiSettings, AppSettings, AppTheme, ImageUploadProvider, ThemePalette, ThemePalettesSettings, ViewMode, WebSearchSettings } from '$lib/types';
 
@@ -34,6 +34,7 @@
   let selectedProviderId = $state(untrack(() => settings.ai.active_provider_id || settings.ai.providers[0]?.id || ''));
   let provider = $derived(aiDraft.providers.find((item) => item.id === selectedProviderId));
   let version = $state(__APP_VERSION__);
+  let canUseContextMenu = $state(false);
   let error = $state('');
   let saved = $state(false);
   let busy = $state(false);
@@ -52,6 +53,7 @@
 
   onMount(() => {
     getVersion().then((value) => version = value).catch(() => {});
+    contextMenuSupported().then((value) => canUseContextMenu = value).catch(() => {});
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('[data-modal-backdrop]')) return;
       event.preventDefault();
@@ -109,6 +111,11 @@
   }
   function changeTray(value: boolean) {
     void persist(saveCloseToTray(value), { ...settings, close_to_tray: value });
+  }
+  async function changeContextMenu(control: HTMLInputElement) {
+    const value = control.checked;
+    await persist(saveContextMenu(value, $locale), { ...settings, context_menu: value });
+    control.checked = settings.context_menu ?? false;
   }
   function changeUpdates(value: boolean) {
     void persist(saveUpdatePrefs(value, settings.skipped_version), { ...settings, update_check: value });
@@ -264,6 +271,12 @@
             <h2>{$t('settings.behavior')}</h2><p>{$t('settings.behaviorHint')}</p>
             <label class="setting-row setting-toggle"><div><strong>{$t('settings.closeToTray')}</strong><small>{$t('settings.closeToTrayHint')}</small></div><input type="checkbox" checked={settings.close_to_tray} onchange={(event) => changeTray(event.currentTarget.checked)} /></label>
           </section>
+          {#if canUseContextMenu}
+            <section class="settings-section">
+              <h2>{$t('settings.integration')}</h2><p>{$t('settings.integrationHint')}</p>
+              <label class="setting-row setting-toggle"><div><strong>{$t('settings.contextMenu')}</strong><small>{$t('settings.contextMenuHint')}</small></div><input type="checkbox" checked={settings.context_menu ?? false} disabled={busy} onchange={(event) => void changeContextMenu(event.currentTarget)} /></label>
+            </section>
+          {/if}
           <section class="settings-section">
             <h2>{$t('settings.pastedImages')}</h2><p>{$t('settings.pastedImagesHint')}</p>
             <div class="setting-row"><div><label for="image-upload-provider"><strong>{$t('settings.imageUploadProvider')}</strong></label><small>{$t('settings.imageUploadProviderHint')}</small></div>

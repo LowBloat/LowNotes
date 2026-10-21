@@ -11,6 +11,7 @@ import type {
   ChatHistory,
   ChatResponse,
   InitialStateResponse,
+  OpenRequest,
   UpdatePolicy,
   ReleaseNotice,
   LinkEdge,
@@ -184,6 +185,19 @@ export async function saveUpdatePrefs(updateCheck: boolean, skippedVersion: stri
 
 export async function saveCloseToTray(closeToTray: boolean): Promise<void> {
   return await invoke('save_close_to_tray', { closeToTray });
+}
+
+export async function contextMenuSupported(): Promise<boolean> {
+  return (await invoke<boolean | null>('context_menu_supported')) === true;
+}
+
+/** `language` labels the file manager entry; pass the resolved interface language. */
+export async function saveContextMenu(enabled: boolean, language: string): Promise<void> {
+  return await invoke('save_context_menu', { enabled, language });
+}
+
+export async function takeOpenRequest(): Promise<OpenRequest | null> {
+  return (await invoke<OpenRequest | null>('take_open_request')) ?? null;
 }
 
 export async function pickVaultDirectory(): Promise<string | null> {

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { FileText, FolderOpen, MessageSquare, Network, NotebookPen } from 'lucide-svelte';
   import { onMount, onDestroy } from 'svelte';
-  import type { AppSettings, AppTheme, ViewMode, VaultConfig, VaultItem } from '$lib/types';
+  import type { AppSettings, AppTheme, InitialStateResponse, ViewMode, VaultConfig, VaultItem } from '$lib/types';
   import {
     getAppState,
     listNotes,
@@ -9,15 +9,17 @@
     selectVault,
     saveViewMode,
     saveUpdatePrefs,
+    takeOpenRequest,
     undoLastDelete,
   } from '$lib/api';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { createP2pSession } from '$lib/state/p2p-session.svelte';
   import { createPresenceTracker } from '$lib/state/presence.svelte';
   import { createUpdateChecker } from '$lib/state/updates.svelte';
   import { createRecoveryNotices } from '$lib/state/recovery.svelte';
-  import { locale, resolveLocale, t, trError } from '$lib/i18n';
+  import { locale, resolveLocale, t, trError, ts } from '$lib/i18n';
   import { configureRemoteImages } from '$lib/markdown';
-  import { appAlert, dialogState } from '$lib/dialogs.svelte';
+  import { appAlert, appConfirm, dialogState } from '$lib/dialogs.svelte';
   import AppDialog from '$lib/components/AppDialog.svelte';
   import { setTrayLanguage } from '$lib/api';
   import { resolveNoteLink } from '$lib/note-links';
@@ -171,22 +173,50 @@
     targetLine = { line, nonce: Date.now() };
   }
 
+  /** Shows a vault returned by selectVault, then `notePath` or else its first note. */
+  async function showSelectedVault(res: InitialStateResponse, notePath?: string | null) {
+    if (res.active_vault?.id !== activeVault?.id) {
+      isHistoryOpen = false;
+      isGraphOpen = false;
+      selectedNotePath = '';
+      currentNoteContent = '';
+      currentCrdtBase64 = '';
+    }
+    activeVault = res.active_vault;
+    lastUndoableAction = 'text';
+    settings = res.settings;
+    vaults = res.settings.vaults;
+    items = res.items;
+    if (res.pair_info) p2p.setPairInfo(res.pair_info);
+    else void p2p.refreshPairInfo();
+
+    const note = items.find((i) => !i.is_dir && i.path === notePath)
+      ?? (selectedNotePath ? undefined : items.find((i) => !i.is_dir));
+    if (note) await openNote(note.path);
+  }
+
   async function handleOpenVaultFolder() {
     const path = await pickVaultDirectory();
-    if (path) {
-      const res = await selectVault(path);
-      activeVault = res.active_vault;
-      lastUndoableAction = 'text';
-      settings = res.settings;
-      vaults = res.settings.vaults;
-      items = res.items;
-      if (res.pair_info) p2p.setPairInfo(res.pair_info);
-      else void p2p.refreshPairInfo();
+    if (path) await showSelectedVault(await selectVault(path));
+  }
 
-      if (items.length > 0) {
-        const first = items.find((i) => !i.is_dir);
-        if (first) await openNote(first.path);
+  // A folder or note from "Open with LowNotes" or the command line. The native
+  // side keeps the latest one until the page has loaded and takes it.
+  let acceptsOpenRequests = false;
+  async function handleOpenRequest() {
+    if (!acceptsOpenRequests) return;
+    try {
+      const request = await takeOpenRequest();
+      if (!request) return;
+      isSettingsOpen = false;
+      if (request.vault_path !== activeVault?.path) {
+        if (!request.known_vault && !(await appConfirm(ts('app.openFolderAsVault', { path: request.vault_path }), { confirmLabel: ts('app.openFolderAsVaultAction') }))) return;
+        await showSelectedVault(await selectVault(request.vault_path), request.note_path);
+      } else if (request.note_path && items.some((i) => !i.is_dir && i.path === request.note_path)) {
+        await openNote(request.note_path);
       }
+    } catch (error) {
+      void appAlert(trError(String(error)));
     }
   }
 
@@ -229,18 +259,26 @@
     document.documentElement.lang = $locale;
   });
 
+  let unlistenOpenRequest: UnlistenFn | undefined;
   onMount(async () => {
     window.addEventListener('keydown', handleUndoDeletedItem, true);
     recovery.start();
     // Listeners first, so no event is lost while the initial state loads.
-    await Promise.all([p2p.start(), presence.start()]);
+    await Promise.all([
+      p2p.start(),
+      presence.start(),
+      listen('app:open-request', () => void handleOpenRequest()).then((unlisten) => (unlistenOpenRequest = unlisten)),
+    ]);
     await loadInitialData();
+    acceptsOpenRequests = true;
+    await handleOpenRequest();
     updates.start();
     if (!p2p.state.pairCode) await p2p.refreshPairInfo();
   });
 
   onDestroy(() => {
     window.removeEventListener('keydown', handleUndoDeletedItem, true);
+    unlistenOpenRequest?.();
     recovery.stop();
     p2p.stop();
     presence.stop();
