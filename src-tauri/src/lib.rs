@@ -378,6 +378,8 @@ pub fn run() {
             commands::save_context_menu,
             commands::take_open_request,
             commands::open_log_folder,
+            commands::show_in_folder,
+            commands::duplicate_note,
         ])
         .run(tauri::generate_context!())
         .expect("erro ao executar o aplicativo LowNotes");

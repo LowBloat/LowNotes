@@ -79,6 +79,13 @@ export async function openVault(page: Page, options: {
       case 'take_open_request': { const result = openRequest; openRequest = null; return result; }
       case 'context_menu_supported': return options.contextMenu ?? false;
       case 'save_context_menu': settings.context_menu = args.enabled; return null;
+      case 'duplicate_note': {
+        const created = /\.(?:md|markdown)$/.test(args.newPath) ? args.newPath : `${args.newPath}.md`;
+        const copy = new Y.Doc(); copy.getText('content').insert(0, (documents.get(args.path) ?? doc).getText('content').toString());
+        documents.set(created, copy);
+        items.push({ path: created, name: created, title: created.replace(/\.md$/, ''), is_dir: false, size: 1, modified_ms: 1 });
+        return created;
+      }
       case 'forget_vault': {
         forgotten.push(args.vaultId);
         settings.vaults = settings.vaults.filter((entry) => entry.id !== args.vaultId);

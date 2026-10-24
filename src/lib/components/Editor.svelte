@@ -1,11 +1,15 @@
 <script lang="ts">
-  import { Bold, Code, Heading1, Heading2, Italic, List, ListTodo, LoaderCircle, MessageSquare, Network, Quote, Strikethrough } from 'lucide-svelte';
+  import { Bold, ClipboardPaste, Code, Copy, ExternalLink, FileText, Heading1, Heading2, Image, Italic, Link, Link2, List, ListTodo, LoaderCircle, MessageSquare, Network, Quote, Scissors, Search, Strikethrough, TextSelect } from 'lucide-svelte';
+  import { openContextMenu } from '$lib/context-menu.svelte';
+  import { SEPARATOR, shortcutLabel, type MenuEntries } from '$lib/menu';
+  import { appAlert } from '$lib/dialogs.svelte';
   import { onMount, onDestroy, tick } from 'svelte';
   import { EditorView, basicSetup } from 'codemirror';
   import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
   import { defaultHighlightStyle, HighlightStyle, syntaxHighlighting } from '@codemirror/language';
   import { styleTags, tags } from '@lezer/highlight';
-  import { Compartment, EditorState } from '@codemirror/state';
+  import { Compartment, EditorState, Prec } from '@codemirror/state';
+  import { keymap } from '@codemirror/view';
   import { search, SearchQuery, setSearchQuery, replaceNext, replaceAll } from '@codemirror/search';
   import { clearPreviewSearch, combineSearchMatches, highlightPreviewSearch, noteSearchHighlights, previewSearchMatches, previewSourceTarget, searchMatches, setNoteSearchHighlights, type NoteSearchMatch } from '$lib/note-search';
   import NoteFindPanel from './NoteFindPanel.svelte';
@@ -454,6 +458,11 @@
         openEditorLinks(async (url) => { linkOpenFailed = false; await openUrl(url); }, () => { linkOpenFailed = true; }),
         editorTheme.of(codeMirrorTheme()),
         editorWrapping.of(lineWrapping ? EditorView.lineWrapping : []),
+        // The toolbar and menus promise these shortcuts.
+        Prec.high(keymap.of([
+          { key: 'Mod-b', run: () => { applyFormatting('**', '**'); return true; } },
+          { key: 'Mod-i', run: () => { applyFormatting('*', '*'); return true; } },
+        ])),
       ],
     });
 
@@ -498,6 +507,103 @@
     editorView.focus();
   }
 
+  function copyText(text: string) {
+    navigator.clipboard.writeText(text).catch((e) => void appAlert(trError(String(e))));
+  }
+
+  async function cutSelection(view: EditorView) {
+    const { from, to } = view.state.selection.main;
+    try {
+      await navigator.clipboard.writeText(view.state.sliceDoc(from, to));
+      view.dispatch({ changes: { from, to, insert: '' }, userEvent: 'delete.cut' });
+      view.focus();
+    } catch (e) {
+      void appAlert(trError(String(e)));
+    }
+  }
+
+  async function pasteText(view: EditorView) {
+    let text: string;
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      void appAlert(ts('menu.pasteFailed'));
+      return;
+    }
+    view.dispatch(view.state.replaceSelection(text), { userEvent: 'input.paste', scrollIntoView: true });
+    view.focus();
+  }
+
+  function editorMenu(event: MouseEvent) {
+    const view = editorView;
+    if (!view) return;
+    // A right click outside the selection moves the cursor there, as in other editors.
+    const position = event.clientX || event.clientY ? view.posAtCoords({ x: event.clientX, y: event.clientY }) : null;
+    const { from, to } = view.state.selection.main;
+    if (position !== null && (position < from || position > to)) view.dispatch({ selection: { anchor: position } });
+    const empty = view.state.selection.main.empty;
+    openContextMenu(event, [
+      { label: ts('menu.cut'), icon: Scissors, shortcut: shortcutLabel('Ctrl+X'), disabled: empty, action: () => cutSelection(view) },
+      { label: ts('menu.copy'), icon: Copy, shortcut: shortcutLabel('Ctrl+C'), disabled: empty, action: () => copyText(view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to)) },
+      { label: ts('menu.paste'), icon: ClipboardPaste, shortcut: shortcutLabel('Ctrl+V'), action: () => pasteText(view) },
+      { label: ts('menu.selectAll'), icon: TextSelect, shortcut: shortcutLabel('Ctrl+A'), action: () => { view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } }); view.focus(); } },
+      SEPARATOR,
+      { label: ts('menu.bold'), icon: Bold, shortcut: shortcutLabel('Ctrl+B'), action: () => applyFormatting('**', '**') },
+      { label: ts('menu.italic'), icon: Italic, shortcut: shortcutLabel('Ctrl+I'), action: () => applyFormatting('*', '*') },
+      { label: ts('editor.strikethrough'), icon: Strikethrough, action: () => applyFormatting('~~', '~~') },
+      { label: ts('editor.code'), icon: Code, action: () => applyFormatting('`', '`') },
+      { label: ts('menu.insertLink'), icon: Link, action: () => applyFormatting('[', '](https://)') },
+      { label: ts('menu.linkToNote'), icon: Link2, action: () => applyFormatting('[[', ']]') },
+      SEPARATOR,
+      { label: ts('menu.findInNote'), icon: Search, shortcut: shortcutLabel('Ctrl+F'), action: () => openFind() },
+    ]);
+  }
+
+  function openExternal(url: string) {
+    linkOpenFailed = false;
+    void openUrl(url).catch(() => { linkOpenFailed = true; });
+  }
+
+  function previewMenu(event: MouseEvent) {
+    const target = event.target as Element | null;
+    const entries: MenuEntries = [];
+    const link = target?.closest('a');
+    if (link && previewContainer?.contains(link)) {
+      const action = previewLinkAction(link.getAttribute('href'), link.getAttribute('data-wikilink'));
+      if (action.kind === 'note') {
+        entries.push({ label: ts('menu.openNote'), icon: FileText, action: () => onOpenWikilink?.(action.target, action.mode) });
+      } else if (action.kind === 'external') {
+        entries.push(
+          { label: ts('menu.openLink'), icon: ExternalLink, action: () => openExternal(action.url) },
+          { label: ts('menu.copyLinkAddress'), icon: Link, action: () => copyText(action.url) },
+        );
+      }
+      entries.push(SEPARATOR);
+    }
+    const imageSource = target?.closest('img')?.getAttribute('src') ?? '';
+    if (isRemoteImage(imageSource)) {
+      entries.push(
+        { label: ts('menu.openImage'), icon: Image, action: () => openExternal(imageSource) },
+        { label: ts('menu.copyImageAddress'), icon: Link, action: () => copyText(imageSource) },
+        SEPARATOR,
+      );
+    }
+    const selected = window.getSelection()?.toString() ?? '';
+    entries.push(
+      { label: ts('menu.copy'), icon: Copy, shortcut: shortcutLabel('Ctrl+C'), disabled: !selected, action: () => copyText(selected) },
+      { label: ts('menu.selectAll'), icon: TextSelect, action: () => {
+        const article = previewContainer?.querySelector('article');
+        const selection = window.getSelection();
+        if (!article || !selection) return;
+        const range = document.createRange();
+        range.selectNodeContents(article);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      } },
+    );
+    openContextMenu(event, entries);
+  }
+
   // Remote images the reader chose to load in this editor session.
   let allowedRemoteImages = $state<string[]>([]);
 
@@ -518,8 +624,7 @@
     if (action.kind === 'note') {
       onOpenWikilink?.(action.target, action.mode);
     } else if (action.kind === 'external') {
-      linkOpenFailed = false;
-      void openUrl(action.url).catch(() => { linkOpenFailed = true; });
+      openExternal(action.url);
     } else if (action.kind === 'anchor') {
       const destination = previewContainer.querySelector(`[id="${CSS.escape(action.id)}"], [name="${CSS.escape(action.id)}"]`);
       destination?.scrollIntoView({ block: 'start' });
@@ -881,6 +986,8 @@
     <!-- CodeMirror Container -->
     <div
       bind:this={editorContainer}
+      role="presentation"
+      oncontextmenu={editorMenu}
       class="min-w-0 h-full overflow-hidden transition-all duration-150 {viewMode === 'edit' ? 'w-full' : viewMode === 'split' ? 'w-1/2 border-r border-[var(--border)]' : 'hidden'}"
     ></div>
 
@@ -891,6 +998,7 @@
         bind:this={previewContainer}
         role="presentation"
         onclick={handlePreviewClick}
+        oncontextmenu={previewMenu}
         onchange={handleTaskChange}
         onkeydown={handleTaskUndo}
         class="min-w-0 h-full overflow-y-auto px-8 py-6 select-text {viewMode === 'preview' ? 'w-full max-w-4xl mx-auto' : 'w-1/2'}"

@@ -529,6 +529,15 @@ const ptBR: Dictionary = {
   preview: {
     remoteImageBlocked: 'Imagem remota bloqueada. Clique para carregar.',
   },
+  menu: {
+    bold: 'Negrito', italic: 'Itálico',
+    open: 'Abrir', duplicate: 'Duplicar', duplicatePrompt: 'Nome da cópia', copySuffix: 'cópia',
+    copyLink: 'Copiar link', showInFolder: 'Mostrar na pasta', newNoteHere: 'Nova nota aqui', newFolderHere: 'Nova pasta aqui',
+    cut: 'Recortar', copy: 'Copiar', paste: 'Colar', selectAll: 'Selecionar tudo', pasteFailed: 'O LowNotes não conseguiu ler a área de transferência. Cole com Ctrl+V.',
+    insertLink: 'Inserir link', linkToNote: 'Link para nota', findInNote: 'Buscar na nota',
+    openLink: 'Abrir link', openNote: 'Abrir nota', copyLinkAddress: 'Copiar endereço do link', openImage: 'Abrir imagem', copyImageAddress: 'Copiar endereço da imagem',
+    openVault: 'Abrir vault',
+  },
 };
 
 export default ptBR;
