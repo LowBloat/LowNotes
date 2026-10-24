@@ -529,6 +529,16 @@ const ptBR: Dictionary = {
   preview: {
     remoteImageBlocked: 'Imagem remota bloqueada. Clique para carregar.',
   },
+  titlebar: {
+    window: 'Janela',
+    menubar: 'Menu do aplicativo', file: 'Arquivo', edit: 'Editar', view: 'Exibir', help: 'Ajuda',
+    minimize: 'Minimizar', maximize: 'Maximizar', restore: 'Restaurar', close: 'Fechar',
+    openFolder: 'Abrir pasta como vault…', showVaultFolder: 'Mostrar pasta do vault', quit: 'Sair do LowNotes',
+    undo: 'Desfazer', redo: 'Refazer', replace: 'Substituir na nota',
+    darkTheme: 'Tema escuro', assistant: 'Painel do assistente', zoomIn: 'Aumentar zoom', zoomOut: 'Diminuir zoom', actualSize: 'Tamanho original',
+    documentation: 'Documentação', reportProblem: 'Relatar um problema', checkUpdates: 'Procurar atualizações…', about: 'Sobre o LowNotes',
+    upToDate: 'O LowNotes está atualizado.', updateCheckFailed: 'O LowNotes não conseguiu procurar atualizações. Tente mais tarde.',
+  },
   menu: {
     bold: 'Negrito', italic: 'Itálico',
     open: 'Abrir', duplicate: 'Duplicar', duplicatePrompt: 'Nome da cópia', copySuffix: 'cópia',

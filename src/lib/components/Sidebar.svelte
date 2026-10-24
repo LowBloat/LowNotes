@@ -202,7 +202,8 @@
     });
   }
 
-  function startCreating(kind: 'note' | 'folder', folder = '') {
+  /** Opens the name form for a new note or folder, inside `folder` if given. */
+  export function startCreating(kind: 'note' | 'folder', folder = '') {
     const prefix = folder ? `${folder}/` : '';
     if (kind === 'note') { newNoteName = prefix; isCreatingNote = true; }
     else { newFolderName = prefix; isCreatingFolder = true; }

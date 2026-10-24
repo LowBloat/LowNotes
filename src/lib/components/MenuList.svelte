@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { Check } from 'lucide-svelte';
-  import { isSeparator, type MenuEntry, type MenuItem } from '$lib/menu';
+  import { isSeparator, shortcutLabel, type MenuEntry, type MenuItem } from '$lib/menu';
 
   let {
     entries,
@@ -96,7 +96,7 @@
   data-menu
   onkeydown={handleKeydown}
   oncontextmenu={(event) => event.preventDefault()}
-  class="fixed z-[70] min-w-[200px] max-w-[320px] max-h-[calc(100vh-8px)] overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--bg-card)] py-1 shadow-xl text-xs text-[var(--text-main)] select-none"
+  class="fixed z-[90] min-w-[200px] max-w-[320px] max-h-[calc(100vh-8px)] overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--bg-card)] py-1 shadow-xl text-xs text-[var(--text-main)] select-none"
   style:left="{left}px"
   style:top="{top}px"
 >
@@ -119,7 +119,7 @@
           {#if entry.checked}<Check size={14} />{:else if Icon}<Icon size={14} />{/if}
         </span>
         <span class="flex-1 truncate">{entry.label}</span>
-        {#if entry.shortcut}<span class="ml-4 shrink-0 text-[10px] text-[var(--text-dim)]">{entry.shortcut}</span>{/if}
+        {#if entry.shortcut}<span class="ml-4 shrink-0 text-[10px] text-[var(--text-dim)]">{shortcutLabel(entry.shortcut)}</span>{/if}
       </button>
     {/if}
   {/each}

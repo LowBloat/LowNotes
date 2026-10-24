@@ -6,8 +6,11 @@ import type { Icon } from 'lucide-svelte';
 export interface MenuItem {
   label: string;
   icon?: typeof Icon;
-  /** Shortcut hint shown on the right; the shortcut itself lives elsewhere. */
+  /** Shortcut hint shown on the right, written for Windows ("Ctrl+F") and
+   * shown in the platform's notation. The shortcut itself lives elsewhere. */
   shortcut?: string;
+  /** On macOS, a predefined menu item that acts on the focused text field. */
+  native?: 'Undo' | 'Redo' | 'Cut' | 'Copy' | 'Paste' | 'SelectAll';
   disabled?: boolean;
   danger?: boolean;
   /** Shown as a check box when defined. */
@@ -45,8 +48,12 @@ export function keepsNativeMenu(target: EventTarget | null): boolean {
   return typeof Element !== 'undefined' && target instanceof Element && !!target.closest('input, textarea, select');
 }
 
+/** macOS keeps its native traffic lights and global menu bar; Windows and
+ * Linux draw the whole frame (see tauri.macos.conf.json). */
+export const IS_MAC = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
+
 /** Shortcut hint for the platform: "Ctrl+F" reads "⌘F" on macOS. */
-export function shortcutLabel(keys: string, mac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform)): string {
+export function shortcutLabel(keys: string, mac = IS_MAC): string {
   return mac ? keys.replace('Ctrl+', '⌘').replace('Shift+', '⇧').replace('Alt+', '⌥') : keys;
 }
 

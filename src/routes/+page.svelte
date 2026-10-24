@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { FileText, FolderOpen, MessageSquare, Network, NotebookPen } from 'lucide-svelte';
+  import { BookOpen, Bug, ClipboardPaste, Clock3, Copy, Download, FilePlus2, FileText, FolderOpen, FolderPlus, FolderSearch, Info, MessageSquare, Network, NotebookPen, Power, Redo2, Replace, Scissors, Search, Settings2, TextSelect, Undo2, ZoomIn, ZoomOut } from 'lucide-svelte';
   import { onMount, onDestroy, tick } from 'svelte';
   import type { AppSettings, AppTheme, InitialStateResponse, ViewMode, VaultConfig, VaultItem } from '$lib/types';
   import {
@@ -9,6 +9,8 @@
     selectVault,
     saveViewMode,
     saveUpdatePrefs,
+    saveTheme,
+    showInFolder,
     takeOpenRequest,
     undoLastDelete,
   } from '$lib/api';
@@ -22,6 +24,13 @@
   import { appAlert, appConfirm, dialogState } from '$lib/dialogs.svelte';
   import AppDialog from '$lib/components/AppDialog.svelte';
   import ContextMenu from '$lib/components/ContextMenu.svelte';
+  import TitleBar from '$lib/components/TitleBar.svelte';
+  import { appMenu, setNativeAppMenu } from '$lib/app-menu';
+  import { IS_MAC, SEPARATOR } from '$lib/menu';
+  import { createWindowFrame } from '$lib/state/window-frame.svelte';
+  import { changeAppZoom } from '$lib/app-zoom';
+  import { openUrl } from '@tauri-apps/plugin-opener';
+  import { exit } from '@tauri-apps/plugin-process';
   import { setTrayLanguage, windowPainted } from '$lib/api';
   import { resolveNoteLink } from '$lib/note-links';
   import { DEFAULT_PALETTE_ID, applyTheme } from '$lib/themes';
@@ -62,6 +71,7 @@
   const presence = createPresenceTracker();
   const updates = createUpdateChecker(() => settings);
   const recovery = createRecoveryNotices();
+  const frame = createWindowFrame();
 
   let isPairModalOpen = $state(false);
   let isAiChatOpen = $state(false);
@@ -251,6 +261,105 @@
     }
   }
 
+  async function toggleTheme() {
+    const previous = theme;
+    theme = previous === 'dark' ? 'light' : 'dark';
+    if (settings) settings.theme = theme;
+    try {
+      await saveTheme(theme);
+    } catch (error) {
+      theme = previous;
+      if (settings) settings.theme = previous;
+      void appAlert(trError(String(error)));
+    }
+  }
+
+  // Application menus: in the title bar on Windows and Linux, in the global
+  // menu bar on macOS. Labels follow the interface language.
+  let sidebar = $state<ReturnType<typeof Sidebar>>();
+  let editor = $state<ReturnType<typeof Editor>>();
+  const DOCUMENTATION_URL = 'https://github.com/LowBloat/LowNotes#readme';
+  const REPORT_URL = 'https://github.com/LowBloat/LowNotes/issues/new/choose';
+  const appMenus = $derived.by(() => {
+    void $locale;
+    const inVault = !!activeVault && !isSettingsOpen;
+    const editing = inVault && !!selectedNotePath && !isGraphOpen;
+    const run = (command: Parameters<NonNullable<typeof editor>['runCommand']>[0]) => () => editor?.runCommand(command);
+    return [
+      appMenu('file', ts('titlebar.file'), [
+        { label: ts('sidebar.newNote'), icon: FilePlus2, shortcut: 'Ctrl+N', disabled: !inVault, action: () => sidebar?.startCreating('note') },
+        { label: ts('sidebar.newFolder'), icon: FolderPlus, disabled: !inVault, action: () => sidebar?.startCreating('folder') },
+        SEPARATOR,
+        { label: ts('titlebar.openFolder'), icon: FolderOpen, action: () => handleOpenVaultFolder() },
+        { label: ts('titlebar.showVaultFolder'), icon: FolderSearch, disabled: !activeVault, action: () => activeVault && showInFolder(activeVault.id).catch((error) => void appAlert(trError(String(error)))) },
+        SEPARATOR,
+        { label: ts('history.title'), icon: Clock3, disabled: !activeVault, action: () => (isHistoryOpen = true) },
+        !IS_MAC && { label: ts('settings.title'), icon: Settings2, shortcut: 'Ctrl+,', action: () => openSettings() },
+        !IS_MAC && SEPARATOR,
+        !IS_MAC && { label: ts('titlebar.quit'), icon: Power, action: () => exit(0) },
+      ]),
+      appMenu('edit', ts('titlebar.edit'), [
+        { label: ts('titlebar.undo'), icon: Undo2, shortcut: 'Ctrl+Z', native: 'Undo', disabled: !editing, action: run('undo') },
+        { label: ts('titlebar.redo'), icon: Redo2, shortcut: IS_MAC ? 'Ctrl+Shift+Z' : 'Ctrl+Y', native: 'Redo', disabled: !editing, action: run('redo') },
+        SEPARATOR,
+        { label: ts('menu.cut'), icon: Scissors, shortcut: 'Ctrl+X', native: 'Cut', disabled: !editing, action: run('cut') },
+        { label: ts('menu.copy'), icon: Copy, shortcut: 'Ctrl+C', native: 'Copy', disabled: !editing, action: run('copy') },
+        { label: ts('menu.paste'), icon: ClipboardPaste, shortcut: 'Ctrl+V', native: 'Paste', disabled: !editing, action: run('paste') },
+        { label: ts('menu.selectAll'), icon: TextSelect, shortcut: 'Ctrl+A', native: 'SelectAll', disabled: !editing, action: run('selectAll') },
+        SEPARATOR,
+        { label: ts('menu.findInNote'), icon: Search, shortcut: 'Ctrl+F', disabled: !editing, action: run('find') },
+        { label: ts('titlebar.replace'), icon: Replace, shortcut: 'Ctrl+H', disabled: !editing, action: run('replace') },
+      ]),
+      appMenu('view', ts('titlebar.view'), [
+        { label: ts('editor.modeEdit'), checked: viewMode === 'edit', disabled: !editing, action: () => handleViewModeChange('edit') },
+        { label: ts('editor.modeSplit'), checked: viewMode === 'split', disabled: !editing, action: () => handleViewModeChange('split') },
+        { label: ts('editor.modePreview'), checked: viewMode === 'preview', disabled: !editing, action: () => handleViewModeChange('preview') },
+        SEPARATOR,
+        { label: ts('graph.button'), icon: Network, disabled: !inVault, action: () => (isGraphOpen = true) },
+        { label: ts('titlebar.assistant'), checked: isAiChatOpen, disabled: !inVault, action: () => (isAiChatOpen = !isAiChatOpen) },
+        { label: ts('titlebar.darkTheme'), checked: theme === 'dark', disabled: !settings, action: () => toggleTheme() },
+        SEPARATOR,
+        { label: ts('titlebar.zoomIn'), icon: ZoomIn, shortcut: 'Ctrl+=', action: () => changeAppZoom(1) },
+        { label: ts('titlebar.zoomOut'), icon: ZoomOut, shortcut: 'Ctrl+-', action: () => changeAppZoom(-1) },
+        { label: ts('titlebar.actualSize'), shortcut: 'Ctrl+0', action: () => changeAppZoom(0) },
+      ]),
+      appMenu('help', ts('titlebar.help'), [
+        { label: ts('titlebar.documentation'), icon: BookOpen, action: () => openUrl(DOCUMENTATION_URL) },
+        { label: ts('titlebar.reportProblem'), icon: Bug, action: () => openUrl(REPORT_URL) },
+        SEPARATOR,
+        { label: ts('titlebar.checkUpdates'), icon: Download, action: () => updates.check(true) },
+        !IS_MAC && SEPARATOR,
+        !IS_MAC && { label: ts('titlebar.about'), icon: Info, action: () => openSettings('about') },
+      ]),
+    ];
+  });
+  const windowTitle = $derived(isSettingsOpen ? $t('settings.title')
+    : selectedNotePath ? items.find((item) => item.path === selectedNotePath)?.title ?? selectedNotePath : 'LowNotes');
+
+  $effect(() => {
+    if (!IS_MAC) return;
+    void setNativeAppMenu(appMenus, {
+      name: 'LowNotes',
+      about: { label: ts('titlebar.about'), action: () => openSettings('about') },
+      settings: { label: ts('settings.title'), shortcut: 'Ctrl+,', action: () => openSettings() },
+      quit: ts('titlebar.quit'),
+      window: ts('titlebar.window'),
+    }).catch((error) => console.error('Failed to set the menu bar:', error));
+  });
+
+  // Shortcuts shown in the File menu.
+  function handleAppShortcuts(event: KeyboardEvent) {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.defaultPrevented
+      || document.querySelector('[data-modal-backdrop]')) return;
+    if (event.key.toLowerCase() === 'n' && activeVault && !isSettingsOpen) {
+      event.preventDefault();
+      sidebar?.startCreating('note');
+    } else if (event.key === ',') {
+      event.preventDefault();
+      openSettings();
+    }
+  }
+
   // The native window starts hidden so the webview's white background never
   // shows. It appears once the themed page is rendered, with the page
   // background behind the webview. Animation frames may not run in a hidden
@@ -275,6 +384,7 @@
   let unlistenOpenRequest: UnlistenFn | undefined;
   onMount(async () => {
     window.addEventListener('keydown', handleUndoDeletedItem, true);
+    window.addEventListener('keydown', handleAppShortcuts);
     recovery.start();
     // Listeners first, so no event is lost while the initial state loads.
     await Promise.all([
@@ -293,6 +403,7 @@
 
   onDestroy(() => {
     window.removeEventListener('keydown', handleUndoDeletedItem, true);
+    window.removeEventListener('keydown', handleAppShortcuts);
     unlistenOpenRequest?.();
     recovery.stop();
     p2p.stop();
@@ -301,15 +412,17 @@
   });
 </script>
 
-<div class="flex h-screen w-screen overflow-hidden bg-[var(--bg-main)] text-[var(--text-main)]">
+<div class="flex flex-col h-screen w-screen overflow-hidden bg-[var(--bg-main)] text-[var(--text-main)]">
+<TitleBar menus={appMenus} title={windowTitle} detail={activeVault?.name ?? ''} {frame} />
+<div class="relative flex flex-1 min-h-0 overflow-hidden">
   {#if settings?.credential_error && !isSettingsOpen}
-    <div class="fixed top-3 right-3 z-40 max-w-lg p-4 rounded-lg border border-[var(--danger)] bg-[var(--bg-card)] shadow-lg" role="alert">
+    <div class="fixed top-[calc(var(--titlebar-height)+12px)] right-3 z-40 max-w-lg p-4 rounded-lg border border-[var(--danger)] bg-[var(--bg-card)] shadow-lg" role="alert">
       <p class="text-sm">{trError(settings.credential_error)}</p>
       <button class="mt-3 text-sm underline text-[var(--accent-light)]" onclick={() => openSettings()}>{$t('credentials.openSettings')}</button>
     </div>
   {/if}
   {#if recovery.state.notices.length}
-    <div class="fixed top-3 right-3 z-50 max-w-lg p-4 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] shadow-lg" role="status" aria-live="polite">
+    <div class="fixed top-[calc(var(--titlebar-height)+12px)] right-3 z-50 max-w-lg p-4 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] shadow-lg" role="status" aria-live="polite">
       {#each recovery.state.notices as notice}
         <p class="text-sm font-medium">{notice.recovered ? $t('storage.recovered') : $t('storage.failed')}</p>
         <p class="text-xs text-[var(--text-muted)] break-all mt-1">{notice.path}</p>
@@ -346,6 +459,7 @@
   {:else}
     <!-- Main App Layout -->
     <Sidebar
+      bind:this={sidebar}
       {activeVault}
       {vaults}
       {items}
@@ -411,6 +525,7 @@
       {:else if selectedNotePath}
         {#key selectedNotePath}
         <Editor
+          bind:this={editor}
           notePath={selectedNotePath}
           initialContent={currentNoteContent}
           crdtUpdateBase64={currentCrdtBase64}
@@ -527,6 +642,7 @@
       updates.state.open = false;
     }}
   />
+</div>
 </div>
 
 <!-- In-app alert/confirm/prompt (see $lib/dialogs.svelte.ts). -->
