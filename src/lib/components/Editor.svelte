@@ -1,7 +1,8 @@
 <script lang="ts">
   import { Bold, ClipboardPaste, Code, Copy, ExternalLink, FileText, Heading1, Heading2, Image, Italic, Link, Link2, List, ListTodo, LoaderCircle, MessageSquare, Network, Quote, Scissors, Search, Strikethrough, TextSelect } from 'lucide-svelte';
   import { openContextMenu } from '$lib/context-menu.svelte';
-  import { SEPARATOR, shortcutLabel, type MenuEntries } from '$lib/menu';
+  import { IS_MAC, SEPARATOR, type MenuEntries } from '$lib/menu';
+  import type { EditorCommand } from '$lib/app-menu';
   import { appAlert } from '$lib/dialogs.svelte';
   import { onMount, onDestroy, tick } from 'svelte';
   import { EditorView, basicSetup } from 'codemirror';
@@ -543,20 +544,39 @@
     if (position !== null && (position < from || position > to)) view.dispatch({ selection: { anchor: position } });
     const empty = view.state.selection.main.empty;
     openContextMenu(event, [
-      { label: ts('menu.cut'), icon: Scissors, shortcut: shortcutLabel('Ctrl+X'), disabled: empty, action: () => cutSelection(view) },
-      { label: ts('menu.copy'), icon: Copy, shortcut: shortcutLabel('Ctrl+C'), disabled: empty, action: () => copyText(view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to)) },
-      { label: ts('menu.paste'), icon: ClipboardPaste, shortcut: shortcutLabel('Ctrl+V'), action: () => pasteText(view) },
-      { label: ts('menu.selectAll'), icon: TextSelect, shortcut: shortcutLabel('Ctrl+A'), action: () => { view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } }); view.focus(); } },
+      { label: ts('menu.cut'), icon: Scissors, shortcut: 'Ctrl+X', disabled: empty, action: () => cutSelection(view) },
+      { label: ts('menu.copy'), icon: Copy, shortcut: 'Ctrl+C', disabled: empty, action: () => copyText(view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to)) },
+      { label: ts('menu.paste'), icon: ClipboardPaste, shortcut: 'Ctrl+V', action: () => pasteText(view) },
+      { label: ts('menu.selectAll'), icon: TextSelect, shortcut: 'Ctrl+A', action: () => { view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } }); view.focus(); } },
       SEPARATOR,
-      { label: ts('menu.bold'), icon: Bold, shortcut: shortcutLabel('Ctrl+B'), action: () => applyFormatting('**', '**') },
-      { label: ts('menu.italic'), icon: Italic, shortcut: shortcutLabel('Ctrl+I'), action: () => applyFormatting('*', '*') },
+      { label: ts('menu.bold'), icon: Bold, shortcut: 'Ctrl+B', action: () => applyFormatting('**', '**') },
+      { label: ts('menu.italic'), icon: Italic, shortcut: 'Ctrl+I', action: () => applyFormatting('*', '*') },
       { label: ts('editor.strikethrough'), icon: Strikethrough, action: () => applyFormatting('~~', '~~') },
       { label: ts('editor.code'), icon: Code, action: () => applyFormatting('`', '`') },
       { label: ts('menu.insertLink'), icon: Link, action: () => applyFormatting('[', '](https://)') },
       { label: ts('menu.linkToNote'), icon: Link2, action: () => applyFormatting('[[', ']]') },
       SEPARATOR,
-      { label: ts('menu.findInNote'), icon: Search, shortcut: shortcutLabel('Ctrl+F'), action: () => openFind() },
+      { label: ts('menu.findInNote'), icon: Search, shortcut: 'Ctrl+F', action: () => openFind() },
     ]);
+  }
+
+  /** Runs an Edit menu command on this note. Undo, redo, find and replace go
+   * through their shortcuts, so Ctrl+Z still restores a just-deleted note. */
+  export function runCommand(command: EditorCommand) {
+    const view = editorView;
+    if (!view) return;
+    const { from, to } = view.state.selection.main;
+    if (command === 'cut') void cutSelection(view);
+    else if (command === 'copy') copyText(view.state.sliceDoc(from, to));
+    else if (command === 'paste') void pasteText(view);
+    else if (command === 'selectAll') { view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } }); view.focus(); }
+    else {
+      const key = { undo: 'z', redo: IS_MAC ? 'z' : 'y', find: 'f', replace: 'h' }[command];
+      view.focus();
+      view.contentDOM.dispatchEvent(new KeyboardEvent('keydown', {
+        key, shiftKey: command === 'redo' && IS_MAC, ctrlKey: !IS_MAC, metaKey: IS_MAC, bubbles: true, cancelable: true,
+      }));
+    }
   }
 
   function openExternal(url: string) {
@@ -590,7 +610,7 @@
     }
     const selected = window.getSelection()?.toString() ?? '';
     entries.push(
-      { label: ts('menu.copy'), icon: Copy, shortcut: shortcutLabel('Ctrl+C'), disabled: !selected, action: () => copyText(selected) },
+      { label: ts('menu.copy'), icon: Copy, shortcut: 'Ctrl+C', disabled: !selected, action: () => copyText(selected) },
       { label: ts('menu.selectAll'), icon: TextSelect, action: () => {
         const article = previewContainer?.querySelector('article');
         const selection = window.getSelection();

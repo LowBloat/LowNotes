@@ -7,6 +7,13 @@ function clampZoom(value: number): number {
   return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.round(value * 10) / 10));
 }
 
+let stepZoom: ((direction: -1 | 0 | 1) => void) | null = null;
+
+/** Zooms like the shortcuts do: in (1), out (-1) or back to 100% (0). */
+export function changeAppZoom(direction: -1 | 0 | 1): void {
+  stepZoom?.(direction);
+}
+
 /** Install app-wide zoom shortcuts in the desktop webview. */
 export function installAppZoom(
   target: Window,
@@ -67,8 +74,14 @@ export function installAppZoom(
   setZoom(zoom);
   target.addEventListener('keydown', handleKeydown, true);
   target.addEventListener('wheel', handleWheel, { capture: true, passive: false });
+  const step = (direction: -1 | 0 | 1) => {
+    const next = clampZoom(direction === 0 ? 1 : zoom + direction * ZOOM_STEP);
+    if (next !== zoom) setZoom(next);
+  };
+  stepZoom = step;
   return () => {
     disposed = true;
+    if (stepZoom === step) stepZoom = null;
     target.removeEventListener('keydown', handleKeydown, true);
     target.removeEventListener('wheel', handleWheel, true);
   };

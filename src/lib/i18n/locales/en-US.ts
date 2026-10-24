@@ -527,6 +527,16 @@ const enUS = {
   preview: {
     remoteImageBlocked: 'Remote image blocked. Click to load.',
   },
+  titlebar: {
+    window: 'Window',
+    menubar: 'Application menu', file: 'File', edit: 'Edit', view: 'View', help: 'Help',
+    minimize: 'Minimize', maximize: 'Maximize', restore: 'Restore', close: 'Close',
+    openFolder: 'Open folder as vault…', showVaultFolder: 'Show vault folder', quit: 'Quit LowNotes',
+    undo: 'Undo', redo: 'Redo', replace: 'Replace in note',
+    darkTheme: 'Dark theme', assistant: 'Assistant panel', zoomIn: 'Zoom in', zoomOut: 'Zoom out', actualSize: 'Actual size',
+    documentation: 'Documentation', reportProblem: 'Report a problem', checkUpdates: 'Check for updates…', about: 'About LowNotes',
+    upToDate: 'LowNotes is up to date.', updateCheckFailed: 'LowNotes could not check for updates. Try again later.',
+  },
   menu: {
     bold: 'Bold', italic: 'Italic',
     open: 'Open', duplicate: 'Duplicate', duplicatePrompt: 'Name of the copy', copySuffix: 'copy',

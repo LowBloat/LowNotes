@@ -7,6 +7,7 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 ## [Unreleased]
 
 ### Added
+- A title bar in the LowBloat style with File, Edit, View and Help menus and themed window buttons on Windows and Linux. macOS keeps its traffic lights and gets the same menus in the menu bar. Alt or F10 moves to the menus; Ctrl+N creates a note and Ctrl+, opens Settings; Help → Check for updates works even with automatic checks off ([#84](https://github.com/LowBloat/LowNotes/issues/84)).
 - Right-click menus in the note tree (new note or folder here, rename, duplicate, copy link, show in folder, delete), the vault list, the editor (clipboard, formatting, links, find) and the preview (open or copy links and remote images). They work from the keyboard, and the WebView's own menu no longer appears outside text fields ([#85](https://github.com/LowBloat/LowNotes/issues/85)).
 
 ### Fixed

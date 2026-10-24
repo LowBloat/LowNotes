@@ -529,6 +529,16 @@ const esES: Dictionary = {
   preview: {
     remoteImageBlocked: 'Imagen remota bloqueada. Haz clic para cargarla.',
   },
+  titlebar: {
+    window: 'Ventana',
+    menubar: 'Menú de la aplicación', file: 'Archivo', edit: 'Editar', view: 'Ver', help: 'Ayuda',
+    minimize: 'Minimizar', maximize: 'Maximizar', restore: 'Restaurar', close: 'Cerrar',
+    openFolder: 'Abrir carpeta como vault…', showVaultFolder: 'Mostrar carpeta del vault', quit: 'Salir de LowNotes',
+    undo: 'Deshacer', redo: 'Rehacer', replace: 'Reemplazar en la nota',
+    darkTheme: 'Tema oscuro', assistant: 'Panel del asistente', zoomIn: 'Acercar', zoomOut: 'Alejar', actualSize: 'Tamaño real',
+    documentation: 'Documentación', reportProblem: 'Informar de un problema', checkUpdates: 'Buscar actualizaciones…', about: 'Acerca de LowNotes',
+    upToDate: 'LowNotes está actualizado.', updateCheckFailed: 'LowNotes no pudo buscar actualizaciones. Inténtalo más tarde.',
+  },
   menu: {
     bold: 'Negrita', italic: 'Cursiva',
     open: 'Abrir', duplicate: 'Duplicar', duplicatePrompt: 'Nombre de la copia', copySuffix: 'copia',

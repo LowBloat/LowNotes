@@ -15,6 +15,7 @@
         "title": "LowNotes",
         "maximized": true,
         "visible": false,
+        "decorations": false,
         "width": 1100,
         "height": 750,
         "minWidth": 640,

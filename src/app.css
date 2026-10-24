@@ -3,6 +3,7 @@
 :root {
   color-scheme: light;
   --app-toolbar-height: 58px;
+  --titlebar-height: 34px;
   --bg-main: #f1f3ee;
   --bg-sidebar: #e8ebe3;
   --bg-card: #fbfcf8;
