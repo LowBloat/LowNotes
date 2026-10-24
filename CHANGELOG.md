@@ -6,8 +6,12 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 
 ## [Unreleased]
 
+### Added
+- Right-click menus in the note tree (new note or folder here, rename, duplicate, copy link, show in folder, delete), the vault list, the editor (clipboard, formatting, links, find) and the preview (open or copy links and remote images). They work from the keyboard, and the WebView's own menu no longer appears outside text fields ([#85](https://github.com/LowBloat/LowNotes/issues/85)).
+
 ### Fixed
 - The window no longer flashes white or jumps in size on startup: it stays hidden until the themed interface is ready ([#83](https://github.com/LowBloat/LowNotes/issues/83)).
+- Ctrl+B and Ctrl+I format the selection in the editor, as the toolbar tooltips promised ([#85](https://github.com/LowBloat/LowNotes/issues/85)).
 
 ## [0.4.1] - 2026-10-21
 

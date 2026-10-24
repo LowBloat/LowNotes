@@ -33,6 +33,7 @@ flowchart LR
 | Shell and layout | `src/routes/+page.svelte` |
 | Shell state: P2P session, presence, updates, recovery notices | `src/lib/state/` |
 | In-app dialogs | `src/lib/dialogs.svelte.ts`, `components/AppDialog.svelte` |
+| Right-click menus | `src/lib/context-menu.svelte.ts`, `menu.ts`, `components/ContextMenu.svelte`, `MenuList.svelte` |
 | Editor and preview, collaboration, presence | `src/lib/components/Editor.svelte`, `editor-collaboration.ts`, `presence.ts` |
 | Markdown rendering (markdown-it, Mermaid) | `src/lib/markdown.ts`, `mermaid-renderer.ts`, `preview-links.ts` |
 | Native bridge (every `invoke`) | `src/lib/api.ts`, `src/lib/types.ts` |

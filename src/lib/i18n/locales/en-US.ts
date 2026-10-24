@@ -527,6 +527,15 @@ const enUS = {
   preview: {
     remoteImageBlocked: 'Remote image blocked. Click to load.',
   },
+  menu: {
+    bold: 'Bold', italic: 'Italic',
+    open: 'Open', duplicate: 'Duplicate', duplicatePrompt: 'Name of the copy', copySuffix: 'copy',
+    copyLink: 'Copy link', showInFolder: 'Show in folder', newNoteHere: 'New note here', newFolderHere: 'New folder here',
+    cut: 'Cut', copy: 'Copy', paste: 'Paste', selectAll: 'Select all', pasteFailed: 'LowNotes could not read the clipboard. Paste with Ctrl+V instead.',
+    insertLink: 'Insert link', linkToNote: 'Link to note', findInNote: 'Find in note',
+    openLink: 'Open link', openNote: 'Open note', copyLinkAddress: 'Copy link address', openImage: 'Open image', copyImageAddress: 'Copy image address',
+    openVault: 'Open vault',
+  },
 };
 
 export default enUS;

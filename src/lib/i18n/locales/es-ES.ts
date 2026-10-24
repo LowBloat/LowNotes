@@ -529,6 +529,15 @@ const esES: Dictionary = {
   preview: {
     remoteImageBlocked: 'Imagen remota bloqueada. Haz clic para cargarla.',
   },
+  menu: {
+    bold: 'Negrita', italic: 'Cursiva',
+    open: 'Abrir', duplicate: 'Duplicar', duplicatePrompt: 'Nombre de la copia', copySuffix: 'copia',
+    copyLink: 'Copiar enlace', showInFolder: 'Mostrar en la carpeta', newNoteHere: 'Nueva nota aquí', newFolderHere: 'Nueva carpeta aquí',
+    cut: 'Cortar', copy: 'Copiar', paste: 'Pegar', selectAll: 'Seleccionar todo', pasteFailed: 'LowNotes no pudo leer el portapapeles. Pega con Ctrl+V.',
+    insertLink: 'Insertar enlace', linkToNote: 'Enlace a nota', findInNote: 'Buscar en la nota',
+    openLink: 'Abrir enlace', openNote: 'Abrir nota', copyLinkAddress: 'Copiar dirección del enlace', openImage: 'Abrir imagen', copyImageAddress: 'Copiar dirección de la imagen',
+    openVault: 'Abrir vault',
+  },
 };
 
 export default esES;

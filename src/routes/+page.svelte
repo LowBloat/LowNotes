@@ -21,6 +21,7 @@
   import { configureRemoteImages } from '$lib/markdown';
   import { appAlert, appConfirm, dialogState } from '$lib/dialogs.svelte';
   import AppDialog from '$lib/components/AppDialog.svelte';
+  import ContextMenu from '$lib/components/ContextMenu.svelte';
   import { setTrayLanguage, windowPainted } from '$lib/api';
   import { resolveNoteLink } from '$lib/note-links';
   import { DEFAULT_PALETTE_ID, applyTheme } from '$lib/themes';
@@ -532,3 +533,4 @@
 {#if dialogState.current}
   {#key dialogState.current}<AppDialog request={dialogState.current} />{/key}
 {/if}
+<ContextMenu />
