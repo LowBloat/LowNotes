@@ -1,6 +1,6 @@
 <script lang="ts">
   import { FileText, FolderOpen, MessageSquare, Network, NotebookPen } from 'lucide-svelte';
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import type { AppSettings, AppTheme, InitialStateResponse, ViewMode, VaultConfig, VaultItem } from '$lib/types';
   import {
     getAppState,
@@ -21,7 +21,7 @@
   import { configureRemoteImages } from '$lib/markdown';
   import { appAlert, appConfirm, dialogState } from '$lib/dialogs.svelte';
   import AppDialog from '$lib/components/AppDialog.svelte';
-  import { setTrayLanguage } from '$lib/api';
+  import { setTrayLanguage, windowPainted } from '$lib/api';
   import { resolveNoteLink } from '$lib/note-links';
   import { DEFAULT_PALETTE_ID, applyTheme } from '$lib/themes';
   import Sidebar from '$lib/components/Sidebar.svelte';
@@ -250,9 +250,21 @@
     }
   }
 
+  // The native window starts hidden so the webview's white background never
+  // shows. It appears once the themed page is rendered, with the page
+  // background behind the webview. Animation frames may not run in a hidden
+  // window, so this does not wait for one.
+  let windowShown = false;
+  function syncWindowBackground() {
+    windowShown = true;
+    const background = getComputedStyle(document.documentElement).getPropertyValue('--bg-main').trim();
+    void windowPainted(background).catch(() => {});
+  }
+
   $effect(() => {
     const palettes = settings?.theme_palettes;
     applyTheme(palettes?.active_palette_id ?? DEFAULT_PALETTE_ID, theme, palettes?.custom_palettes ?? []);
+    if (windowShown) syncWindowBackground();
   });
 
   $effect(() => {
@@ -270,6 +282,8 @@
       listen('app:open-request', () => void handleOpenRequest()).then((unlisten) => (unlistenOpenRequest = unlisten)),
     ]);
     await loadInitialData();
+    await tick();
+    syncWindowBackground();
     acceptsOpenRequests = true;
     await handleOpenRequest();
     updates.start();

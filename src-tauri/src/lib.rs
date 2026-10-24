@@ -36,7 +36,9 @@ pub mod storage;
 pub mod updates;
 
 use parking_lot::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
@@ -108,6 +110,34 @@ fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
+/// The main window starts hidden (`visible: false` in tauri.conf.json), so the
+/// webview's white background never shows while the page loads.
+#[derive(Default)]
+struct FirstShow(AtomicBool);
+
+/// How long the window waits for the page before it is shown anyway, so a
+/// page that fails to load never leaves an invisible app.
+const FIRST_SHOW_FALLBACK: Duration = Duration::from_secs(5);
+
+fn show_main_window_first_time<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if !app.state::<FirstShow>().0.swap(true, Ordering::SeqCst) {
+        show_main_window(app);
+    }
+}
+
+/// Called by the page once the themed page is rendered and whenever the theme
+/// changes: the native window takes the page background, so resizing
+/// never uncovers white, and appears the first time.
+#[tauri::command]
+fn window_painted(background: String, app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        if let Ok(color) = background.parse::<tauri::window::Color>() {
+            let _ = window.set_background_color(Some(color));
+        }
+    }
+    show_main_window_first_time(&app);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(target_os = "linux")]
@@ -171,7 +201,13 @@ pub fn run() {
         .manage(update_policy)
         .manage(app_state)
         .manage(PendingOpen::default())
+        .manage(FirstShow::default())
         .setup(move |app| {
+            let first_show = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(FIRST_SHOW_FALLBACK);
+                show_main_window_first_time(&first_show);
+            });
             if let Ok(cwd) = std::env::current_dir() {
                 queue_open_request(app.handle(), std::env::args().collect(), &cwd);
             }
@@ -280,6 +316,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             set_tray_language,
+            window_painted,
             commands::take_recovery_notices,
             commands::retry_credentials,
             history_commands::history_list,
