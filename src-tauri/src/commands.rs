@@ -392,6 +392,33 @@ pub async fn create_note(
     .await
 }
 
+/// Creates `new_path` with the text of the note at `path`, written once like
+/// any other new note.
+#[tauri::command]
+pub async fn duplicate_note(
+    path: String,
+    new_path: String,
+    app: AppHandle,
+) -> Result<String, String> {
+    on_worker(app, move |state, _app| {
+        let settings = state.settings.read().clone();
+        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
+        let content = vault::read_note(&vault.path, &path).map_err(|e| e.to_string())?;
+        let created =
+            vault::create_note(&vault.path, &new_path, Some(&content), &settings.language)
+                .map_err(|e| e.to_string())?;
+        state
+            .crdt
+            .invalidate_path(&vault.path, &created)
+            .map_err(|e| e.to_string())?;
+        if let Some(net) = state.network.read().as_ref() {
+            net.sync_now();
+        }
+        Ok(created)
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn create_folder(path: String, app: AppHandle) -> Result<(), String> {
     on_worker(app, move |state, _app| {
@@ -1111,6 +1138,34 @@ pub fn export_document(request: tauri::ipc::Request<'_>) -> Result<(), String> {
         .and_then(|v| v.to_str().ok())
         .ok_or("export.invalidFile")?;
     crate::export_target::write(token, bytes).map(|_| ())
+}
+
+/// Shows a vault or one of its items in the system file manager: an empty
+/// `path` opens the vault folder, anything else is selected in its folder.
+#[tauri::command]
+pub async fn show_in_folder(vault_id: String, path: String, app: AppHandle) -> Result<(), String> {
+    on_worker(app, move |state, app| {
+        use tauri_plugin_opener::OpenerExt;
+        let root = state
+            .settings
+            .read()
+            .vaults
+            .iter()
+            .find(|vault| vault.id == vault_id)
+            .map(|vault| vault.path.clone())
+            .ok_or("errors.vaultNotFound")?;
+        if path.is_empty() {
+            return app
+                .opener()
+                .open_path(root.to_string_lossy(), None::<&str>)
+                .map_err(|e| e.to_string());
+        }
+        let target = crate::vault::safe_join(&root, &path).map_err(|e| e.to_string())?;
+        app.opener()
+            .reveal_item_in_dir(target)
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Opens the folder with the diagnostic log (no note content or keys).

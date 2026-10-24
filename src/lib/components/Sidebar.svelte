@@ -2,19 +2,23 @@
   import type { InitialStateResponse, VaultConfig, VaultItem } from '../types';
   import type { PresenceUser } from '$lib/presence';
   import { visibleNoteRows } from '$lib/note-tree';
-  import { ChevronDown, ChevronRight, Clock3, FilePlus2, FileText, Folder, FolderOpen, FolderPlus, NotebookPen, Pencil, RefreshCw, Settings2, Trash2, X } from 'lucide-svelte';
+  import { ChevronDown, ChevronRight, Clock3, CopyPlus, FilePlus2, FileText, Folder, FolderOpen, FolderPlus, FolderSearch, Link, NotebookPen, Pencil, RefreshCw, Settings2, Trash2, X } from 'lucide-svelte';
   import {
     createNote,
     createFolder,
     deleteItem,
+    duplicateNote,
     renameItem,
     pickVaultDirectory,
     selectVault,
     forgetVault,
     networkSyncNow,
+    showInFolder,
   } from '../api';
   import { t, trError, ts } from '$lib/i18n';
   import { appAlert, appConfirm, appPrompt } from '$lib/dialogs.svelte';
+  import { openContextMenu } from '$lib/context-menu.svelte';
+  import { SEPARATOR, duplicateName, wikiLinkFor } from '$lib/menu';
 
   let {
     activeVault = null,
@@ -58,7 +62,8 @@
 
   // The vault menu closes on a click outside it or on Escape, like other menus.
   function closeVaultMenuOnOutside(event: PointerEvent) {
-    if (isVaultDropdownOpen && vaultSwitcher && !vaultSwitcher.contains(event.target as Node)) isVaultDropdownOpen = false;
+    const target = event.target as Element;
+    if (isVaultDropdownOpen && vaultSwitcher && !vaultSwitcher.contains(target) && !target.closest?.('[data-menu]')) isVaultDropdownOpen = false;
   }
   function closeVaultMenuOnEscape(event: KeyboardEvent) {
     if (!isVaultDropdownOpen || event.key !== 'Escape' || document.querySelector('[data-modal-backdrop]')) return;
@@ -138,8 +143,8 @@
     }
   }
 
-  async function handleDelete(path: string, event: MouseEvent) {
-    event.stopPropagation();
+  async function handleDelete(path: string, event?: MouseEvent) {
+    event?.stopPropagation();
     if (await appConfirm(ts('sidebar.confirmDelete', { path }), { danger: true, confirmLabel: ts('sidebar.delete') })) {
       try {
         await deleteItem(path);
@@ -151,8 +156,8 @@
     }
   }
 
-  async function handleRename(oldPath: string, event: MouseEvent) {
-    event.stopPropagation();
+  async function handleRename(oldPath: string, event?: MouseEvent) {
+    event?.stopPropagation();
     const newName = (await appPrompt(ts('sidebar.renamePrompt'), oldPath))?.trim();
     if (newName && newName !== oldPath) {
       try {
@@ -167,6 +172,80 @@
         void appAlert(trError(typeof e === 'string' ? e : e.message || 'sidebar.errorRename'));
       }
     }
+  }
+
+  async function handleDuplicate(path: string) {
+    const newPath = (await appPrompt(ts('menu.duplicatePrompt'), duplicateName(path, ts('menu.copySuffix'))))?.trim();
+    if (!newPath || newPath === path) return;
+    try {
+      const created = await duplicateNote(path, newPath);
+      onRefreshItems();
+      onSelectNote(created);
+    } catch (e) {
+      void appAlert(trError(String(e)));
+    }
+  }
+
+  function revealItem(vaultId: string | undefined, path = '') {
+    if (vaultId) showInFolder(vaultId, path).catch((e) => void appAlert(trError(String(e))));
+  }
+
+  function copyText(text: string) {
+    navigator.clipboard.writeText(text).catch((e) => void appAlert(trError(String(e))));
+  }
+
+  // A name form opened from a menu or button takes the focus, after any folder prefix.
+  function focusAtEnd(input: HTMLInputElement) {
+    queueMicrotask(() => {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    });
+  }
+
+  function startCreating(kind: 'note' | 'folder', folder = '') {
+    const prefix = folder ? `${folder}/` : '';
+    if (kind === 'note') { newNoteName = prefix; isCreatingNote = true; }
+    else { newFolderName = prefix; isCreatingFolder = true; }
+  }
+
+  function itemMenu(event: MouseEvent, item: VaultItem) {
+    const vaultId = activeVault?.id;
+    openContextMenu(event, item.is_dir ? [
+      { label: ts('menu.newNoteHere'), icon: FilePlus2, action: () => startCreating('note', item.path) },
+      { label: ts('menu.newFolderHere'), icon: FolderPlus, action: () => startCreating('folder', item.path) },
+      SEPARATOR,
+      { label: ts('sidebar.rename'), icon: Pencil, action: () => handleRename(item.path) },
+      { label: ts('menu.showInFolder'), icon: FolderSearch, action: () => revealItem(vaultId, item.path) },
+      SEPARATOR,
+      { label: ts('sidebar.delete'), icon: Trash2, danger: true, action: () => handleDelete(item.path) },
+    ] : [
+      { label: ts('menu.open'), icon: FileText, action: () => onSelectNote(item.path) },
+      SEPARATOR,
+      { label: ts('sidebar.rename'), icon: Pencil, action: () => handleRename(item.path) },
+      { label: ts('menu.duplicate'), icon: CopyPlus, action: () => handleDuplicate(item.path) },
+      { label: ts('menu.copyLink'), icon: Link, action: () => copyText(wikiLinkFor(item.path)) },
+      { label: ts('menu.showInFolder'), icon: FolderSearch, action: () => revealItem(vaultId, item.path) },
+      SEPARATOR,
+      { label: ts('sidebar.delete'), icon: Trash2, danger: true, action: () => handleDelete(item.path) },
+    ]);
+  }
+
+  function treeMenu(event: MouseEvent) {
+    openContextMenu(event, [
+      { label: ts('sidebar.newNote'), icon: FilePlus2, action: () => startCreating('note') },
+      { label: ts('sidebar.newFolder'), icon: FolderPlus, action: () => startCreating('folder') },
+      SEPARATOR,
+      { label: ts('menu.showInFolder'), icon: FolderSearch, action: () => revealItem(activeVault?.id) },
+    ]);
+  }
+
+  function vaultMenu(event: MouseEvent, v: VaultConfig) {
+    openContextMenu(event, [
+      { label: ts('menu.openVault'), icon: NotebookPen, disabled: v.missing || activeVault?.id === v.id, action: () => handleSelectVault(v) },
+      { label: ts('menu.showInFolder'), icon: FolderSearch, disabled: v.missing, action: () => { isVaultDropdownOpen = false; revealItem(v.id); } },
+      SEPARATOR,
+      { label: ts('sidebar.removeVault'), icon: X, danger: true, action: () => { confirmingVaultId = v.id; vaultError = ''; } },
+    ]);
   }
 
 </script>
@@ -209,7 +288,7 @@
               {#if vaultError}<span role="alert" class="text-red-400">{vaultError}</span>{/if}
             </div>
           {:else}
-            <div class="group/vault flex items-center hover:bg-[var(--bg-hover)] transition">
+            <div class="group/vault flex items-center hover:bg-[var(--bg-hover)] transition" role="group" oncontextmenu={(e) => vaultMenu(e, v)}>
               <button
                 onclick={() => handleSelectVault(v)}
                 disabled={v.missing}
@@ -292,6 +371,7 @@
         <input
           type="text"
           bind:value={newNoteName}
+          use:focusAtEnd
           placeholder={$t('sidebar.noteNamePlaceholder')}
           class="w-full bg-[var(--bg-main)] border border-[var(--border)] rounded px-2 py-1 text-xs text-[var(--text-main)] focus:outline-none"
         />
@@ -322,6 +402,7 @@
         <input
           type="text"
           bind:value={newFolderName}
+          use:focusAtEnd
           placeholder={$t('sidebar.folderNamePlaceholder')}
           class="w-full bg-[var(--bg-main)] border border-[var(--border)] rounded px-2 py-1 text-xs text-[var(--text-main)] focus:outline-none"
         />
@@ -345,7 +426,7 @@
   </div>
 
   <!-- Folder tree and notes -->
-  <div class="flex-1 overflow-y-auto px-2 py-2 flex flex-col gap-0.5">
+  <div class="flex-1 overflow-y-auto px-2 py-2 flex flex-col gap-0.5" role="presentation" oncontextmenu={treeMenu}>
     {#if visibleRows.length === 0}
       <div class="text-center py-8 text-xs text-[var(--text-dim)]">
         {searchQuery ? $t('sidebar.noNotesFound') : $t('sidebar.noNotesInVault')}
@@ -353,6 +434,8 @@
     {:else}
       {#each visibleRows as { item, depth } (item.path)}
         <div
+          role="group"
+          oncontextmenu={(e) => itemMenu(e, item)}
           class="group w-full flex items-center justify-between pr-2.5 rounded-md text-xs text-left transition {selectedPath === item.path ? 'bg-[var(--bg-active)] text-[var(--accent-light)] font-medium' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-main)]'}"
         >
           <!-- The row action is a real button; rename/delete are sibling buttons, never nested. -->

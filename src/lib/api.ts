@@ -92,6 +92,11 @@ export async function createNote(path: string, title?: string): Promise<string> 
   return await invoke('create_note', { path, title });
 }
 
+/** Copies the note at `path` into a new note; resolves with the new path. */
+export async function duplicateNote(path: string, newPath: string): Promise<string> {
+  return await invoke('duplicate_note', { path, newPath });
+}
+
 export async function createFolder(path: string): Promise<void> {
   return await invoke('create_folder', { path });
 }
@@ -243,6 +248,11 @@ export async function saveRemoteImages(loadRemoteImages: boolean): Promise<void>
 /** Opens the diagnostic log folder in the file manager. */
 export async function openLogFolder(): Promise<void> {
   await invoke('open_log_folder');
+}
+
+/** Opens the vault folder (empty `path`) or selects an item in its folder. */
+export async function showInFolder(vaultId: string, path = ''): Promise<void> {
+  await invoke('show_in_folder', { vaultId, path });
 }
 
 export async function setTrayLanguage(language: string): Promise<void> {
