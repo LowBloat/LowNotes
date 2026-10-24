@@ -249,6 +249,11 @@ export async function setTrayLanguage(language: string): Promise<void> {
   await invoke('set_tray_language', { language });
 }
 
+/** Gives the native window the page background and shows it the first time. */
+export async function windowPainted(background: string): Promise<void> {
+  await invoke('window_painted', { background });
+}
+
 export async function fetchAiModels(
   providerId?: string,
   customUrl?: string,

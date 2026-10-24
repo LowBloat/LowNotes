@@ -6,6 +6,9 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 
 ## [Unreleased]
 
+### Fixed
+- The window no longer flashes white or jumps in size on startup: it stays hidden until the themed interface is ready ([#83](https://github.com/LowBloat/LowNotes/issues/83)).
+
 ## [0.4.1] - 2026-10-21
 
 ### Added
