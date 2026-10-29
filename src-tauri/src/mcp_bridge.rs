@@ -15,7 +15,9 @@ use crate::mcp::{self, Endpoint, HANDSHAKE};
 const REPLY_TIMEOUT: Duration = Duration::from_secs(10);
 const FIRST_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long to wait while every pipe instance is busy.
+#[cfg(windows)]
 const BUSY_RETRIES: u32 = 40;
+#[cfg(windows)]
 const BUSY_RETRY_DELAY: Duration = Duration::from_millis(50);
 const MAX_REPLY_BYTES: usize = 64;
 
@@ -23,11 +25,13 @@ const NOT_ENABLED: &str =
     "The LowNotes MCP server is off. Turn it on in LowNotes: Settings > MCP server.";
 const NOT_RUNNING: &str =
     "LowNotes is not open. Start LowNotes (it can stay in the tray) and reconnect.";
+#[cfg(windows)]
 const OTHER_USER: &str =
     "Refused to connect: the LowNotes MCP endpoint belongs to another user's process.";
 const DENIED: &str =
     "LowNotes refused the token. If it was regenerated in LowNotes, reconnect the MCP client.";
 const NO_CREDENTIALS: &str = "Could not read the MCP token from the system credential store.";
+#[cfg(windows)]
 const BUSY: &str = "LowNotes is serving too many MCP clients. Try again later.";
 const FAILED: &str = "Could not reach LowNotes. See the bridge's log for details.";
 
