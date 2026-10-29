@@ -17,6 +17,7 @@ import type {
   LinkEdge,
   LinkOperation,
   LinkOrigin,
+  McpStatus,
   NoteReadResponse,
   PairInfo,
   RagChunk,
@@ -190,6 +191,19 @@ export async function saveUpdatePrefs(updateCheck: boolean, skippedVersion: stri
 
 export async function saveCloseToTray(closeToTray: boolean): Promise<void> {
   return await invoke('save_close_to_tray', { closeToTray });
+}
+
+export async function mcpStatus(): Promise<McpStatus> {
+  return await invoke('mcp_status');
+}
+
+export async function saveMcpSettings(enabled: boolean, vaultIds: string[]): Promise<void> {
+  return await invoke('save_mcp_settings', { enabled, vaultIds });
+}
+
+/** Connected MCP clients are disconnected and must reconnect. */
+export async function regenerateMcpToken(): Promise<void> {
+  return await invoke('mcp_regenerate_token');
 }
 
 export async function contextMenuSupported(): Promise<boolean> {
