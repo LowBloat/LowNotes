@@ -18,6 +18,7 @@ pub mod reference_sync;
 pub mod references;
 pub mod structural;
 pub mod vault;
+pub mod vault_service;
 pub mod web_search;
 
 pub mod creation;

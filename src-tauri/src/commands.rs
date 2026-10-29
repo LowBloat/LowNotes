@@ -20,7 +20,7 @@ use crate::{
     network::{NetworkIdentity, NetworkService, PairInfo},
     rag::{self, ChatMessage, ChatResponse, RagChunk},
     vault::{self, VaultItem},
-    web_search,
+    vault_service, web_search,
 };
 
 pub struct AppState {
@@ -262,41 +262,17 @@ pub async fn forget_vault(
 
 #[tauri::command]
 pub async fn list_notes(app: AppHandle) -> Result<Vec<VaultItem>, String> {
-    on_worker(app, move |state, _app| {
-        let settings = state.settings.read().clone();
-        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-        vault::list_vault_items(&vault.path).map_err(|e| e.to_string())
-    })
-    .await
+    on_worker(app, move |state, _app| vault_service::list_notes(state)).await
 }
 
 #[tauri::command]
 pub async fn read_note(path: String, app: AppHandle) -> Result<NoteReadResponse, String> {
     on_worker(app, move |state, _app| {
-        let settings = state.settings.read().clone();
-        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-        let catalog =
-            crate::catalog_sync::prepare(&vault.path, &state.crdt, &catalog_device(state, vault))
-                .map_err(|e| e.to_string())?;
-        let note_id = catalog
-            .resolve()
-            .map_err(|e| e.to_string())?
-            .into_values()
-            .find(|entry| !entry.deleted() && !entry.is_dir && entry.path == path)
-            .map(|entry| entry.id);
-        vault::read_note(&vault.path, &path).map_err(|e| e.to_string())?;
-
-        let crdt_bytes = state
-            .crdt
-            .get_or_create_doc(&vault.path, &path)
-            .map_err(|e| e.to_string())?;
-        let content = vault::read_note(&vault.path, &path).map_err(|e| e.to_string())?;
-        let crdt_update_base64 = URL_SAFE_NO_PAD.encode(crdt_bytes);
-
+        let note = vault_service::read_note(state, &path)?;
         Ok(NoteReadResponse {
-            content,
-            crdt_update_base64,
-            note_id,
+            content: note.content,
+            crdt_update_base64: URL_SAFE_NO_PAD.encode(note.crdt_state),
+            note_id: note.note_id,
         })
     })
     .await
@@ -875,10 +851,7 @@ pub async fn search_vault_rag(
     app: AppHandle,
 ) -> Result<Vec<RagChunk>, String> {
     on_worker(app, move |state, _app| {
-        let settings = state.settings.read().clone();
-        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-        rag::index_and_search_vault(&vault.path, &query, limit.unwrap_or(5))
-            .map_err(|e| e.to_string())
+        vault_service::search(state, &query, limit.unwrap_or(5))
     })
     .await
 }
@@ -1039,23 +1012,7 @@ pub async fn ai_save_draft(
     app: AppHandle,
 ) -> Result<String, String> {
     on_worker(app, move |state, _app| {
-        let settings = state.settings.read().clone();
-        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-        if vault.id != vault_id {
-            return Err("ai.vaultChanged".into());
-        }
-        let path = assistant::save_draft(&vault.path, &draft).map_err(|e| e.to_string())?;
-        state
-            .crdt
-            .invalidate_path(&vault.path, &path)
-            .map_err(|e| e.to_string())?;
-        if let Err(e) = links::reconcile_wikilinks(&vault.path, &path, &draft.content) {
-            tracing::warn!("reconcile_wikilinks failed for {path}: {e}");
-        }
-        if let Some(net) = state.network.read().as_ref() {
-            net.sync_now();
-        }
-        Ok(path)
+        vault_service::save_draft(state, &vault_id, &draft)
     })
     .await
 }
@@ -1067,29 +1024,7 @@ pub async fn ai_apply_edit(
     app: AppHandle,
 ) -> Result<String, String> {
     on_worker(app, move |state, app| {
-        let app = app.clone();
-        let settings = state.settings.read().clone();
-        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-        if vault.id != vault_id {
-            return Err("ai.vaultChanged".into());
-        }
-        let result = state
-            .crdt
-            .apply_note_edit(&vault.path, &edit)
-            .map_err(|e| e.to_string())?;
-        // The open editor receives the same CRDT state as the paired devices.
-        let _ = app.emit(
-            "p2p:crdt-update",
-            crate::network::NetworkEventPayload::RemoteCrdtUpdate {
-                note_path: edit.path.clone(),
-                update: result.state.clone(),
-            },
-        );
-        if let Some(net) = state.network.read().as_ref() {
-            net.broadcast_crdt_update(edit.path.clone(), result.state);
-            net.sync_now();
-        }
-        Ok(edit.path)
+        vault_service::apply_edit(state, app, &vault_id, &edit)
     })
     .await
 }
@@ -1188,12 +1123,7 @@ pub fn mark_welcome_seen(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn links_get(app: AppHandle) -> Result<Vec<links::LinkEdge>, String> {
-    on_worker(app, move |state, _app| {
-        let settings = state.settings.read().clone();
-        let vault = settings.active_vault().ok_or("errors.noActiveVault")?;
-        links::graph_links(&vault.path).map_err(|e| e.to_string())
-    })
-    .await
+    on_worker(app, move |state, _app| vault_service::links(state)).await
 }
 
 #[tauri::command]
