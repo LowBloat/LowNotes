@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Bold, ClipboardPaste, Code, Copy, ExternalLink, FileText, Heading1, Heading2, Image, Italic, Link, Link2, List, ListTodo, LoaderCircle, MessageSquare, Network, Quote, Scissors, Search, Strikethrough, TextSelect } from 'lucide-svelte';
+  import { Bold, ClipboardPaste, Code, Copy, ExternalLink, FileText, Heading1, Heading2, Image, Italic, Link, Link2, List, ListTodo, LoaderCircle, MessageSquare, Network, PenTool, Quote, Scissors, Search, Strikethrough, TextSelect } from 'lucide-svelte';
   import { openContextMenu } from '$lib/context-menu.svelte';
   import { IS_MAC, SEPARATOR, type MenuEntries } from '$lib/menu';
   import type { EditorCommand } from '$lib/app-menu';
@@ -7,7 +7,7 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { EditorView, basicSetup } from 'codemirror';
   import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-  import { defaultHighlightStyle, HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+  import { defaultHighlightStyle, foldEffect, HighlightStyle, syntaxHighlighting } from '@codemirror/language';
   import { styleTags, tags } from '@lezer/highlight';
   import { Compartment, EditorState, Prec } from '@codemirror/state';
   import { keymap } from '@codemirror/view';
@@ -26,6 +26,8 @@
   import { isRemoteImage, renderMarkdown } from '../markdown';
   import { taskCheckboxChange } from '$lib/markdown-tasks';
   import DocumentActions from './DocumentActions.svelte';
+  import DrawingEditor from './DrawingEditor.svelte';
+  import { drawingChange, drawingInsertion, findDrawingBlocks, type DrawingBlock } from '$lib/drawing-blocks';
   import type { AppTheme, ViewMode, ImageUploadProvider } from '../types';
   import { t, ts, trError } from '$lib/i18n';
   import {
@@ -152,6 +154,13 @@
   let disposed = false;
   let mermaidCounter = 0;
   let mermaidDebounce: ReturnType<typeof setTimeout> | null = null;
+  // The drawing open in the full-screen editor: its block and what was last written there.
+  let drawingInitial = $state<string | null>(null);
+  // A drawing added by the toolbar remembers its text, removed again if it is closed untouched.
+  type DrawingCreation = { prefix: number; insert: string };
+  let drawingSource: { index: number; content: string; created: DrawingCreation | null } | null = null;
+  let drawingEditor: DrawingEditor | undefined = $state();
+  const drawingImages = new Map<string, { src: string; width: number } | null>();
   const editorTheme = new Compartment();
   const editorWrapping = new Compartment();
 
@@ -304,6 +313,128 @@
     }
   }
 
+  function drawingMessage(key: 'drawing.invalid' | 'drawing.empty') {
+    return Object.assign(document.createElement('p'), { className: `drawing-message${key === 'drawing.invalid' ? ' drawing-error' : ''}`, textContent: ts(key) });
+  }
+
+  async function renderDrawingBlocks(activeTheme: AppTheme) {
+    if (!previewContainer) return;
+    for (const block of previewContainer.querySelectorAll<HTMLElement>('.drawing-block')) {
+      const target = block.querySelector<HTMLElement>('.drawing-image');
+      if (!target) continue;
+      const source = decodeURIComponent(block.dataset.drawing ?? '');
+      const key = `${activeTheme}:${source}`;
+      if (!drawingImages.has(key)) {
+        try {
+          const { renderDrawingCanvas } = await import('$lib/excalidraw');
+          const rendered = await renderDrawingCanvas(source, activeTheme === 'dark');
+          if (drawingImages.size > 50) drawingImages.clear();
+          drawingImages.set(key, rendered && { src: rendered.canvas.toDataURL('image/png'), width: rendered.width });
+        } catch (error) {
+          console.error('Failed to render a drawing:', error);
+          target.replaceChildren(drawingMessage('drawing.invalid'));
+          continue;
+        }
+      }
+      const image = drawingImages.get(key);
+      target.replaceChildren(image
+        ? Object.assign(document.createElement('img'), { src: image.src, alt: ts('drawing.title'), width: Math.round(image.width) })
+        : drawingMessage('drawing.empty'));
+    }
+  }
+
+  /** The open drawing's block: the same one while unchanged, else one with the same content, else the same position. */
+  function drawingTarget(blocks: DrawingBlock[], source = drawingSource): DrawingBlock | undefined {
+    if (!source) return undefined;
+    const { index, content } = source;
+    if (blocks[index]?.content === content) return blocks[index];
+    return blocks.find(block => block.content === content) ?? blocks[index];
+  }
+
+  function openDrawingAt(index: number, created: DrawingCreation | null = null) {
+    if (!editorView) return;
+    const block = findDrawingBlocks(editorView.state.doc.toString())[index];
+    if (!block) return;
+    drawingSource = { index, content: block.content, created };
+    drawingInitial = block.content;
+  }
+
+  function saveDrawing(content: string) {
+    if (!editorView || !drawingSource) return;
+    let text = editorView.state.doc.toString();
+    let block = drawingTarget(findDrawingBlocks(text));
+    undoManager?.stopCapturing();
+    if (!block) {
+      // Deleted meanwhile, maybe on another device: keep the drawing as a new block at the end.
+      const insertion = drawingInsertion(text, text.length);
+      editorView.dispatch({ changes: { from: insertion.from, insert: insertion.insert }, userEvent: 'input.drawing' });
+      text = editorView.state.doc.toString();
+      block = findDrawingBlocks(text).find(candidate => candidate.from === insertion.contentOffset);
+      if (!block) return;
+    }
+    const change = drawingChange(text, block, content);
+    if (change) editorView.dispatch({ changes: change, userEvent: 'input.drawing' });
+    undoManager?.stopCapturing();
+    drawingSource = { ...drawingSource, index: block.index, content };
+  }
+
+  /** Brings edits made to the open drawing on another device into its canvas. */
+  function syncOpenDrawing() {
+    if (!editorView || !drawingSource) return;
+    const block = drawingTarget(findDrawingBlocks(editorView.state.doc.toString()));
+    if (!block || block.content === drawingSource.content) return;
+    drawingSource = { ...drawingSource, index: block.index, content: block.content };
+    drawingEditor?.merge(block.content);
+  }
+
+  function lineStartBefore(text: string, position: number) {
+    return text.lastIndexOf('\n', position - 2) + 1;
+  }
+
+  function closeDrawing() {
+    drawingEditor?.flush();
+    const source = drawingSource;
+    drawingSource = null;
+    drawingInitial = null;
+    if (editorView && source?.created) {
+      // A new drawing closed without strokes takes back exactly the text it added.
+      const text = editorView.state.doc.toString();
+      const block = findDrawingBlocks(text)[source.index];
+      const from = block ? block.from - source.created.prefix : -1;
+      if (block && text.slice(from, from + source.created.insert.length) === source.created.insert) {
+        undoManager?.stopCapturing();
+        editorView.dispatch({ changes: { from, to: from + source.created.insert.length }, userEvent: 'delete.drawing' });
+        undoManager?.stopCapturing();
+      }
+    }
+    if (source && editorView) foldDrawings(drawingTarget(findDrawingBlocks(editorView.state.doc.toString()), source)?.index);
+    editorView?.focus();
+  }
+
+  /** Drawing JSON is long and rarely read: the editor shows its fence folded. */
+  function foldDrawings(index?: number) {
+    if (!editorView) return;
+    const effects = findDrawingBlocks(editorView.state.doc.toString())
+      .filter(block => block.closed && block.to > block.from && (index === undefined || block.index === index))
+      .map(block => foldEffect.of({ from: block.from - 1, to: block.to - 1 }));
+    if (effects.length) editorView.dispatch({ effects });
+  }
+
+  /** Opens the drawing under the cursor, or adds a new one there. */
+  function insertDrawing() {
+    if (!editorView) return;
+    const text = editorView.state.doc.toString();
+    const position = editorView.state.selection.main.head;
+    const current = findDrawingBlocks(text).find(block => position >= lineStartBefore(text, block.from) && position <= block.to);
+    if (current) { openDrawingAt(current.index); return; }
+    const insertion = drawingInsertion(text, position);
+    undoManager?.stopCapturing();
+    editorView.dispatch({ changes: { from: insertion.from, insert: insertion.insert }, userEvent: 'input.drawing' });
+    undoManager?.stopCapturing();
+    const created = findDrawingBlocks(editorView.state.doc.toString()).find(block => block.from === insertion.contentOffset);
+    if (created) openDrawingAt(created.index, { prefix: insertion.contentOffset - insertion.from, insert: insertion.insert });
+  }
+
   function base64ToUint8Array(base64: string): Uint8Array {
     let clean = base64.replace(/-/g, '+').replace(/_/g, '/');
     while (clean.length % 4 !== 0) {
@@ -423,6 +554,7 @@
       contentRevision++;
       schedulePreview(origin === 'remote' && pendingLocal.length === 0);
       onContentChange?.(notePath, text);
+      if (origin === 'remote' && drawingSource) queueMicrotask(syncOpenDrawing);
 
       if (origin !== 'remote') {
         onLocalEdit?.();
@@ -471,6 +603,7 @@
       state,
       parent: editorContainer,
     });
+    foldDrawings();
   }
 
   function navigateToLine(lineNumber: number) {
@@ -636,6 +769,12 @@
       if (isRemoteImage(src) && !allowedRemoteImages.includes(src)) allowedRemoteImages = [...allowedRemoteImages, src];
       return;
     }
+    const drawing = target?.closest<HTMLElement>('[data-drawing-index]');
+    if (drawing && previewContainer?.contains(drawing) && !target?.closest('a')) {
+      e.preventDefault();
+      openDrawingAt(Number(drawing.dataset.drawingIndex));
+      return;
+    }
     const link = target?.closest('a');
     if (!link || !previewContainer?.contains(link)) return;
     // Never let the WebView follow a preview link: it would replace the app.
@@ -769,7 +908,8 @@
     window.removeEventListener('keydown', handleFindShortcut, true);
     findRefresh++;
     imagePaste?.destroy();
-    // Send edits typed in the last moments before closing the note.
+    // Send edits typed or drawn in the last moments before closing the note.
+    drawingEditor?.flush();
     flushLocal();
     if (previewTimer) clearTimeout(previewTimer);
     if (mermaidDebounce) clearTimeout(mermaidDebounce);
@@ -816,7 +956,7 @@
       const activeTheme = theme;
       if (mermaidDebounce) clearTimeout(mermaidDebounce);
       mermaidDebounce = setTimeout(() => {
-        void renderMermaidBlocks(activeTheme).then(() => { if (!disposed) previewRenderRevision++; });
+        void Promise.all([renderMermaidBlocks(activeTheme), renderDrawingBlocks(activeTheme)]).then(() => { if (!disposed) previewRenderRevision++; });
       }, 60);
     }
   });
@@ -895,6 +1035,13 @@
         title={$t('editor.quote')}
       >
         <Quote size={14} /> {$t('editor.quote')}
+      </button>
+      <button
+        onclick={insertDrawing}
+        class="px-2 py-1 text-xs rounded hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text-main)] transition inline-flex items-center gap-1.5"
+        title={$t('drawing.toolbarTitle')}
+      >
+        <PenTool size={14} /> {$t('drawing.button')}
       </button>
       <span class="w-[1px] h-4 bg-[var(--border)] mx-1"></span>
       <button
@@ -1024,7 +1171,7 @@
         class="min-w-0 h-full overflow-y-auto px-8 py-6 select-text {viewMode === 'preview' ? 'w-full max-w-4xl mx-auto' : 'w-1/2'}"
       >
         <article tabindex="-1" class="prose max-w-none text-[var(--text-main)]">
-          {@html renderMarkdown(previewContent, (src) => localImageUrl(src, vaultId, imageRevision), { interactiveTasks: true, taskRevision: previewRevision, sourceMap: 'editor', remoteImages: loadRemoteImages, allowRemoteImage: (src) => allowedRemoteImages.includes(src), remoteImageLabel: $t('preview.remoteImageBlocked') })}
+          {@html renderMarkdown(previewContent, (src) => localImageUrl(src, vaultId, imageRevision), { interactiveTasks: true, taskRevision: previewRevision, sourceMap: 'editor', remoteImages: loadRemoteImages, allowRemoteImage: (src) => allowedRemoteImages.includes(src), remoteImageLabel: $t('preview.remoteImageBlocked'), drawings: true, drawingEditLabel: $t('drawing.edit') })}
         </article>
       </div>
     {/if}
@@ -1042,6 +1189,9 @@
     </div>
   </footer>
 
+  {#if drawingInitial !== null}
+    <DrawingEditor bind:this={drawingEditor} content={drawingInitial} {theme} onChange={saveDrawing} onClose={closeDrawing} />
+  {/if}
 </div>
 
 <style>
@@ -1197,6 +1347,51 @@
   :global(.prose .mermaid-svg) {
     display: flex;
     justify-content: center;
+  }
+  :global(.prose .drawing-block) {
+    position: relative;
+    margin: 1rem 0;
+    padding: 0.75rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow-x: auto;
+    cursor: pointer;
+  }
+  :global(.prose .drawing-image) {
+    display: flex;
+    justify-content: center;
+    min-height: 3rem;
+  }
+  :global(.prose .drawing-image img) {
+    max-width: 100%;
+    height: auto;
+  }
+  :global(.prose .drawing-message) {
+    margin: 0;
+    align-self: center;
+    color: var(--text-muted);
+    font-size: 0.9em;
+  }
+  :global(.prose .drawing-error) {
+    color: var(--danger);
+  }
+  :global(.prose .drawing-edit) {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    padding: 2px 8px;
+    font-size: 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-sidebar);
+    color: var(--text-muted);
+    opacity: 0;
+    transition: opacity 120ms;
+  }
+  :global(.prose .drawing-block:hover .drawing-edit), :global(.prose .drawing-edit:focus-visible) {
+    opacity: 1;
+    color: var(--text-main);
   }
   :global(.prose img) {
     max-width: 100%;

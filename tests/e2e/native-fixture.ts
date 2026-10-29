@@ -179,7 +179,11 @@ export async function openVault(page: Page, options: {
     deleteWhileEditing() { deleted = true; },
     content: () => text.toString(),
     async remoteAppend(content: string) {
-      text.insert(text.length, content);
+      await this.remoteEdit(() => text.insert(text.length, content));
+    },
+    /** Change the note as another device would and deliver the result. */
+    async remoteEdit(change: (text: Y.Text) => void) {
+      change(text);
       const update = Array.from(Y.encodeStateAsUpdate(doc));
       await page.evaluate(update => {
         const globals = window as typeof window & Record<string, any>;
