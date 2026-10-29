@@ -130,8 +130,9 @@ export function parseDocument(content: string): DocumentBlock[] {
     } else if (token.type === 'fence' || token.type === 'code_block') {
       const language = token.info.trim().split(/\s+/, 1)[0];
       const source = token.content.replace(/\n$/, '');
-      blocks.push({ ...context(), list: listContext(), kind: language === 'mermaid' ? 'diagram' : 'code',
-        source, language, spans: language === 'mermaid' ? [] : [{ text: source, code: true }] });
+      const diagram = language === 'mermaid' || language === 'excalidraw';
+      blocks.push({ ...context(), list: listContext(), kind: diagram ? 'diagram' : 'code',
+        source, language, spans: diagram ? [] : [{ text: source, code: true }] });
     } else if (token.type === 'hr') blocks.push({ kind: 'rule', spans: [], ...context() });
     else if (token.type === 'table_open') {
       const rows: TextSpan[][][] = [];

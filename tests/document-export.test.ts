@@ -135,6 +135,20 @@ test('Mermaid and image blocks embed visual assets rather than source text', asy
   expect(diagrams).toBe(2); expect(images).toBe(2);
 });
 
+test('Excalidraw drawings export as images rendered by their own language', async () => {
+  const png = new Uint8Array(await readFile(new URL('../assets/brand/lownotes_logo.png', import.meta.url)));
+  const languages: Array<string | undefined> = [];
+  const content = '```excalidraw\n{"elements":[]}\n```\n\n```mermaid\n{"elements":[]}\n```';
+  const docx = await createDocx(content, {
+    renderDiagram: async (_source: string, language?: string) => { languages.push(language); return { data: png, width: 300, height: 300 }; },
+  });
+  const xml = unzipText(docx, 'word/document.xml');
+  expect(xml).not.toContain('elements');
+  expect(xml).toContain('descr="Drawing"');
+  expect(xml.match(/<w:drawing>/g)).toHaveLength(2);
+  expect(languages).toEqual(['excalidraw', 'mermaid']);
+});
+
 test('failed visual assets reject export instead of silently writing code or dropping images', async () => {
   await expect(createDocx('```mermaid\ninvalid diagram\n```', {
     renderDiagram: async () => { throw new Error('export.diagramFailed'); },

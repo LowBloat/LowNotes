@@ -6,6 +6,9 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 
 ## [Unreleased]
 
+### Added
+- Excalidraw drawings inside notes. **Drawing** in the editor toolbar adds one and opens a full-screen canvas; the preview shows it and opens it on click. Drawings are stored as `excalidraw` code blocks, sync and merge like the rest of the note, and are embedded in Word and PDF exports ([#98](https://github.com/LowBloat/LowNotes/issues/98)).
+
 ## [0.4.2] - 2026-10-24
 
 ### Added

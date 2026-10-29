@@ -33,10 +33,15 @@ test('the app runs under the production CSP without violations', async ({ page }
   });
   const vault = await openVault(page, {
     source: '# CSP\n\n```mermaid\ngraph TD\n  A[Start] --> B{Choice}\n  B --> C[Done]\n```\n\n'
-      + '```js\nconst answer = 42;\n```\n\n![remote](https://tracker.example/pixel.png)\n\n- [ ] task\n',
+      + '```js\nconst answer = 42;\n```\n\n![remote](https://tracker.example/pixel.png)\n\n- [ ] task\n\n'
+      + '```excalidraw\n{"elements": [{"id": "t", "type": "text", "x": 0, "y": 0, "text": "Hand-drawn", "originalText": "Hand-drawn", "fontSize": 20, "fontFamily": 5, "width": 110, "height": 25, "lineHeight": 1.25}]}\n```\n',
   });
   try {
     await expect(page.locator('.mermaid-svg svg')).toBeVisible();
+    await expect(page.locator('.drawing-image img')).toBeVisible();
+    await page.locator('article .drawing-block').click();
+    await expect(page.locator('.excalidraw canvas.interactive')).toBeVisible();
+    await page.getByRole('button', { name: 'Done' }).click();
     await expect(page.locator('article .remote-image-blocked')).toBeVisible();
     await page.locator('.cm-content').focus();
     await page.keyboard.type(' more text');

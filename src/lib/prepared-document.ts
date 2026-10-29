@@ -29,9 +29,9 @@ export async function prepareDocument(content: string, options: ExportOptions): 
     const prepared: PreparedBlock = { ...block, spans: await Promise.all(block.spans.map(span)),
       rows: block.rows ? await Promise.all(block.rows.map(async (row) => Promise.all(row.map(async (cell) => Promise.all(cell.map(span)))))) : undefined };
     if (block.kind === 'diagram') {
-      const code = block.source || '';
-      if (!diagrams.has(code)) diagrams.set(code, (options.renderDiagram || renderExportDiagram)(code));
-      prepared.asset = await diagrams.get(code)!;
+      const code = block.source || '', key = `${block.language}:${code}`;
+      if (!diagrams.has(key)) diagrams.set(key, (options.renderDiagram || renderExportDiagram)(code, block.language));
+      prepared.asset = await diagrams.get(key)!;
     }
     result.push(prepared);
   }

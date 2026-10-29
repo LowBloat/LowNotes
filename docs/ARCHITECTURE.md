@@ -37,6 +37,7 @@ flowchart LR
 | Right-click menus | `src/lib/context-menu.svelte.ts`, `menu.ts`, `components/ContextMenu.svelte`, `MenuList.svelte` |
 | Editor and preview, collaboration, presence | `src/lib/components/Editor.svelte`, `editor-collaboration.ts`, `presence.ts` |
 | Markdown rendering (markdown-it, Mermaid) | `src/lib/markdown.ts`, `mermaid-renderer.ts`, `preview-links.ts` |
+| Excalidraw drawings: blocks in notes, the canvas (React, loaded on demand), fonts served by `vite.config.js` | `src/lib/drawing-blocks.ts`, `excalidraw.ts`, `components/DrawingEditor.svelte` |
 | Native bridge (every `invoke`) | `src/lib/api.ts`, `src/lib/types.ts` |
 | Translations | `src/lib/i18n/` (en-US, pt-BR, es-ES) |
 | Word/PDF export, loaded on demand | `document-export.ts`, `docx-export.ts`, `pdf-export.ts` |
