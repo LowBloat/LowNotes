@@ -353,6 +353,18 @@ const ptBR: Dictionary = {
     start: 'Começar a Escrever',
     tryAi: 'Abrir Assistente',
   },
+  drawing: {
+    button: 'Desenho',
+    toolbarTitle: 'Adicionar um desenho do Excalidraw aqui ou abrir o que está sob o cursor',
+    title: 'Desenho',
+    autosave: 'As alterações são salvas na nota enquanto você desenha.',
+    close: 'Concluir',
+    edit: 'Editar desenho',
+    loading: 'Carregando o editor de desenho…',
+    loadError: 'Não foi possível abrir o editor de desenho.',
+    empty: 'Desenho vazio. Clique para desenhar.',
+    invalid: 'Não foi possível ler este desenho. Corrija o JSON no editor.',
+  },
   graph: {
     button: 'Mapa',
     back: 'Voltar à nota',

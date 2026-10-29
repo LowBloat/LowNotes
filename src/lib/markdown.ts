@@ -64,6 +64,13 @@ markdown.renderer.rules.fence = (tokens, index, options, env, renderer) => {
     const encoded = encodeURIComponent(token.content);
     return `<div class="mermaid-block" data-mermaid="${encoded}"><div class="mermaid-svg"></div></div>`;
   }
+  // Excalidraw drawings: the editor draws the SVG and opens the block by its index.
+  if (token.info.trim().split(/\s+/, 1)[0] === 'excalidraw' && env?.drawings === true) {
+    const index = env.drawingCount = (Number(env.drawingCount) || 0) + 1;
+    const label = markdown.utils.escapeHtml(typeof env.drawingEditLabel === 'string' ? env.drawingEditLabel : 'Edit drawing');
+    return `<div class="drawing-block" data-drawing-index="${index - 1}" data-drawing="${encodeURIComponent(token.content)}">`
+      + `<div class="drawing-image"></div><button type="button" class="drawing-edit" data-drawing-edit>${label}</button></div>`;
+  }
   return renderFence
     ? renderFence(tokens, index, options, env, renderer)
     : renderer.renderToken(tokens, index, options);
@@ -118,7 +125,10 @@ markdown.use(previewSourceMap);
 
 export type RemoteImageOptions = { remoteImages?: boolean; allowRemoteImage?: (src: string) => boolean; remoteImageLabel?: string };
 
-export function renderMarkdown(source: string, resolveImage?: (src: string) => string, options: TaskPreviewOptions & RemoteImageOptions & { sourceMap?: boolean | 'editor' } = {}): string {
+/** `drawings` turns Excalidraw blocks into placeholders the editor fills and opens. */
+export type DrawingPreviewOptions = { drawings?: boolean; drawingEditLabel?: string };
+
+export function renderMarkdown(source: string, resolveImage?: (src: string) => string, options: TaskPreviewOptions & RemoteImageOptions & DrawingPreviewOptions & { sourceMap?: boolean | 'editor' } = {}): string {
   return markdown.render(source, { resolveImage, ...options, taskSource: source });
 }
 

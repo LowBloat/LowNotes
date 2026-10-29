@@ -151,3 +151,14 @@ test('the tauri CSP forbids inline and remote scripts and keeps the IPC and imag
   expect(csp['img-src']).toContain('lownotes-image:');
   expect(csp['img-src']).toContain('http://lownotes-image.localhost');
 });
+
+test('Excalidraw blocks become numbered drawing placeholders only in the note preview', () => {
+  const source = '```excalidraw\n{"a":"<b>"}\n```\n\n```js\nx\n```\n\n```excalidraw\n{}\n```\n';
+  const html = renderMarkdown(source, undefined, { drawings: true, drawingEditLabel: 'Editar <desenho>' });
+  expect([...html.matchAll(/data-drawing-index="(\d+)"/g)].map((match) => match[1])).toEqual(['0', '1']);
+  expect(html).toContain(`data-drawing="${encodeURIComponent('{"a":"<b>"}\n')}"`);
+  expect(html).toContain('Editar &lt;desenho&gt;');
+  expect(html).not.toContain('<b>');
+  expect(renderMarkdown(source)).not.toContain('drawing-block');
+  expect(renderChatMarkdown(source)).not.toContain('drawing-block');
+});
