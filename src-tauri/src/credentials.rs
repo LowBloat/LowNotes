@@ -69,7 +69,11 @@ fn visit(settings: &mut AppSettings, mut f: impl FnMut(String, &mut String)) {
     for source in &mut settings.web_search.sources {
         f(format!("web:{}", source.id), &mut source.api_key);
     }
+    f(MCP_TOKEN.into(), &mut settings.mcp.token);
 }
+
+/// The settings slot of the MCP token, also read by the bridge.
+pub const MCP_TOKEN: &str = "mcp:token";
 
 fn hydrate(settings: &mut AppSettings, store: &mut impl Store) {
     let references = settings.credential_refs.clone();

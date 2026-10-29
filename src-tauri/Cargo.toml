@@ -53,6 +53,8 @@ tauri-plugin-process = "2.4.0"
 # upgrade and a run of the ignored native_store_round_trip test on every OS.
 keyring = { version = "=3.6.3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 pulldown-cmark = { version = "0.13.4", default-features = false }
+# Exact pin: the MCP SDK releases often; upgrade deliberately (#101).
+rmcp = { version = "=3.8.0", default-features = false, features = ["server", "macros", "transport-async-rw"] }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
@@ -68,3 +70,5 @@ tauri-plugin-single-instance = "2"
 [target.'cfg(windows)'.dependencies]
 # Already in the tree through hyper-util; writes the "Open with LowNotes" keys.
 windows-registry = "0.6"
+# Already in the tree through tokio; restricts the MCP pipe to the current user.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }

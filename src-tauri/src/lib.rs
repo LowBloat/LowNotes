@@ -30,6 +30,7 @@ pub mod http;
 pub mod image_upload;
 pub mod local_images;
 pub mod logging;
+pub mod mcp;
 pub mod note_history;
 pub mod note_transaction;
 pub mod retention;
@@ -203,6 +204,7 @@ pub fn run() {
         .manage(app_state)
         .manage(PendingOpen::default())
         .manage(FirstShow::default())
+        .manage(mcp::McpService::default())
         .setup(move |app| {
             let first_show = app.handle().clone();
             std::thread::spawn(move || {
@@ -265,6 +267,8 @@ pub fn run() {
                 settings.clone(),
                 app.state::<AppState>().crdt.clone(),
             );
+            app.state::<mcp::McpService>()
+                .apply(&app.state::<AppState>());
 
             let (open_label, quit_label) = tray_labels(&settings.read().language);
             let open = MenuItem::with_id(app, "open", open_label, true, None::<&str>)?;
