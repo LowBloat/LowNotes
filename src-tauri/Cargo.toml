@@ -52,7 +52,7 @@ tauri-plugin-process = "2.4.0"
 # Exact pin: the credential store backends must not change without a deliberate
 # upgrade and a run of the ignored native_store_round_trip test on every OS.
 keyring = { version = "=3.6.3", features = ["apple-native", "windows-native", "sync-secret-service"] }
-pulldown-cmark = { version = "0.13.4", default-features = false }
+pulldown-cmark = { version = "0.13.5", default-features = false }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
