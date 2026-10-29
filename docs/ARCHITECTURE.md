@@ -53,6 +53,7 @@ The interface never reads the vault directly. Settings arrive through `AppSettin
 | "Open with LowNotes" entries and launch arguments | `context_menu.rs` |
 | Atomic storage and recovery notices | `storage.rs` |
 | Vault listing and paths | `vault.rs` |
+| Vault reads and assistant changes shared by commands and the MCP server | `vault_service.rs` |
 | Stable note identities, deletes, moves | `catalog.rs`, `catalog_sync.rs`, `structural.rs`, `creation.rs` |
 | Collaborative state and durable saves | `crdt.rs`, `note_transaction.rs` |
 | History, trash, retention | `note_history.rs`, `retention.rs` |
@@ -60,6 +61,7 @@ The interface never reads the vault directly. Settings arrive through `AppSettin
 | Images | `local_images.rs`, `export_images.rs` |
 | Assistant | `assistant.rs`, `rag.rs`, `web_search.rs`, `chat_history.rs` |
 | P2P sync | `network.rs` |
+| MCP server for external AI clients, and the `lownotes-mcp` bridge they launch ([MCP.md](MCP.md)) | `mcp.rs`, `mcp_bridge.rs`, `bin/lownotes-mcp.rs` |
 | Shared HTTP clients | `http.rs` |
 | Diagnostic log | `logging.rs` |
 
@@ -68,6 +70,8 @@ The interface never reads the vault directly. Settings arrive through `AppSettin
 - Tauri runs synchronous commands on the main thread. IO-heavy commands are `async` and run their body on the blocking pool through `on_worker` in `commands.rs`.
 - The network service runs on its own thread with a two-worker Tokio runtime (`NetworkService::start`). Disk and CRDT phases inside network tasks go through `block_in_place`.
 - `structural::exclusive` serializes structural work per vault with a reentrant lock and runs pending recovery on the outermost entry.
+- The MCP server (`McpService`) runs on Tauri's async runtime: one task accepts connections on the per-user pipe or socket, and one task per client runs its session. Tool calls run on the blocking pool, like `on_worker`. A restart waits for the previous server to release the endpoint.
+- `lownotes-mcp` is a separate console process with a single-threaded Tokio runtime. It only relays bytes between the client's stdio and the app; it never opens the vault, so every read goes through the app's locks and recovery.
 
 ### Durability
 
@@ -85,6 +89,7 @@ The interface never reads the vault directly. Settings arrive through `AppSettin
 | `.lownotes/link-operations.json`, `links.json` | Map link operations and their projection |
 | `.lownotes/versions/`, `trash/` | Local history and trash (not synced) |
 | App config dir `settings.json` | Preferences and credential references (no secrets) |
-| OS credential store | Vault identity, pairing token, provider and search keys |
+| OS credential store | Vault identity, pairing token, provider and search keys, MCP access token |
+| `mcp/mcp.sock` in the runtime or local data dir (macOS, Linux) | MCP endpoint while the server runs; Windows uses a named pipe instead |
 
 See [SYNC-PROTOCOL.md](SYNC-PROTOCOL.md) for how vaults converge and [THREAT-MODEL.md](THREAT-MODEL.md) for the security boundaries.

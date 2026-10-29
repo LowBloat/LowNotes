@@ -10,6 +10,7 @@ This document describes what LowNotes protects, against whom, and the limits tha
 | Vault P2P identity (Iroh secret key) | OS credential store |
 | Pairing token | OS credential store; embedded in shared pair codes |
 | AI provider and search API keys | OS credential store |
+| MCP access token | OS credential store; read by the `lownotes-mcp` bridge |
 | Assistant conversations | App data directory, per vault |
 
 ## Adversaries and mitigations
@@ -40,6 +41,17 @@ This document describes what LowNotes protects, against whom, and the limits tha
 ### AI providers and search engines
 - Remote providers receive the prompt and the note excerpts selected as context. Search sources receive the search query. Local providers (Ollama, LM Studio) keep this on the device.
 
+### Local MCP clients and the models behind them
+The MCP server ([MCP.md](MCP.md)) lets AI apps on the same computer read the vault open in LowNotes.
+- Off by default. When on, it serves only the open vault, and only if that vault is shared in Settings. Every tool is read-only; paths inside `.lownotes/` and files that are not Markdown are refused.
+- The server listens on a per-user endpoint, never on the network: a named pipe whose DACL grants access to the current user's SID only and refuses remote clients, or a Unix socket (`0600`) in a folder only the user can enter (`0700`).
+- Clients authenticate before any MCP traffic with a 256-bit token, compared in constant time. The token lives in the OS credential store and reaches neither the webview nor the client's configuration files: `lownotes-mcp` reads it from the store itself. Regenerating it disconnects every client.
+- Pipe names are machine-wide, so `lownotes-mcp` checks that the process serving the pipe runs as the same Windows user before it sends the token. The pipe is created as the first instance, so LowNotes refuses to serve on a name another process already holds.
+- Requests are bounded: 1 MiB per incoming line, 512 KiB of note text and 2 MiB per response, 8 clients at a time.
+- What a client reads goes to that client and to its AI provider, as with the assistant's providers above.
+- Notes synced by paired devices are untrusted text that can try to steer the model (prompt injection). Responses carry note text as JSON data, and the server tells clients to treat it as information, never as instructions; LowNotes cannot enforce how the client behaves.
+- The diagnostic log records tool names, durations, sizes and error keys, never note content, search terms or the token.
+
 ### Update channel
 - Updates are signed with the project's minisign key and verified before installation. Release assets have SHA-256 checksums, and the AUR recipe is published with real checksums.
 
@@ -50,3 +62,5 @@ This document describes what LowNotes protects, against whom, and the limits tha
 - Path validation does not yet resolve symlinks and junctions inside the vault (roadmap B22).
 - Anyone with access to the unlocked operating system account can read the vault files and, through the OS credential store, the stored secrets.
 - Iroh discovery and relay services are third-party infrastructure.
+- An MCP client that also has other tools (commands, messages, browsing) can be steered by injected note text into acting on it or sending it elsewhere. Keep the MCP server off, or share only vaults you trust, when an AI app has such tools.
+- Any program running as the same user can obtain the MCP token through the OS credential store, as with the other stored secrets.

@@ -8,6 +8,7 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 
 ### Added
 - Excalidraw drawings inside notes. **Drawing** in the editor toolbar adds one and opens a full-screen canvas; the preview shows it and opens it on click. Drawings are stored as `excalidraw` code blocks, sync and merge like the rest of the note, and are embedded in Word and PDF exports ([#98](https://github.com/LowBloat/LowNotes/issues/98)).
+- An MCP server for AI apps such as Claude Desktop, Claude Code and Cursor. It is off by default; **Settings → MCP server** turns it on, chooses the shared vaults and shows the configuration to copy. Apps launch the bundled `lownotes-mcp` program and can list, search and read the open vault and its links, read-only, while LowNotes runs or sits in the tray. The access token stays in the system credential store ([#101](https://github.com/LowBloat/LowNotes/issues/101), [#102](https://github.com/LowBloat/LowNotes/issues/102), [#103](https://github.com/LowBloat/LowNotes/issues/103), [#104](https://github.com/LowBloat/LowNotes/issues/104)).
 
 ## [0.4.2] - 2026-10-24
 
