@@ -61,7 +61,8 @@
   });
 </script>
 
-<div data-modal-backdrop class="fixed inset-0 z-50 flex flex-col bg-[var(--bg-main)]" role="dialog" aria-modal="true" aria-labelledby="drawing-editor-title">
+<!-- Below the title bar, which keeps the window buttons. -->
+<div data-modal-backdrop class="fixed inset-x-0 bottom-0 top-[var(--titlebar-height)] z-50 flex flex-col bg-[var(--bg-main)]" role="dialog" aria-modal="true" aria-labelledby="drawing-editor-title">
   <header class="app-topbar flex items-center gap-3 px-4 border-b border-[var(--border)] bg-[var(--bg-sidebar)] select-none">
     <h2 id="drawing-editor-title" class="text-sm font-semibold text-[var(--text-main)]">{$t('drawing.title')}</h2>
     <span class="text-xs text-[var(--text-dim)]">{$t('drawing.autosave')}</span>

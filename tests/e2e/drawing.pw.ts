@@ -34,6 +34,10 @@ test('a drawing in a note renders in the preview and saves strokes back into the
     await expect.poll(() => ids(vault.content()).length).toBe(2);
     expect(ids(vault.content())[0]).toBe('first');
     expect(vault.content()).toMatch(/^# Plan\n\n```excalidraw\n[\s\S]*\n```\n\nAfter\n$/);
+    // The canvas keeps Excalidraw's own right-click menu, not the app's.
+    await editor.locator('.excalidraw canvas.interactive').click({ button: 'right', position: { x: 300, y: 500 } });
+    await expect(editor.locator('.excalidraw .context-menu')).toBeVisible();
+    await page.keyboard.press('Escape');
     await editor.getByRole('button', { name: 'Done' }).click();
     await expect(editor).toHaveCount(0);
     await expect(page.locator('article .drawing-image img')).toBeVisible();
