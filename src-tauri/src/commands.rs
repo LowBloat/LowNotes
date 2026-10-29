@@ -23,6 +23,8 @@ use crate::{
     vault_service, web_search,
 };
 
+/// Shared handles: a clone sees the same settings, documents and network.
+#[derive(Clone)]
 pub struct AppState {
     pub settings: Arc<RwLock<AppSettings>>,
     pub crdt: CrdtManager,
@@ -262,13 +264,17 @@ pub async fn forget_vault(
 
 #[tauri::command]
 pub async fn list_notes(app: AppHandle) -> Result<Vec<VaultItem>, String> {
-    on_worker(app, move |state, _app| vault_service::list_notes(state)).await
+    on_worker(app, move |state, _app| {
+        vault_service::list_notes(&vault_service::active_vault(state)?)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn read_note(path: String, app: AppHandle) -> Result<NoteReadResponse, String> {
     on_worker(app, move |state, _app| {
-        let note = vault_service::read_note(state, &path)?;
+        let vault = vault_service::active_vault(state)?;
+        let note = vault_service::read_note(state, &vault, &path)?;
         Ok(NoteReadResponse {
             content: note.content,
             crdt_update_base64: URL_SAFE_NO_PAD.encode(note.crdt_state),
@@ -851,7 +857,8 @@ pub async fn search_vault_rag(
     app: AppHandle,
 ) -> Result<Vec<RagChunk>, String> {
     on_worker(app, move |state, _app| {
-        vault_service::search(state, &query, limit.unwrap_or(5))
+        let vault = vault_service::active_vault(state)?;
+        vault_service::search(&vault, &query, limit.unwrap_or(5))
     })
     .await
 }
@@ -1123,7 +1130,10 @@ pub fn mark_welcome_seen(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn links_get(app: AppHandle) -> Result<Vec<links::LinkEdge>, String> {
-    on_worker(app, move |state, _app| vault_service::links(state)).await
+    on_worker(app, move |state, _app| {
+        vault_service::links(&vault_service::active_vault(state)?)
+    })
+    .await
 }
 
 #[tauri::command]

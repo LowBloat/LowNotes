@@ -497,6 +497,19 @@ impl Default for ImageUploadSettings {
     }
 }
 
+/// The local MCP server for external AI clients. Off by default: what it
+/// serves leaves LowNotes for the client and the model behind it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct McpSettings {
+    pub enabled: bool,
+    /// Vaults MCP clients may read; only the active one is served.
+    pub vault_ids: Vec<String>,
+    /// Authenticates the bridge that MCP clients launch. Kept in the OS
+    /// credential store and never sent to the webview.
+    pub token: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     #[serde(default)]
@@ -542,6 +555,8 @@ pub struct AppSettings {
     pub context_menu: bool,
     #[serde(default)]
     pub skipped_version: String,
+    #[serde(default)]
+    pub mcp: McpSettings,
 }
 
 impl Default for AppSettings {
@@ -573,6 +588,7 @@ impl Default for AppSettings {
             close_to_tray: default_true(),
             context_menu: false,
             skipped_version: String::new(),
+            mcp: McpSettings::default(),
         }
     }
 }
@@ -711,6 +727,7 @@ impl AppSettings {
                     .contains_key(&format!("web:{}", source.id));
             source.api_key.clear();
         }
+        public.mcp.token.clear();
         public.credential_refs.clear();
         public
     }

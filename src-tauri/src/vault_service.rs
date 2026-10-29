@@ -1,7 +1,8 @@
-//! Vault operations shared by the Tauri commands and other in-process callers.
-//! Each one resolves the active vault and performs the side effects that must
-//! follow a change (editor event, peer broadcast, sync). Callers run them on
-//! the blocking pool, never on the main thread.
+//! Vault operations shared by the Tauri commands and the MCP server. Reads take
+//! the vault their caller resolved, so a vault switch in between cannot serve
+//! another one; changes perform the side effects that must follow them (editor
+//! event, peer broadcast, sync). Callers run them on the blocking pool, never
+//! on the main thread.
 use tauri::{AppHandle, Emitter};
 
 use crate::{
@@ -39,15 +40,13 @@ fn expected_vault(state: &AppState, vault_id: &str) -> Result<VaultConfig, Strin
     Ok(vault)
 }
 
-pub fn list_notes(state: &AppState) -> Result<Vec<VaultItem>, String> {
-    let vault = active_vault(state)?;
+pub fn list_notes(vault: &VaultConfig) -> Result<Vec<VaultItem>, String> {
     vault::list_vault_items(&vault.path).map_err(|e| e.to_string())
 }
 
-pub fn read_note(state: &AppState, path: &str) -> Result<NoteRead, String> {
-    let vault = active_vault(state)?;
+pub fn read_note(state: &AppState, vault: &VaultConfig, path: &str) -> Result<NoteRead, String> {
     let catalog =
-        crate::catalog_sync::prepare(&vault.path, &state.crdt, &catalog_device(state, &vault))
+        crate::catalog_sync::prepare(&vault.path, &state.crdt, &catalog_device(state, vault))
             .map_err(|e| e.to_string())?;
     let note_id = catalog
         .resolve()
@@ -69,19 +68,17 @@ pub fn read_note(state: &AppState, path: &str) -> Result<NoteRead, String> {
     })
 }
 
-pub fn search(state: &AppState, query: &str, limit: usize) -> Result<Vec<RagChunk>, String> {
-    let vault = active_vault(state)?;
+pub fn search(vault: &VaultConfig, query: &str, limit: usize) -> Result<Vec<RagChunk>, String> {
     rag::index_and_search_vault(&vault.path, query, limit).map_err(|e| e.to_string())
 }
 
-pub fn links(state: &AppState) -> Result<Vec<LinkEdge>, String> {
-    let vault = active_vault(state)?;
+pub fn links(vault: &VaultConfig) -> Result<Vec<LinkEdge>, String> {
     links::graph_links(&vault.path).map_err(|e| e.to_string())
 }
 
 /// The links that point to `path`.
-pub fn backlinks(state: &AppState, path: &str) -> Result<Vec<LinkEdge>, String> {
-    Ok(edges_to(links(state)?, path))
+pub fn backlinks(vault: &VaultConfig, path: &str) -> Result<Vec<LinkEdge>, String> {
+    Ok(edges_to(links(vault)?, path))
 }
 
 fn edges_to(edges: Vec<LinkEdge>, path: &str) -> Vec<LinkEdge> {
