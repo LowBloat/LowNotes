@@ -56,3 +56,6 @@ jobs:
         run: bun run tauri build --debug --bundles deb --config '{"bundle":{"createUpdaterArtifacts":false}}'
       - name: Check the package exists
         run: ls -la src-tauri/target/debug/bundle/deb/*.deb
+      # MCP clients launch the bridge from next to the app (#102).
+      - name: Check the package ships the MCP bridge
+        run: dpkg-deb -c src-tauri/target/debug/bundle/deb/*.deb | grep -E '\./usr/bin/lownotes-mcp$'

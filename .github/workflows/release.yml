@@ -115,6 +115,8 @@ jobs:
             $portableDir = "dist/LowNotes-$env:VERSION-windows-x64-portable"
             New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
             Copy-Item $rawExe "$portableDir/LowNotes.exe"
+            # The MCP bridge must sit next to the app (#102).
+            Copy-Item "src-tauri/target/release/lownotes-mcp.exe" "$portableDir/lownotes-mcp.exe"
             Copy-Item "README.md" $portableDir
             Copy-Item "LICENSE" $portableDir
             $portableZip = "dist/LowNotes-$env:VERSION-windows-x64-portable.zip"
@@ -211,7 +213,9 @@ jobs:
             portable_dir="dist/LowNotes-${VERSION}-linux-x64-portable"
             mkdir -p "$portable_dir"
             cp "src-tauri/target/release/lownotes" "$portable_dir/LowNotes"
-            chmod +x "$portable_dir/LowNotes"
+            # The MCP bridge must sit next to the app (#102).
+            cp "src-tauri/target/release/lownotes-mcp" "$portable_dir/lownotes-mcp"
+            chmod +x "$portable_dir/LowNotes" "$portable_dir/lownotes-mcp"
             cp README.md LICENSE "$portable_dir/"
             tar -czf "dist/LowNotes-${VERSION}-linux-x64-portable.tar.gz" -C "$portable_dir" .
             rm -rf "$portable_dir"
@@ -253,12 +257,13 @@ jobs:
           mkdir -p dist
           arch_build="dist/arch-build"
           mkdir -p "$arch_build"
-          tar -xzf "linux-assets/LowNotes-${VERSION}-linux-x64-portable.tar.gz" -C "$arch_build" ./LowNotes
+          tar -xzf "linux-assets/LowNotes-${VERSION}-linux-x64-portable.tar.gz" -C "$arch_build" ./LowNotes ./lownotes-mcp
           mv "$arch_build/LowNotes" "$arch_build/lownotes"
           cp "src-tauri/icons/128x128.png" "$arch_build/lownotes.png"
           cp "packaging/arch/lownotes.desktop" "$arch_build/lownotes.desktop"
           sed -e "s/__VERSION__/${VERSION}/g" \
             -e "s/__SHA256_BIN__/$(sha256sum "$arch_build/lownotes" | cut -d' ' -f1)/" \
+            -e "s/__SHA256_MCP__/$(sha256sum "$arch_build/lownotes-mcp" | cut -d' ' -f1)/" \
             -e "s/__SHA256_DESKTOP__/$(sha256sum "$arch_build/lownotes.desktop" | cut -d' ' -f1)/" \
             -e "s/__SHA256_ICON__/$(sha256sum "$arch_build/lownotes.png" | cut -d' ' -f1)/" \
             packaging/arch/PKGBUILD.ci > "$arch_build/PKGBUILD"
@@ -314,11 +319,13 @@ jobs:
         run: bun run tauri build --target ${{ matrix.target }} --no-bundle
 
       # Not prefixed with lownotes-: the publish job only downloads release files.
-      - name: Guardar executável
+      - name: Guardar executáveis
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: macos-binary-${{ matrix.target }}
-          path: src-tauri/target/${{ matrix.target }}/release/lownotes
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/lownotes
+            src-tauri/target/${{ matrix.target }}/release/lownotes-mcp
           if-no-files-found: error
           retention-days: 1
 
@@ -354,16 +361,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for target in aarch64-apple-darwin x86_64-apple-darwin; do
-            mkdir -p "src-tauri/target/$target/release"
-            cp "macos-binaries/macos-binary-$target/lownotes" "src-tauri/target/$target/release/lownotes"
-          done
           mkdir -p src-tauri/target/universal-apple-darwin/release
-          lipo -create -output src-tauri/target/universal-apple-darwin/release/lownotes \
-            src-tauri/target/aarch64-apple-darwin/release/lownotes \
-            src-tauri/target/x86_64-apple-darwin/release/lownotes
-          chmod +x src-tauri/target/universal-apple-darwin/release/lownotes
-          lipo -info src-tauri/target/universal-apple-darwin/release/lownotes
+          # The app and the MCP bridge (#102); the bundler looks for both.
+          for binary in lownotes lownotes-mcp; do
+            for target in aarch64-apple-darwin x86_64-apple-darwin; do
+              mkdir -p "src-tauri/target/$target/release"
+              cp "macos-binaries/macos-binary-$target/$binary" "src-tauri/target/$target/release/$binary"
+            done
+            lipo -create -output "src-tauri/target/universal-apple-darwin/release/$binary" \
+              "src-tauri/target/aarch64-apple-darwin/release/$binary" \
+              "src-tauri/target/x86_64-apple-darwin/release/$binary"
+            chmod +x "src-tauri/target/universal-apple-darwin/release/$binary"
+            lipo -info "src-tauri/target/universal-apple-darwin/release/$binary"
+          done
 
       - name: Empacotar aplicativo com Tauri (universal)
         run: bun run tauri bundle --target universal-apple-darwin

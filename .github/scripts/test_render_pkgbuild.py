@@ -19,6 +19,7 @@ class RenderPkgbuildTests(unittest.TestCase):
             self.assertIn(hashlib.sha256(b"portable archive").hexdigest(), text)
             self.assertNotIn("SKIP", text)
             self.assertNotIn("__", text.split("package()")[0])
+            self.assertIn('"${pkgdir}/usr/bin/lownotes-mcp"', text)
             self.assertNotIn("\r", text)
 
     def test_missing_portable_archive_fails(self):

@@ -10,11 +10,12 @@ depends=('webkit2gtk-4.1' 'gtk3' 'libappindicator-gtk3' 'dbus')
 provides=('lownotes')
 conflicts=('lownotes')
 options=('!strip')
-source=('lownotes' 'lownotes.desktop' 'lownotes.png')
-sha256sums=('__SHA256_BIN__' '__SHA256_DESKTOP__' '__SHA256_ICON__')
+source=('lownotes' 'lownotes-mcp' 'lownotes.desktop' 'lownotes.png')
+sha256sums=('__SHA256_BIN__' '__SHA256_MCP__' '__SHA256_DESKTOP__' '__SHA256_ICON__')
 
 package() {
     install -Dm755 "${srcdir}/lownotes" "${pkgdir}/usr/bin/lownotes"
+    install -Dm755 "${srcdir}/lownotes-mcp" "${pkgdir}/usr/bin/lownotes-mcp"
     install -Dm644 "${srcdir}/lownotes.desktop" "${pkgdir}/usr/share/applications/lownotes.desktop"
     install -Dm644 "${srcdir}/lownotes.png" "${pkgdir}/usr/share/icons/hicolor/128x128/apps/lownotes.png"
 }

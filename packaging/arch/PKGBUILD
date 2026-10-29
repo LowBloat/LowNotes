@@ -21,6 +21,7 @@ sha256sums=('__SHA256_PORTABLE__' '__SHA256_DESKTOP__' '__SHA256_ICON__')
 
 package() {
     install -Dm755 "${srcdir}/LowNotes" "${pkgdir}/usr/bin/lownotes"
+    install -Dm755 "${srcdir}/lownotes-mcp" "${pkgdir}/usr/bin/lownotes-mcp"
     install -Dm644 "${srcdir}/lownotes.desktop" "${pkgdir}/usr/share/applications/lownotes.desktop"
     install -Dm644 "${srcdir}/lownotes.png" "${pkgdir}/usr/share/icons/hicolor/128x128/apps/lownotes.png"
 }

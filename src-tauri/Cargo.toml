@@ -5,6 +5,8 @@ description = "Local-first Markdown notes with serverless P2P sync and real-time
 authors = ["LowBloat"]
 license = "AGPL-3.0-only"
 edition = "2021"
+# src/bin/lownotes-mcp.rs is the bridge MCP clients launch; Tauri bundles it next to the app.
+default-run = "lownotes"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -71,4 +73,4 @@ tauri-plugin-single-instance = "2"
 # Already in the tree through hyper-util; writes the "Open with LowNotes" keys.
 windows-registry = "0.6"
 # Already in the tree through tokio; restricts the MCP pipe to the current user.
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Pipes", "Win32_System_Threading"] }

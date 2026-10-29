@@ -43,7 +43,7 @@ use crate::{
     commands::AppState, config::VaultConfig, credentials::MCP_TOKEN, vault, vault_service,
 };
 
-const HANDSHAKE: &[u8] = b"LOWNOTES-MCP/1 ";
+pub(crate) const HANDSHAKE: &[u8] = b"LOWNOTES-MCP/1 ";
 const MAX_HANDSHAKE_BYTES: usize = 256;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const SESSION_START_TIMEOUT: Duration = Duration::from_secs(30);
@@ -635,9 +635,10 @@ impl ServerHandler for Server {
     }
 }
 
-/// A security descriptor that lets only the current user open the pipe.
+/// A security descriptor that lets only the current user open the pipe, and
+/// the owner checks the bridge makes before it sends the token.
 #[cfg(windows)]
-mod pipe_security {
+pub(crate) mod pipe_security {
     use std::{ffi::c_void, io, ptr};
 
     use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
@@ -651,7 +652,12 @@ mod pipe_security {
             GetTokenInformation, TokenUser, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY,
             TOKEN_USER,
         },
-        System::Threading::{GetCurrentProcess, OpenProcessToken},
+        System::{
+            Pipes::GetNamedPipeServerProcessId,
+            Threading::{
+                GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+            },
+        },
     };
 
     pub struct Descriptor(PSECURITY_DESCRIPTOR);
@@ -712,10 +718,33 @@ mod pipe_security {
 
     /// The current user's SID in string form, such as `S-1-5-21-...`.
     pub fn current_user_sid() -> io::Result<String> {
+        // SAFETY: the pseudo handle of the current process needs no closing.
+        process_user_sid(unsafe { GetCurrentProcess() })
+    }
+
+    /// The SID of the user running the process that serves `pipe`. Pipe names
+    /// are machine-wide, so another user could create ours first.
+    pub fn server_user_sid(pipe: HANDLE) -> io::Result<String> {
+        let mut pid = 0u32;
+        // SAFETY: `pipe` is an open client handle of a named pipe.
+        if unsafe { GetNamedPipeServerProcessId(pipe, &mut pid) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: the process handle is closed below.
+        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if process.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        let sid = process_user_sid(process);
+        // SAFETY: `process` came from OpenProcess.
+        unsafe { CloseHandle(process) };
+        sid
+    }
+
+    fn process_user_sid(process: HANDLE) -> io::Result<String> {
         let mut token: HANDLE = ptr::null_mut();
-        // SAFETY: the pseudo handle of the current process needs no closing;
-        // the token handle is closed below.
-        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+        // SAFETY: the token handle is closed below.
+        if unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) } == 0 {
             return Err(io::Error::last_os_error());
         }
         let sid = user_sid(token);
@@ -1004,6 +1033,107 @@ mod tests {
         fixture.state.settings.write().mcp.vault_ids.clear();
         let unshared = client.call("list_notes", json!({})).await;
         assert!(unshared.unwrap_err().contains("not shared"));
+
+        stop.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(10), server)
+            .await
+            .expect("server stops")
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_bridge_relays_a_client_session_and_reports_a_refused_token() {
+        let fixture = fixture();
+        let endpoint = test_endpoint(fixture.dir.path());
+        let (stop, shutdown) = watch::channel(false);
+        let server = tokio::spawn({
+            let endpoint = endpoint.clone();
+            let state = fixture.state.clone();
+            async move { listen(&endpoint, TOKEN.into(), state, shutdown).await }
+        });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let initialize = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": { "name": "test", "version": "1" },
+            },
+        });
+
+        let (mut client_in, bridge_in) = tokio::io::duplex(64 * 1024);
+        let (bridge_out, client_out) = tokio::io::duplex(64 * 1024);
+        let bridge = tokio::spawn(crate::mcp_bridge::bridge(
+            Ok(endpoint.clone()),
+            Ok(Some(TOKEN.into())),
+            bridge_in,
+            bridge_out,
+        ));
+        for message in [
+            initialize.clone(),
+            json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": { "name": "list_notes", "arguments": {} },
+            }),
+        ] {
+            client_in
+                .write_all(format!("{message}\n").as_bytes())
+                .await
+                .unwrap();
+        }
+        let mut replies = BufReader::new(client_out).lines();
+        let listed = loop {
+            let line = tokio::time::timeout(Duration::from_secs(20), replies.next_line())
+                .await
+                .expect("reply in time")
+                .unwrap()
+                .expect("open bridge");
+            let reply: Value = serde_json::from_str(&line).unwrap();
+            if reply["id"] == 2 {
+                break reply;
+            }
+        };
+        let text = listed["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("alpha.md"));
+        drop(client_in);
+        let code = tokio::time::timeout(Duration::from_secs(10), bridge)
+            .await
+            .expect("bridge exits when the client closes")
+            .unwrap();
+        assert_eq!(code, 0);
+
+        let (mut client_in, bridge_in) = tokio::io::duplex(4096);
+        let (bridge_out, client_out) = tokio::io::duplex(4096);
+        client_in
+            .write_all(format!("{initialize}\n").as_bytes())
+            .await
+            .unwrap();
+        let code = crate::mcp_bridge::bridge(
+            Ok(endpoint.clone()),
+            Ok(Some("wrong".into())),
+            bridge_in,
+            bridge_out,
+        )
+        .await;
+        assert_eq!(code, 1);
+        let line = BufReader::new(client_out)
+            .lines()
+            .next_line()
+            .await
+            .unwrap()
+            .unwrap();
+        let reply: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(reply["id"], 1);
+        assert!(reply["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("refused the token"));
 
         stop.send(true).unwrap();
         tokio::time::timeout(Duration::from_secs(10), server)
