@@ -6,9 +6,14 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-29
+
 ### Added
 - Excalidraw drawings inside notes. **Drawing** in the editor toolbar adds one and opens a full-screen canvas; the preview shows it and opens it on click. Drawings are stored as `excalidraw` code blocks, sync and merge like the rest of the note, and are embedded in Word and PDF exports ([#98](https://github.com/LowBloat/LowNotes/issues/98)).
 - An MCP server for AI apps such as Claude Desktop, Claude Code and Cursor. It is off by default; **Settings → MCP server** turns it on, chooses the shared vaults and shows the configuration to copy. Apps launch the bundled `lownotes-mcp` program and can list, search and read the open vault and its links, read-only, while LowNotes runs or sits in the tray. The access token stays in the system credential store ([#101](https://github.com/LowBloat/LowNotes/issues/101), [#102](https://github.com/LowBloat/LowNotes/issues/102), [#103](https://github.com/LowBloat/LowNotes/issues/103), [#104](https://github.com/LowBloat/LowNotes/issues/104)).
+
+### Security
+- pulldown-cmark 0.13.5 fixes RUSTSEC-2026-0414, where crafted wiki links in a synced note could make the link index parse for an exponential time ([#110](https://github.com/LowBloat/LowNotes/issues/110)); nanoid 3.3.20 replaces the vulnerable copies pinned by Excalidraw.
 
 ## [0.4.2] - 2026-10-24
 
@@ -83,7 +88,8 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 - Dependency updates: Tauri plugins, iroh 1.3, rusqlite 0.40, base64 0.23, html-escape 0.3 and GitHub Actions.
 - Community, security and design documentation ([#32](https://github.com/LowBloat/LowNotes/issues/32), [#33](https://github.com/LowBloat/LowNotes/issues/33)).
 
-[Unreleased]: https://github.com/LowBloat/LowNotes/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/LowBloat/LowNotes/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/LowBloat/LowNotes/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/LowBloat/LowNotes/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/LowBloat/LowNotes/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/LowBloat/LowNotes/compare/v0.3.5...v0.4.0
