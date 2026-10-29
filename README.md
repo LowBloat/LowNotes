@@ -38,6 +38,7 @@ LowNotes is an **open-source, local-first Markdown note-taking app** for Windows
 - **Connect your computers.** Pair devices for encrypted P2P sync and real-time collaborative editing.
 - **Build a knowledge base.** Use folders, search, wikilinks, a connection map and Mermaid diagrams.
 - **Choose your assistant.** Use local models through Ollama or LM Studio, or configure a remote provider. Remote requests send the prompt and selected context to that provider. The Research skill sends search terms (never notes) to the web search services you enable; only DuckDuckGo is on by default.
+- **Bring your own AI app.** Claude Desktop, Claude Code, Cursor and other MCP clients can search and read the open vault while LowNotes sits in the tray. It is read-only and off by default.
 - **Recover and share your work.** Review local history and trash, then export notes to Word or PDF.
 
 | Day to day | When you need more |
@@ -117,6 +118,10 @@ The assistant can chat, query notes, create documents and plans, edit existing n
 Vault search selects snippets by words, phrases and headings **on your own computer**; it uses no vector database or external indexing service. When calling a remote model, the request and the selected snippets are sent to the chosen provider. In web search, only the query terms go to the search source; the selected model remains responsible for the answer.
 
 Under **Settings → Web search**, Firecrawl, Keenable, Exa, DuckDuckGo and a public SearXNG instance come enabled without a key. The app rotates the initial source and tries the next one on failure. Brave and Parallel can be enabled with your own key; Firecrawl, Keenable and Exa also accept an optional key. Public services may enforce limits or change availability.
+
+### AI apps over MCP
+
+**Settings → MCP server** lets AI apps on this computer that speak the Model Context Protocol, such as Claude Desktop, Claude Code and Cursor, list, search and read the notes of the open vault and follow its links. They cannot change notes. Apps launch the `lownotes-mcp` program installed next to LowNotes, which authenticates with a token kept in the system credential store. Only vaults you share are served, and what an app reads goes to that app and its AI provider. See [docs/MCP.md](docs/MCP.md) for setup, the available tools and the safety notes.
 
 ## How it works
 
