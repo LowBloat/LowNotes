@@ -60,7 +60,7 @@ export async function createDocx(content: string, options: ExportOptions = {}): 
     const numbered = list?.first && (!hasCheckbox || list.ordered);
     const left = (block.indent || (block.quote || block.callout ? 1 : 0)) * 360;
     return new Paragraph({
-      children: block.asset ? [imageRun(block.asset, PAGE_WIDTH - left, 'Mermaid diagram')]
+      children: block.asset ? [imageRun(block.asset, PAGE_WIDTH - left, block.language === 'excalidraw' ? 'Drawing' : 'Mermaid diagram')]
         : runs(block.spans.map((span) => ({ ...span, bold: block.definitionTerm || span.bold })), PAGE_WIDTH - left),
       heading: block.kind === 'heading' ? headings[(block.level || 1) - 1] : undefined,
       numbering: numbered ? { reference: `list-${list!.id}`, level: Math.min(list!.level, 8) } : undefined,

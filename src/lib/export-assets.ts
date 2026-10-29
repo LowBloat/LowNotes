@@ -4,7 +4,7 @@ export interface ExportImage { data: Uint8Array; width: number; height: number }
 export interface ExportOptions {
   notePath?: string;
   resolveImage?: (src: string, notePath?: string) => Promise<ExportImage>;
-  renderDiagram?: (source: string) => Promise<ExportImage>;
+  renderDiagram?: (source: string, language?: string) => Promise<ExportImage>;
   renderEmoji?: (text: string) => Promise<ExportImage>;
 }
 
@@ -60,7 +60,8 @@ export async function resolveExportImage(src: string, notePath?: string): Promis
   } catch { throw new Error('export.imageFailed'); }
 }
 
-export async function renderExportDiagram(source: string): Promise<ExportImage> {
+export async function renderExportDiagram(source: string, language = 'mermaid'): Promise<ExportImage> {
+  if (language === 'excalidraw') return renderExportDrawing(source);
   const host = document.createElement('div');
   host.style.cssText = 'position:absolute;left:-100000px;top:0;width:1200px;background:white;pointer-events:none';
   document.body.append(host);
@@ -80,6 +81,15 @@ export async function renderExportDiagram(source: string): Promise<ExportImage> 
     return await rasterize(new Blob([new XMLSerializer().serializeToString(element)], { type: 'image/svg+xml' }), { width, height });
   } catch { throw new Error('export.diagramFailed'); }
   finally { host.remove(); }
+}
+
+async function renderExportDrawing(source: string): Promise<ExportImage> {
+  try {
+    const { renderDrawingCanvas } = await import('./excalidraw');
+    const rendered = await renderDrawingCanvas(source, false);
+    if (!rendered) throw new Error('export.diagramFailed');
+    return await canvasImage(rendered.canvas, rendered.width, rendered.height);
+  } catch { throw new Error('export.diagramFailed'); }
 }
 
 export async function renderExportEmoji(text: string): Promise<ExportImage> {

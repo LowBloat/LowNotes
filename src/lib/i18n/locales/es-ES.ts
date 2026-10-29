@@ -353,6 +353,18 @@ const esES: Dictionary = {
     start: 'Comenzar a Escribir',
     tryAi: 'Abrir Asistente',
   },
+  drawing: {
+    button: 'Dibujo',
+    toolbarTitle: 'Añadir un dibujo de Excalidraw aquí o abrir el que está bajo el cursor',
+    title: 'Dibujo',
+    autosave: 'Los cambios se guardan en la nota mientras dibujas.',
+    close: 'Listo',
+    edit: 'Editar dibujo',
+    loading: 'Cargando el editor de dibujo…',
+    loadError: 'No se pudo abrir el editor de dibujo.',
+    empty: 'Dibujo vacío. Haz clic para dibujar.',
+    invalid: 'No se pudo leer este dibujo. Corrige su JSON en el editor.',
+  },
   graph: {
     button: 'Mapa',
     back: 'Volver a la nota',

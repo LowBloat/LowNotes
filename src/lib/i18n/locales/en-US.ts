@@ -351,6 +351,18 @@ const enUS = {
     start: 'Start Writing',
     tryAi: 'Open Assistant',
   },
+  drawing: {
+    button: 'Drawing',
+    toolbarTitle: 'Add an Excalidraw drawing here, or open the one under the cursor',
+    title: 'Drawing',
+    autosave: 'Changes are saved to the note as you draw.',
+    close: 'Done',
+    edit: 'Edit drawing',
+    loading: 'Loading the drawing editor…',
+    loadError: 'Could not open the drawing editor.',
+    empty: 'Empty drawing. Click to draw.',
+    invalid: 'This drawing could not be read. Fix its JSON in the editor.',
+  },
   graph: {
     button: 'Map',
     back: 'Back to note',
