@@ -75,6 +75,36 @@ fn visit(settings: &mut AppSettings, mut f: impl FnMut(String, &mut String)) {
 /// The settings slot of the MCP token, also read by the bridge.
 pub const MCP_TOKEN: &str = "mcp:token";
 
+/// The MCP token for the `lownotes-mcp` bridge, read without changing the
+/// settings file (the app owns it). `None` while MCP is off or the app has not
+/// created the token yet.
+pub fn mcp_token_for_bridge() -> anyhow::Result<Option<String>> {
+    let path = AppSettings::config_file()?;
+    let saved = [path.clone(), storage::backup_path(&path)]
+        .into_iter()
+        .find_map(|candidate| {
+            let bytes = fs::read(candidate).ok()?;
+            serde_json::from_slice::<serde_json::Value>(&bytes).ok()
+        })
+        .context("storage.corrupt")?;
+    let Some(reference) = mcp_token_reference(&saved) else {
+        return Ok(None);
+    };
+    Ok(Some(
+        keyring::Entry::new(SERVICE, &reference)?.get_password()?,
+    ))
+}
+
+fn mcp_token_reference(saved: &serde_json::Value) -> Option<String> {
+    if saved.pointer("/mcp/enabled") != Some(&serde_json::Value::Bool(true)) {
+        return None;
+    }
+    saved["credential_refs"][MCP_TOKEN]
+        .as_str()
+        .filter(|reference| reference.starts_with("v1-"))
+        .map(String::from)
+}
+
 fn hydrate(settings: &mut AppSettings, store: &mut impl Store) {
     let references = settings.credential_refs.clone();
     let mut unavailable = BTreeSet::new();
@@ -449,6 +479,25 @@ mod tests {
         fs::write(&path, b"corrupted settings").unwrap();
         let recovered = load_at(&path, &mut store).unwrap();
         assert_eq!(recovered.ai.providers[0].api_key, "test-provider-secret");
+    }
+    #[test]
+    fn the_bridge_finds_the_mcp_token_the_app_saved_only_while_mcp_is_on() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("settings.json");
+        let mut store = FakeStore::default();
+        let mut settings = AppSettings::default();
+        settings.mcp.enabled = true;
+        settings.mcp.token = "bridge-token".into();
+        save_at(&path, &settings, &mut store).unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["mcp"]["token"], "");
+        let reference = mcp_token_reference(&saved).unwrap();
+        assert_eq!(store.get(&reference).unwrap(), "bridge-token");
+
+        settings.mcp.enabled = false;
+        save_at(&path, &settings, &mut store).unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(mcp_token_reference(&saved), None);
     }
     #[test]
     #[ignore = "Requires an unlocked native credential store; uses an isolated synthetic entry"]

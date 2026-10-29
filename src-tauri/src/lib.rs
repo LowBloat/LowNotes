@@ -31,6 +31,7 @@ pub mod image_upload;
 pub mod local_images;
 pub mod logging;
 pub mod mcp;
+pub mod mcp_bridge;
 pub mod note_history;
 pub mod note_transaction;
 pub mod retention;
