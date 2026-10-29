@@ -109,6 +109,21 @@ export interface AppSettings {
   web_search: WebSearchSettings;
   image_upload: ImageUploadSettings;
   has_seen_welcome: boolean;
+  mcp?: McpSettings;
+}
+
+/** Mirrors `McpSettings` in src-tauri/src/config.rs; the token never reaches the interface. */
+export interface McpSettings {
+  enabled: boolean;
+  vault_ids: string[];
+}
+
+/** Mirrors `McpStatus` in src-tauri/src/mcp.rs. */
+export interface McpStatus {
+  running: boolean;
+  requests: number;
+  bridge_path: string | null;
+  bridge_path_temporary: boolean;
 }
 
 export type AppTheme = 'dark' | 'light';

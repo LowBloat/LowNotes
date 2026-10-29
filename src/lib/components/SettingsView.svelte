@@ -2,14 +2,16 @@
   import { onMount, untrack } from 'svelte';
   import { getVersion } from '@tauri-apps/api/app';
   import { openUrl } from '@tauri-apps/plugin-opener';
-  import { ArrowLeft, Bot, Check, Download, Globe2, Monitor, NotebookPen, Palette, Pencil, Plus, Settings2, Sparkles, Trash2 } from 'lucide-svelte';
-  import { contextMenuSupported, fetchAiModels, openLogFolder, retryCredentials, saveAiSettings, saveCloseToTray, saveContextMenu, saveImageUploadSettings, saveLanguage, saveLineWrapping, saveRemoteImages, saveTheme, saveThemePalettes, saveUpdatePrefs, saveViewMode, saveWebSearchSettings } from '$lib/api';
-  import { LOCALE_LABELS, SUPPORTED_LOCALES, locale, t, trError, type LocaleCode } from '$lib/i18n';
+  import { ArrowLeft, Bot, Check, Copy, Download, Globe2, Monitor, NotebookPen, Palette, Pencil, Plug, Plus, RefreshCw, Settings2, Sparkles, Trash2 } from 'lucide-svelte';
+  import { contextMenuSupported, fetchAiModels, mcpStatus, openLogFolder, regenerateMcpToken, retryCredentials, saveAiSettings, saveCloseToTray, saveContextMenu, saveImageUploadSettings, saveLanguage, saveLineWrapping, saveMcpSettings, saveRemoteImages, saveTheme, saveThemePalettes, saveUpdatePrefs, saveViewMode, saveWebSearchSettings } from '$lib/api';
+  import { appConfirm } from '$lib/dialogs.svelte';
+  import { LOCALE_LABELS, SUPPORTED_LOCALES, locale, t, trError, ts, type LocaleCode } from '$lib/i18n';
+  import { claudeCodeCommand, mcpServersConfig } from '$lib/mcp-config';
   import { BUILTIN_PALETTES, DEFAULT_PALETTE_ID, TOKEN_GROUPS, applyTheme, isHexColor, newCustomPalette, resolvePalette, themeVarsStyle, type ThemeToken } from '$lib/themes';
-  import type { AiProviderConfig, AiSettings, AppSettings, AppTheme, ImageUploadProvider, ThemePalette, ThemePalettesSettings, ViewMode, WebSearchSettings } from '$lib/types';
+  import type { AiProviderConfig, AiSettings, AppSettings, AppTheme, ImageUploadProvider, McpStatus, ThemePalette, ThemePalettesSettings, ViewMode, WebSearchSettings } from '$lib/types';
 
 
-  type Tab = 'general' | 'themes' | 'ai' | 'providers' | 'web' | 'about';
+  type Tab = 'general' | 'themes' | 'ai' | 'providers' | 'web' | 'mcp' | 'about';
   let { settings, initialTab = 'general', onClose, onChange } = $props<{
     settings: AppSettings;
     initialTab?: Tab;
@@ -50,6 +52,23 @@
   let editMode = $state<AppTheme>(untrack(() => settings.theme));
   const allPalettes = $derived([...BUILTIN_PALETTES, ...palettes.custom_palettes]);
   const appMode = $derived<AppTheme>(settings.theme);
+  let mcp = $state<McpStatus | null>(null);
+  let copiedSnippet = $state('');
+  const mcpEnabled = $derived(settings.mcp?.enabled ?? false);
+  const sharedVaults = $derived<string[]>(settings.mcp?.vault_ids ?? []);
+  const mcpSnippets = $derived(mcp?.bridge_path ? [
+    { key: 'claudeDesktop', label: 'mcp.claudeDesktop', text: mcpServersConfig(mcp.bridge_path) },
+    { key: 'claudeCode', label: 'mcp.claudeCode', text: claudeCodeCommand(mcp.bridge_path) },
+    { key: 'cursor', label: 'mcp.cursor', text: mcpServersConfig(mcp.bridge_path) },
+  ] as const : []);
+
+  // The server starts and stops in the background; keep its status current while visible.
+  $effect(() => {
+    if (tab !== 'mcp') return;
+    refreshMcp();
+    const timer = setInterval(refreshMcp, 2000);
+    return () => clearInterval(timer);
+  });
 
   onMount(() => {
     getVersion().then((value) => version = value).catch(() => {});
@@ -119,6 +138,34 @@
   }
   function changeUpdates(value: boolean) {
     void persist(saveUpdatePrefs(value, settings.skipped_version), { ...settings, update_check: value });
+  }
+  function refreshMcp() {
+    mcpStatus().then((value) => mcp = value).catch(() => {});
+  }
+  async function saveMcp(enabled: boolean, vaultIds: string[]) {
+    await persist(saveMcpSettings(enabled, vaultIds), { ...settings, mcp: { enabled, vault_ids: vaultIds } });
+    refreshMcp();
+  }
+  async function changeMcp(control: HTMLInputElement) {
+    const enabled = control.checked;
+    // Turning it on the first time shares the open vault, so the switch alone is enough.
+    const vaultIds = enabled && !sharedVaults.length && settings.active_vault_id ? [settings.active_vault_id] : [...sharedVaults];
+    await saveMcp(enabled, vaultIds);
+    control.checked = settings.mcp?.enabled ?? false;
+  }
+  async function shareVault(id: string, control: HTMLInputElement) {
+    const others = sharedVaults.filter((item) => item !== id);
+    await saveMcp(mcpEnabled, control.checked ? [...others, id] : others);
+    control.checked = (settings.mcp?.vault_ids ?? []).includes(id);
+  }
+  async function regenerateToken() {
+    if (!(await appConfirm(ts('mcp.regenerateConfirm'), { danger: true, confirmLabel: ts('mcp.regenerate') }))) return;
+    await persist(regenerateMcpToken(), settings);
+  }
+  function copySnippet(key: string, text: string) {
+    navigator.clipboard.writeText(text)
+      .then(() => { copiedSnippet = key; setTimeout(() => copiedSnippet = '', 2000); })
+      .catch((reason) => { error = trError(String(reason)); });
   }
   // Saved keys never come back from the backend: once sent, drop the typed value
   // and keep only the "a key is saved" flag in interface state.
@@ -247,6 +294,7 @@
         <button class:active={tab === 'ai'} onclick={() => tab = 'ai'}><Sparkles size={18} /> {$t('settings.ai')}</button>
         <button class:active={tab === 'providers'} onclick={() => tab = 'providers'}><Bot size={18} /> {$t('settings.providers')}</button>
         <button class:active={tab === 'web'} onclick={() => tab = 'web'}><Globe2 size={18} /> {$t('settings.webSearch')}</button>
+        <button class:active={tab === 'mcp'} onclick={() => tab = 'mcp'}><Plug size={18} /> {$t('mcp.tab')}</button>
         <button class:active={tab === 'about'} onclick={() => tab = 'about'}><Download size={18} /> {$t('settings.about')}</button>
       </nav>
 
@@ -428,6 +476,39 @@
               {/each}
             </div>
             <div class="settings-actions"><button class="settings-primary" onclick={saveWeb} disabled={busy}>{$t('settings.saveWeb')}</button></div>
+          </section>
+        {:else if tab === 'mcp'}
+          <section class="settings-section">
+            <h2>{$t('mcp.title')}</h2><p>{$t('mcp.hint')}</p>
+            <label class="setting-row setting-toggle"><div><strong>{$t('mcp.enable')}</strong><small>{$t('mcp.enableHint')}</small></div><input type="checkbox" checked={mcpEnabled} disabled={busy} onchange={(event) => void changeMcp(event.currentTarget)} /></label>
+            {#if mcpEnabled && mcp}
+              <div class="setting-row" role="status"><div><strong>{mcp.running ? $t('mcp.running') : $t('mcp.stopped')}</strong><small>{$t('mcp.requests', { count: mcp.requests })}</small></div></div>
+            {/if}
+            <div class="web-route-note"><Plug size={19} /><span>{$t('mcp.privacy')}</span></div>
+          </section>
+          <section class="settings-section">
+            <h2>{$t('mcp.vaults')}</h2><p>{$t('mcp.vaultsHint')}</p>
+            {#each settings.vaults as vault (vault.id)}
+              <label class="setting-row setting-toggle"><div><strong>{vault.name}</strong><small>{vault.path}</small></div><input type="checkbox" checked={sharedVaults.includes(vault.id)} disabled={busy} onchange={(event) => void shareVault(vault.id, event.currentTarget)} /></label>
+            {/each}
+          </section>
+          <section class="settings-section">
+            <h2>{$t('mcp.connect')}</h2><p>{$t('mcp.connectHint')}</p>
+            {#if mcp && !mcp.bridge_path}
+              <p class="settings-error">{$t('mcp.bridgeMissing')}</p>
+            {:else if mcp}
+              {#if mcp.bridge_path_temporary}<p class="settings-error">{$t('mcp.bridgeTemporary')}</p>{/if}
+              {#each mcpSnippets as snippet (snippet.key)}
+                <div class="mcp-snippet">
+                  <div class="mcp-snippet-head"><strong>{$t(snippet.label)}</strong><button onclick={() => copySnippet(snippet.key, snippet.text)}>{#if copiedSnippet === snippet.key}<Check size={14} /> {$t('mcp.copied')}{:else}<Copy size={14} /> {$t('mcp.copy')}{/if}</button></div>
+                  <pre>{snippet.text}</pre>
+                </div>
+              {/each}
+            {/if}
+          </section>
+          <section class="settings-section">
+            <h2>{$t('mcp.token')}</h2><p>{$t('mcp.tokenHint')}</p>
+            <div class="settings-actions"><button onclick={() => void regenerateToken()} disabled={busy || !mcpEnabled}><RefreshCw size={15} /> {$t('mcp.regenerate')}</button></div>
           </section>
         {:else}
           <section class="settings-section">

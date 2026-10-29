@@ -41,7 +41,7 @@ pub struct RestoredItem {
 /// Runs an IO-bound command body on Tauri's blocking pool. Synchronous
 /// commands run on the main thread, where disk, CRDT and structural-lock waits
 /// freeze the interface (for example while a peer synchronizes).
-async fn on_worker<T: Send + 'static>(
+pub(crate) async fn on_worker<T: Send + 'static>(
     app: AppHandle,
     task: impl FnOnce(&AppState, &AppHandle) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
