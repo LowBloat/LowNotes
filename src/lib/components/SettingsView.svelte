@@ -513,7 +513,7 @@
         {:else}
           <section class="settings-section">
             <h2>{$t('settings.about')}</h2><p>{$t('settings.aboutHint')}</p>
-            <div class="settings-about"><div class="settings-about-mark"><NotebookPen size={26} /></div><div><strong>LowNotes</strong><span>{$t('settings.version')} {version}</span></div></div>
+            <div class="settings-about"><img class="settings-about-mark" src="/favicon.svg" alt="" draggable="false" /><div><strong>LowNotes</strong><span>{$t('settings.version')} {version}</span></div></div>
             <label class="setting-row setting-toggle"><div><strong>{$t('update.autoCheck')}</strong><small>{$t('settings.updateHint')}</small></div><input type="checkbox" checked={settings.update_check} onchange={(event) => changeUpdates(event.currentTarget.checked)} /></label>
             <div class="setting-row"><div><strong>{$t('settings.device')}</strong><small>{settings.device_name}</small></div></div>
             <div class="setting-row"><div><strong>{$t('settings.logs')}</strong><small>{$t('settings.logsHint')}</small></div><button onclick={() => openLogFolder().catch((reason) => { error = trError(String(reason)); })}>{$t('settings.openLogs')}</button></div>

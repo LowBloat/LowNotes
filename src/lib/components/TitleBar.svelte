@@ -126,7 +126,7 @@
   data-tauri-drag-region
 >
   {#if !IS_MAC}
-    <img src="/favicon.png" alt="" class="w-4 h-4 self-center mx-3" draggable="false" data-tauri-drag-region />
+    <img src="/favicon.svg" alt="" class="w-4 h-4 self-center mx-3" draggable="false" data-tauri-drag-region />
     <div role="menubar" aria-label={$t('titlebar.menubar')} data-menubar class="flex items-stretch">
       {#each menus as menu, index (menu.id)}
         <button

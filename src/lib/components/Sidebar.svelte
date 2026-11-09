@@ -274,7 +274,7 @@
 
     <!-- Vault Dropdown -->
     {#if isVaultDropdownOpen}
-      <div class="absolute top-full left-2 right-2 mt-1 bg-[var(--bg-card)] border border-[var(--border)] rounded-lg shadow-xl py-1.5 z-40 animate-fadeIn">
+      <div class="absolute top-full left-2 right-2 mt-1 bg-[var(--bg-card)] border border-[var(--border)] rounded-lg shadow-xl py-1.5 z-40">
         <div class="px-3 py-1 text-[10px] font-semibold text-[var(--text-dim)] uppercase tracking-wider">
           {$t('sidebar.yourVaults')}
         </div>
@@ -386,7 +386,7 @@
           </button>
           <button
             type="submit"
-            class="px-2 py-0.5 text-[11px] bg-[var(--accent)] text-black font-semibold rounded"
+            class="px-2 py-0.5 text-[11px] bg-[var(--accent)] text-[var(--accent-contrast)] font-semibold rounded"
           >
             {$t('sidebar.create')}
           </button>
@@ -417,7 +417,7 @@
           </button>
           <button
             type="submit"
-            class="px-2 py-0.5 text-[11px] bg-[var(--accent)] text-black font-semibold rounded"
+            class="px-2 py-0.5 text-[11px] bg-[var(--accent)] text-[var(--accent-contrast)] font-semibold rounded"
           >
             {$t('sidebar.createFolder')}
           </button>
@@ -437,7 +437,7 @@
         <div
           role="group"
           oncontextmenu={(e) => itemMenu(e, item)}
-          class="group w-full flex items-center justify-between pr-2.5 rounded-md text-xs text-left transition {selectedPath === item.path ? 'bg-[var(--bg-active)] text-[var(--accent-light)] font-medium' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-main)]'}"
+          class="group w-full flex items-center justify-between pr-2.5 rounded-md text-xs text-left transition {selectedPath === item.path ? 'bg-[var(--bg-active)] text-[var(--text-main)] font-semibold shadow-[inset_2px_0_0_var(--accent)]' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-main)]'}"
         >
           <!-- The row action is a real button; rename/delete are sibling buttons, never nested. -->
           <button

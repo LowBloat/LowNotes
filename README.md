@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/brand/lownotes_logo.png" alt="LowNotes logo: a pixel-art grimoire" width="144">
+  <img src="assets/brand/lownotes.svg" alt="LowNotes logo: the LowBloat L with a folded note" width="96">
 </p>
 
 <h1 align="center">LowNotes</h1>
@@ -211,7 +211,7 @@ To build the app:
 bun run tauri build
 ```
 
-The app, installer, tray and favicon icons come from `assets/brand/lownotes_logo.png`. Tauri development and production builds regenerate the platform icons automatically. After replacing the logo, run `bun run icons` and commit the updated files in `src-tauri/icons/` and `static/favicon.png`. Cargo also watches the icon directory so incremental Windows builds refresh the embedded executable icon.
+The app, installer, tray and favicon icons come from `assets/brand/lownotes.svg`, the LowNotes mark from the LowBloat brand set. Tauri development and production builds regenerate the platform icons automatically. After replacing the logo, run `bun run icons` and commit the updated files in `src-tauri/icons/`, `static/favicon.svg` and `assets/brand/lownotes_logo.png`. Cargo also watches the icon directory so incremental Windows builds refresh the embedded executable icon.
 
 To verify changes:
 

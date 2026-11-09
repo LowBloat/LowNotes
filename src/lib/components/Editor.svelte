@@ -1201,7 +1201,8 @@
   }
   :global(.prose h1) {
     font-size: 1.85rem;
-    font-weight: 700;
+    font-weight: 720;
+    letter-spacing: -0.03em;
     margin-top: 1.5rem;
     margin-bottom: 0.8rem;
     color: var(--text-main);
@@ -1210,14 +1211,16 @@
   }
   :global(.prose h2) {
     font-size: 1.4rem;
-    font-weight: 600;
+    font-weight: 680;
+    letter-spacing: -0.02em;
     margin-top: 1.3rem;
     margin-bottom: 0.6rem;
     color: var(--text-main);
   }
   :global(.prose h3) {
     font-size: 1.15rem;
-    font-weight: 600;
+    font-weight: 650;
+    letter-spacing: -0.015em;
     margin-top: 1rem;
     margin-bottom: 0.4rem;
     color: var(--text-main);
@@ -1229,14 +1232,14 @@
   :global(.prose code) {
     background-color: var(--bg-card);
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: 0;
     font-size: 13px;
     border: 1px solid var(--border);
   }
   :global(.prose pre) {
     background-color: var(--bg-card);
     padding: 12px 16px;
-    border-radius: 6px;
+    border-radius: 0;
     border: 1px solid var(--border);
     overflow-x: auto;
   }
@@ -1319,13 +1322,13 @@
   :global(.prose mark) {
     background: var(--accent-glow);
     color: var(--text-main);
-    border-radius: 2px;
+    border-radius: 0;
   }
   :global(.prose .warning), :global(.prose .info), :global(.prose .tip), :global(.prose .danger) {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-left: 3px solid var(--accent);
-    border-radius: 6px;
+    border-radius: 0;
     padding: 0.6rem 1rem;
     margin: 1rem 0;
   }
@@ -1340,7 +1343,7 @@
     padding: 1rem;
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 0;
     overflow-x: auto;
     text-align: center;
   }
@@ -1354,7 +1357,7 @@
     padding: 0.75rem;
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 0;
     overflow-x: auto;
     cursor: pointer;
   }
@@ -1382,7 +1385,7 @@
     right: 0.5rem;
     padding: 2px 8px;
     font-size: 12px;
-    border-radius: 6px;
+    border-radius: 0;
     border: 1px solid var(--border);
     background: var(--bg-sidebar);
     color: var(--text-muted);

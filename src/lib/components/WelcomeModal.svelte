@@ -2,7 +2,7 @@
   import { Bot, FileText, Link2, MessageSquare } from 'lucide-svelte';
   import { markWelcomeSeen, saveLanguage } from '../api';
   import { t, locale, LOCALE_LABELS, SUPPORTED_LOCALES } from '$lib/i18n';
-  import logoUrl from '../../../assets/brand/lownotes_logo.png';
+  import logoUrl from '../../../assets/brand/lownotes.svg';
   import { dismissibleModal } from '$lib/modal-dismiss';
 
   let {
@@ -29,7 +29,7 @@
 {#if isOpen}
   <div
     use:dismissibleModal={() => void handleDismiss(false)}
-    class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 select-none animate-fadeIn"
+    class="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 select-none"
     role="presentation"
   >
     <div
@@ -39,8 +39,8 @@
       tabindex="-1"
     >
       <!-- Hero Header -->
-      <div class="px-8 pt-8 pb-6 text-center border-b border-[var(--border)] bg-gradient-to-b from-[var(--bg-hover)] to-[var(--bg-card)]">
-        <img src={logoUrl} alt="" class="w-[70px] h-[70px] object-contain mx-auto mb-4" style="image-rendering: pixelated" />
+      <div class="px-8 pt-8 pb-6 text-center border-b border-[var(--border)] bg-[var(--bg-card)]">
+        <img src={logoUrl} alt="" class="w-14 h-14 mx-auto mb-4" />
         <h2 class="text-xl font-bold text-[var(--text-main)] mb-1.5">{$t('welcome.title')}</h2>
         <p class="text-xs text-[var(--text-muted)] max-w-md mx-auto leading-relaxed">
           {$t('welcome.subtitle')}
@@ -117,7 +117,7 @@
           </button>
           <button
             onclick={() => handleDismiss(true)}
-            class="px-5 py-2.5 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-black text-xs font-semibold rounded-xl shadow-lg transition flex items-center gap-1.5"
+            class="px-5 py-2.5 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold rounded-xl shadow-lg transition flex items-center gap-1.5"
           >
             <span>{$t('welcome.tryAi')}</span>
             <MessageSquare size={15} />
@@ -128,12 +128,3 @@
   </div>
 {/if}
 
-<style>
-  @keyframes fadeIn {
-    from { opacity: 0; transform: scale(0.97); }
-    to { opacity: 1; transform: scale(1); }
-  }
-  .animate-fadeIn {
-    animation: fadeIn 0.15s ease-out;
-  }
-</style>

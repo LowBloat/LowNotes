@@ -413,14 +413,14 @@
       <div class="flex bg-[var(--bg-card)] p-0.5 rounded-lg border border-[var(--border)]">
         <button
           onclick={() => (scope = 'vault')}
-          class="px-2.5 py-0.5 rounded-md text-[11px] transition {scope === 'vault' ? 'bg-[var(--accent)] text-black font-semibold shadow' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'}"
+          class="px-2.5 py-0.5 rounded-md text-[11px] transition {scope === 'vault' ? 'bg-[var(--accent)] text-[var(--accent-contrast)] font-semibold shadow' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'}"
         >
           {$t('ai.scopeVault')}
         </button>
         <button
           onclick={() => (scope = 'note')}
           disabled={!currentNotePath}
-          class="px-2.5 py-0.5 rounded-md text-[11px] transition disabled:opacity-40 {scope === 'note' ? 'bg-[var(--accent)] text-black font-semibold shadow' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'}"
+          class="px-2.5 py-0.5 rounded-md text-[11px] transition disabled:opacity-40 {scope === 'note' ? 'bg-[var(--accent)] text-[var(--accent-contrast)] font-semibold shadow' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'}"
           title={currentNotePath ? currentNotePath : $t('ai.scopeNoteHint')}
         >
           {$t('ai.scopeNote')}
@@ -483,7 +483,7 @@
         <p class="text-xs leading-relaxed text-[var(--text-muted)]">{$t('ai.memoryHelp')}</p>
         <textarea bind:value={memoryDraft} maxlength="8000"
           class="flex-1 min-h-40 w-full resize-none rounded-md border border-[var(--border)] bg-[var(--bg-main)] p-2.5 text-xs text-[var(--text-main)] focus:outline-none focus:border-[var(--accent)]"></textarea>
-        <button onclick={saveMemory} class="self-end px-3 py-1.5 rounded-md bg-[var(--accent)] text-black text-xs font-semibold">{$t('ai.saveMemory')}</button>
+        <button onclick={saveMemory} class="self-end px-3 py-1.5 rounded-md bg-[var(--accent)] text-[var(--accent-contrast)] text-xs font-semibold">{$t('ai.saveMemory')}</button>
       </div>
     {:else}
     <!-- Chat Messages Container -->
@@ -596,7 +596,7 @@
                               class="inline-flex items-center gap-1 text-[11px] text-[var(--accent-light)] hover:underline"><Check size={13} /> {$t('ai.openSavedNote')}</button>
                           {:else}
                             <button onclick={() => saveDraft(msg, draft)} disabled={draft.saving || !draft.content.trim()}
-                              class="px-2 py-1 rounded bg-[var(--accent)] text-black text-[11px] disabled:opacity-40">
+                              class="px-2 py-1 rounded bg-[var(--accent)] text-[var(--accent-contrast)] text-[11px] disabled:opacity-40">
                               {draft.saving ? $t('editor.saving') : $t('ai.saveDraft')}
                             </button>
                           {/if}
@@ -633,7 +633,7 @@
                           <span role="status" class="inline-flex items-center gap-1 text-[11px] text-[var(--success)]"><Check size={13} /> {$t('ai.editApplied')}</span>
                         {:else}
                           <button onclick={() => applyEdit(msg, edit)} disabled={edit.applying || edit.new_text === edit.old_text}
-                            class="self-start px-2 py-1 rounded bg-[var(--accent)] text-black text-[11px] disabled:opacity-40">
+                            class="self-start px-2 py-1 rounded bg-[var(--accent)] text-[var(--accent-contrast)] text-[11px] disabled:opacity-40">
                             {edit.applying ? $t('editor.saving') : $t('ai.applyEdit')}
                           </button>
                         {/if}
@@ -719,7 +719,7 @@
           <button
             type="submit"
             disabled={isLoading || !historyReady || !inputPrompt.trim()}
-            class="px-3 py-1 bg-[var(--accent)] hover:bg-[var(--accent-hover)] disabled:opacity-40 text-black text-xs font-semibold rounded-md transition shadow flex items-center gap-1"
+            class="px-3 py-1 bg-[var(--accent)] hover:bg-[var(--accent-hover)] disabled:opacity-40 text-[var(--accent-contrast)] text-xs font-semibold rounded-md transition shadow flex items-center gap-1"
           >
             <span>{$t('ai.send')}</span>
             <Send size={13} />

@@ -133,7 +133,7 @@
   <!-- Backdrop -->
   <div
     use:dismissibleModal={() => (isOpen = false)}
-    class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 select-none animate-fadeIn"
+    class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 select-none"
     role="presentation"
   >
     <!-- Modal Dialog -->
@@ -228,7 +228,7 @@
               <button
                 onclick={copyCode}
                 disabled={!pairCode}
-                class="px-4 py-2 bg-[var(--accent)] hover:bg-[var(--accent-hover)] disabled:opacity-40 disabled:cursor-not-allowed text-black text-xs font-semibold rounded-lg transition shadow-md flex items-center gap-1.5"
+                class="px-4 py-2 bg-[var(--accent)] hover:bg-[var(--accent-hover)] disabled:opacity-40 disabled:cursor-not-allowed text-[var(--accent-contrast)] text-xs font-semibold rounded-lg transition shadow-md flex items-center gap-1.5"
               >
                 {#if copied}<Check size={15} />{:else}<Copy size={15} />{/if}
                 {copied ? $t('pair.copied') : $t('pair.copy')}
@@ -267,7 +267,7 @@
               <button
                 onclick={handleRequestPair}
                 disabled={isConnecting || !inputCode.trim()}
-                class="px-4 py-2 bg-[var(--accent)] hover:bg-[var(--accent-hover)] disabled:opacity-50 text-black text-xs font-semibold rounded-lg transition shadow-md"
+                class="px-4 py-2 bg-[var(--accent)] hover:bg-[var(--accent-hover)] disabled:opacity-50 text-[var(--accent-contrast)] text-xs font-semibold rounded-lg transition shadow-md"
               >
                 {isConnecting ? $t('pair.connectingButton') : $t('pair.requestPair')}
               </button>
@@ -310,12 +310,3 @@
   </div>
 {/if}
 
-<style>
-  @keyframes fadeIn {
-    from { opacity: 0; transform: scale(0.98); }
-    to { opacity: 1; transform: scale(1); }
-  }
-  .animate-fadeIn {
-    animation: fadeIn 0.15s ease-out;
-  }
-</style>

@@ -6,6 +6,10 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 
 ## [Unreleased]
 
+### Changed
+- The interface follows the LowBloat design system like the other LowBloat apps: Inter for text and Cascadia Mono for code, square corners, no decorative shadows, blur or entrance animations, and a green signal bar on the open note.
+- New logo: the LowNotes mark from the LowBloat brand set replaces the pixel-art grimoire in the app, installer, tray, title bar and welcome screens.
+
 ## [0.5.0] - 2026-10-29
 
 ### Added

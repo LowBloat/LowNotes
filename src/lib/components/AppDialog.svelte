@@ -45,7 +45,7 @@
       <button
         type="submit"
         data-autofocus={request.kind !== 'prompt' && !request.danger ? '' : undefined}
-        class="px-3 py-1.5 rounded-lg font-semibold {request.danger ? 'bg-[var(--danger)] text-white' : 'bg-[var(--accent)] text-black hover:bg-[var(--accent-hover)]'}"
+        class="px-3 py-1.5 rounded-lg font-semibold {request.danger ? 'bg-[var(--danger)] text-white' : 'bg-[var(--accent)] text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)]'}"
       >{request.confirmLabel ?? $t('dialog.ok')}</button>
     </div>
   </form>
