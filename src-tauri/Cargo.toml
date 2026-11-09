@@ -56,7 +56,7 @@ tauri-plugin-process = "2.4.0"
 keyring = { version = "=3.6.3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 pulldown-cmark = { version = "0.13.5", default-features = false }
 # Exact pin: the MCP SDK releases often; upgrade deliberately (#101).
-rmcp = { version = "=3.8.0", default-features = false, features = ["server", "macros", "transport-async-rw"] }
+rmcp = { version = "=3.9.0", default-features = false, features = ["server", "macros", "transport-async-rw"] }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
