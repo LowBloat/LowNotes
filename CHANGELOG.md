@@ -6,9 +6,14 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-10
+
 ### Changed
 - The interface follows the LowBloat design system like the other LowBloat apps: Inter for text and Cascadia Mono for code, square corners, no decorative shadows, blur or entrance animations, and a green signal bar on the open note.
 - New logo: the LowNotes mark from the LowBloat brand set replaces the pixel-art grimoire in the app, installer, tray, title bar and welcome screens.
+
+### Security
+- The bundled SQLite moves to 3.54.1 with rusqlite 0.41 (RUSTSEC-2026-0459); pulldown-cmark 0.13.6 fixes quadratic parsing of nested image wiki links that a synced note could trigger (RUSTSEC-2026-0433); the updater 2.14.1 unpacks bundles with zip 9 (RUSTSEC-2026-0429 and the older zip advisories); rmcp 3.9.0 clears RUSTSEC-2026-0462 ([#120](https://github.com/LowBloat/LowNotes/pull/120)).
 
 ## [0.5.0] - 2026-10-29
 
@@ -92,7 +97,8 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 - Dependency updates: Tauri plugins, iroh 1.3, rusqlite 0.40, base64 0.23, html-escape 0.3 and GitHub Actions.
 - Community, security and design documentation ([#32](https://github.com/LowBloat/LowNotes/issues/32), [#33](https://github.com/LowBloat/LowNotes/issues/33)).
 
-[Unreleased]: https://github.com/LowBloat/LowNotes/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/LowBloat/LowNotes/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/LowBloat/LowNotes/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/LowBloat/LowNotes/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/LowBloat/LowNotes/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/LowBloat/LowNotes/compare/v0.4.0...v0.4.1
