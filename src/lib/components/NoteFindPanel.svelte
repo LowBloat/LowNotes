@@ -55,15 +55,15 @@
 </section>
 
 <style>
-  .note-find-panel { position: absolute; top: 12px; right: 16px; z-index: 30; width: 420px; max-width: calc(100% - 24px); padding: 6px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-card); color: var(--text-main); box-shadow: 0 8px 28px rgb(0 0 0 / .16), 0 2px 5px rgb(0 0 0 / .06); font-size: 13px; }
+  .note-find-panel { position: absolute; top: 12px; right: 16px; z-index: 30; width: 420px; max-width: calc(100% - 24px); padding: 6px; border: 1px solid var(--border); border-radius: 0; background: var(--bg-card); color: var(--text-main); font-size: 13px; }
   .note-find-panel { container-type: inline-size; }
   .find-main-row, .find-replace-row { display: flex; align-items: center; gap: 3px; min-width: 0; }
-  .find-main-row { padding: 2px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-main); }
+  .find-main-row { padding: 2px; border: 1px solid var(--border); border-radius: 0; background: var(--bg-main); }
   .find-main-row:focus-within { border-color: var(--accent-light); box-shadow: 0 0 0 1px var(--accent-glow); }
   .find-input { min-width: 0; flex: 1; width: 100%; height: 34px; padding: 0 4px; background: transparent; color: var(--text-main); border: 0; outline: 0; font-size: 13px; user-select: text; }
   .find-input::placeholder { color: var(--text-dim); }
   .find-replace-row:focus-within { border-color: var(--accent-light); }
-  .find-icon { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex: none; border-radius: 5px; color: var(--text-muted); }
+  .find-icon { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex: none; border-radius: 0; color: var(--text-muted); }
   .find-icon:hover:not(:disabled) { color: var(--text-main); background: var(--bg-hover); }
   .find-icon.active { color: var(--accent-light); background: var(--bg-active); box-shadow: inset 0 0 0 1px var(--border); }
   .find-icon.active:hover { color: var(--accent-light); }
@@ -76,7 +76,7 @@
   .find-scope { min-width: 0; color: var(--text-dim); font-size: 12px; }
   .find-options { display: flex; gap: 2px; }
   .find-message { margin: 4px 8px 5px; color: var(--danger); font-size: 12px; }
-  .find-replace-row { margin-top: 6px; padding: 2px 5px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-main); }
+  .find-replace-row { margin-top: 6px; padding: 2px 5px; border: 1px solid var(--border); border-radius: 0; background: var(--bg-main); }
   @container (max-width: 340px) {
     .find-main-row { flex-wrap: wrap; }
     .find-main-row .find-input { flex-basis: calc(100% - 36px); }

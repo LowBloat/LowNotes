@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { BookOpen, Bug, ClipboardPaste, Clock3, Copy, Download, FilePlus2, FileText, FolderOpen, FolderPlus, FolderSearch, Info, MessageSquare, Network, NotebookPen, Power, Redo2, Replace, Scissors, Search, Settings2, TextSelect, Undo2, ZoomIn, ZoomOut } from 'lucide-svelte';
+  import { BookOpen, Bug, ClipboardPaste, Clock3, Copy, Download, FilePlus2, FileText, FolderOpen, FolderPlus, FolderSearch, Info, MessageSquare, Network, Power, Redo2, Replace, Scissors, Search, Settings2, TextSelect, Undo2, ZoomIn, ZoomOut } from 'lucide-svelte';
   import { onMount, onDestroy, tick } from 'svelte';
   import type { AppSettings, AppTheme, InitialStateResponse, ViewMode, VaultConfig, VaultItem } from '$lib/types';
   import {
@@ -436,17 +436,15 @@
     <!-- Welcome screen when no vault is configured -->
     <main class="flex-1 flex flex-col items-center justify-center p-8 text-center select-none">
       <button class="absolute top-5 right-6 text-sm text-[var(--text-muted)] hover:text-[var(--accent-light)]" onclick={() => openSettings()}>{$t('settings.title')}</button>
-      <div class="w-16 h-16 rounded-2xl bg-[var(--bg-card)] border border-[var(--border)] flex items-center justify-center text-3xl mb-6 shadow-xl">
-        <NotebookPen size={32} class="text-[var(--accent-light)]" />
-      </div>
-      <h1 class="text-2xl font-bold mb-2">{$t('app.welcomeTitle')}</h1>
+      <img src="/favicon.svg" alt="" class="w-16 h-16 mb-6" draggable="false" />
+      <h1 class="text-2xl font-bold tracking-tight mb-2">{$t('app.welcomeTitle')}</h1>
       <p class="text-sm text-[var(--text-muted)] max-w-md mb-8 leading-relaxed">
         {$t('app.welcomeSubtitle')}
       </p>
 
       <button
         onclick={handleOpenVaultFolder}
-        class="px-6 py-3 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-black font-semibold text-sm rounded-xl transition shadow-lg flex items-center gap-2 hover:scale-[1.02] active:scale-[0.98]"
+        class="px-6 py-3 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] font-semibold text-sm transition flex items-center gap-2"
       >
         <FolderOpen size={18} />
         <span>{$t('app.chooseVaultFolder')}</span>

@@ -210,12 +210,12 @@
 
 <style>
   .history-backdrop { position: fixed; inset: 0; z-index: 70; background: #0008; display: grid; place-items: center; padding: 16px; }
-  .history-dialog { width: min(1120px, 100%); height: min(790px, calc(100dvh - 32px)); display: flex; flex-direction: column; overflow: hidden; color: var(--text-main); background: var(--bg-main); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 20px 70px #0004; }
+  .history-dialog { width: min(1120px, 100%); height: min(790px, calc(100dvh - 32px)); display: flex; flex-direction: column; overflow: hidden; color: var(--text-main); background: var(--bg-main); border: 1px solid var(--border); border-radius: 0; }
   header { display: flex; justify-content: space-between; align-items: center; padding: 18px 22px; background: var(--bg-sidebar); border-bottom: 1px solid var(--border); }
   h2 { display: flex; align-items: center; gap: 9px; font-size: 16px; font-weight: 650; margin: 0; } h3 { font-size: 15px; font-weight: 650; }
   header p { font-size: 11px; color: var(--text-muted); margin-top: 5px; }
   nav { display: flex; gap: 5px; padding: 8px 16px; border-bottom: 1px solid var(--border); }
-  button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-card); font-size: 12px; cursor: pointer; }
+  button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 0; background: var(--bg-card); font-size: 12px; cursor: pointer; }
   button:hover:not(:disabled) { background: var(--bg-hover); } button:disabled { opacity: .5; cursor: default; }
   button:focus-visible, textarea:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   nav button { border-color: transparent; background: transparent; } nav .active, .chosen { background: var(--bg-hover); border-color: var(--accent); }
@@ -224,7 +224,7 @@
   .message { padding: 9px 20px; font-size: 12px; background: var(--bg-card); border-bottom: 1px solid var(--border); } .error, .danger { color: var(--danger); }
   .working { padding: 4px 20px; font-size: 11px; color: var(--text-muted); }
   .note-picker { display: flex; align-items: center; gap: 10px; padding: 10px 18px; font-size: 12px; } .note-picker select { flex: 1; min-width: 0; }
-  select, input { background: var(--bg-card); border: 1px solid var(--border); border-radius: 5px; color: var(--text-main); padding: 7px 9px; font-size: 12px; }
+  select, input { background: var(--bg-card); border: 1px solid var(--border); border-radius: 0; color: var(--text-main); padding: 7px 9px; font-size: 12px; }
   .history-body { display: grid; grid-template-columns: 250px minmax(0, 1fr); flex: 1; min-height: 0; border-top: 1px solid var(--border); }
   aside { overflow: auto; background: var(--bg-sidebar); border-right: 1px solid var(--border); padding: 10px; }
   .entry { display: flex; align-items: stretch; flex-direction: column; width: 100%; text-align: left; margin-bottom: 7px; padding: 11px; overflow-wrap: anywhere; }
@@ -235,7 +235,7 @@
   .compare-select { display: flex; align-items: center; gap: 10px; font-size: 11px; } .compare-select select { flex: 1; min-width: 0; }
   .compare-panes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; flex: 1; min-height: 130px; }
   .compare-panes label, .merge-editor { display: flex; flex-direction: column; gap: 7px; font-size: 11px; color: var(--text-muted); min-height: 0; overflow: hidden; }
-  textarea { flex: 1; min-height: 0; width: 100%; resize: none; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; padding: 11px; color: var(--text-main); font: 12px/1.7 Consolas, 'Cascadia Code', monospace; tab-size: 4; }
+  textarea { flex: 1; min-height: 0; width: 100%; resize: none; background: var(--bg-card); border: 1px solid var(--border); border-radius: 0; padding: 11px; color: var(--text-main); font: 12px/1.7 Consolas, 'Cascadia Code', monospace; tab-size: 4; }
   .merge-actions { display: flex; flex-wrap: wrap; gap: 5px; } .merge-actions button { font-size: 11px; }
   .merge-editor { flex: 1; min-height: 120px; } footer { display: flex; justify-content: flex-end; align-items: center; gap: 12px; } footer p { font-size: 10px; color: var(--text-muted); flex: 1; }
   .trash-text { min-height: 130px; } .hint { font-size: 12px; color: var(--text-muted); line-height: 1.7; }

@@ -124,7 +124,7 @@
 {#if isOpen && update}
   <div
     use:dismissibleModal={() => { if (phase !== 'downloading' && phase !== 'installing') isOpen = false; }}
-    class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 select-none animate-fadeIn"
+    class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 select-none"
     role="presentation"
   >
     <div
@@ -210,14 +210,14 @@
               <button
                 onclick={handleInstallNow}
                 disabled={phase === 'downloading' || phase === 'installing'}
-                class="px-4 py-1.5 bg-[var(--accent)] hover:bg-[var(--accent-hover)] disabled:opacity-50 text-black text-xs font-semibold rounded-lg shadow-md transition"
+                class="px-4 py-1.5 bg-[var(--accent)] hover:bg-[var(--accent-hover)] disabled:opacity-50 text-[var(--accent-contrast)] text-xs font-semibold rounded-lg shadow-md transition"
               >
                 {$t('update.installNow')}
               </button>
             {:else if update.download_url}
               <button
                 onclick={handleDownloadPackage}
-                class="px-4 py-1.5 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-black text-xs font-semibold rounded-lg shadow-md transition"
+                class="px-4 py-1.5 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] text-xs font-semibold rounded-lg shadow-md transition"
               >
                 {$t('update.downloadMatching')}
               </button>
@@ -230,13 +230,6 @@
 {/if}
 
 <style>
-  @keyframes fadeIn {
-    from { opacity: 0; transform: scale(0.97); }
-    to { opacity: 1; transform: scale(1); }
-  }
-  .animate-fadeIn {
-    animation: fadeIn 0.15s ease-out;
-  }
   /* Compact Markdown for the dialog; the note preview styles are too large. */
   .release-notes :global(:where(h1, h2, h3, h4)) {
     color: var(--text-main);
@@ -256,19 +249,19 @@
   .release-notes :global(strong) { color: var(--text-main); font-weight: 600; }
   .release-notes :global(a) { color: var(--accent-light); text-decoration: underline; }
   .release-notes :global(code) {
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-mono);
     font-size: 0.95em;
     padding: 0 0.25rem;
-    border-radius: 0.25rem;
+    border-radius: 0;
     background: var(--bg-hover);
   }
-  .release-notes :global(pre) { overflow-x: auto; padding: 0.5rem; border-radius: 0.375rem; background: var(--bg-hover); }
+  .release-notes :global(pre) { overflow-x: auto; padding: 0.5rem; border-radius: 0; background: var(--bg-hover); }
   .release-notes :global(pre code) { padding: 0; background: none; }
   .release-notes :global(blockquote) { border-left: 2px solid var(--border); padding-left: 0.6rem; }
   .release-notes :global(img) { max-width: 100%; height: auto; }
   .release-notes :global(.remote-image-blocked) {
     border: 1px dashed var(--border);
-    border-radius: 0.375rem;
+    border-radius: 0;
     padding: 0.25rem 0.5rem;
     color: var(--text-dim);
   }

@@ -31,7 +31,7 @@
 {#if request}
   <div
     use:dismissibleModal={() => void handleDecision(false)}
-    class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 select-none animate-fadeIn"
+    class="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 select-none"
     role="presentation"
   >
     <div
@@ -66,7 +66,7 @@
         </button>
         <button
           onclick={() => handleDecision(true)}
-          class="px-4 py-2 text-xs font-semibold bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-black rounded-lg transition shadow-md"
+          class="px-4 py-2 text-xs font-semibold bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-[var(--accent-contrast)] rounded-lg transition shadow-md"
         >
           {$t('incoming.accept')}
         </button>
@@ -75,12 +75,3 @@
   </div>
 {/if}
 
-<style>
-  @keyframes fadeIn {
-    from { opacity: 0; transform: scale(0.97); }
-    to { opacity: 1; transform: scale(1); }
-  }
-  .animate-fadeIn {
-    animation: fadeIn 0.15s ease-out;
-  }
-</style>

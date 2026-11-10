@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const require = createRequire(import.meta.url);
 const cli = require.resolve('@tauri-apps/cli/tauri.js');
-const source = join(root, 'assets/brand/lownotes_logo.png');
+const source = join(root, 'assets/brand/lownotes.svg');
 const output = mkdtempSync(join(tmpdir(), 'lownotes-icons-'));
 
 function generate() {
@@ -45,8 +45,9 @@ try {
   for (const name of ['32x32.png', '64x64.png', '128x128.png', '128x128@2x.png', 'icon.ico', 'icon.icns']) {
     update(name, `src-tauri/icons/${name}`);
   }
-  update('64x64.png', 'static/favicon.png');
-  console.log('App, installer, tray and favicon icons generated from assets/brand/lownotes_logo.png.');
+  update('icon.png', 'assets/brand/lownotes_logo.png');
+  copyFileSync(source, join(root, 'static/favicon.svg'));
+  console.log('App, installer, tray and favicon icons generated from assets/brand/lownotes.svg.');
 } finally {
   rmSync(output, { recursive: true, force: true });
 }
