@@ -4,12 +4,11 @@ import { ts } from '$lib/i18n';
 import { checkAvailableUpdate, type AvailableUpdate } from '$lib/updates';
 import type { AppSettings, UpdatePolicy } from '$lib/types';
 
-const FIRST_CHECK_MS = 5_000;
 const CHECK_INTERVAL_MS = 10 * 60 * 1000;
 /** Focus comes and goes quickly; at most one extra check per this long. */
 const FOCUS_GAP_MS = 2 * 60 * 1000;
 
-/** Looks for a new version shortly after startup, every few minutes and when
+/** Looks for a new version at startup, every few minutes and when
  * the window regains focus, honoring the user's automatic-check preference and
  * a skipped version. A copy that can update itself (Windows installer, macOS
  * app, writable AppImage, .deb or .rpm) downloads the signed update in the
@@ -22,7 +21,6 @@ export function createUpdateChecker(getSettings: () => AppSettings | null) {
     open: false,
   });
   let timer: ReturnType<typeof setInterval> | undefined;
-  let firstCheck: ReturnType<typeof setTimeout> | undefined;
   let busy = false;
   let lastCheck = 0;
 
@@ -82,13 +80,12 @@ export function createUpdateChecker(getSettings: () => AppSettings | null) {
   }
 
   function start() {
-    firstCheck = setTimeout(() => void check(), FIRST_CHECK_MS);
+    void check();
     timer = setInterval(() => void check(), CHECK_INTERVAL_MS);
     window.addEventListener('focus', onFocus);
   }
 
   function stop() {
-    if (firstCheck) clearTimeout(firstCheck);
     if (timer) clearInterval(timer);
     window.removeEventListener('focus', onFocus);
   }
