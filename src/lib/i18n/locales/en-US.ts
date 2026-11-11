@@ -395,6 +395,8 @@ const enUS = {
     later: 'Later',
     autoCheck: 'Check for updates automatically',
     installNow: 'Update now',
+    restartNow: 'Restart now',
+    readyHint: 'The update is downloaded and verified. Restarting installs it.',
     downloadMatching: 'Download update',
     archHint: 'Installed as an Arch package. Download the new .pkg.tar.zst and install it with pacman -U. If the package comes from a repository or the AUR, update it there.',
     debHint: 'Installed as a DEB package. Download the new .deb and install it with apt install ./file.deb. If the package comes from a repository, update it through APT.',

@@ -51,6 +51,17 @@ test('supported internal updates retain their install button', () => {
   }
 });
 
+test('an update downloaded in the background only asks to restart', () => {
+  locale.set('pt-BR');
+  const installer = { version: '0.2.7' } as Update;
+  const output = render(UpdateModal, { props: { isOpen: true,
+    policy: { channel: 'deb', can_install: true, updater_target: 'linux-x86_64-deb' },
+    update: { version: '0.2.7', installer, downloaded: true } } });
+  expect(output.body).toContain('Reiniciar agora');
+  expect(output.body).toContain(translate('pt-BR', 'update.readyHint'));
+  expect(output.body).not.toContain('Atualizar agora');
+});
+
 test('release notes render as Markdown without raw HTML', () => {
   locale.set('en-US');
   const body = [

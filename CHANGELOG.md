@@ -6,6 +6,12 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-11-11
+
+### Fixed
+- **Automatic updates on Linux `.deb` and `.rpm` installs.** They were only told a new version existed: the release published no updater signature or manifest entry for them, and the app treated them as owned by the package manager. Now, when dpkg or rpm really owns the binary and it was built as that package, the update installs the new package itself (pkexec asks for the administrator password), like Windows, macOS and the AppImage. The Arch package, Flatpak, Snap and portable copies keep the download link.
+- **Updates show up much sooner.** The app checked every six hours; it now checks every 10 minutes and when the window regains focus, downloads the update in the background and only then shows the dialog, whose **Restart now** installs it right away. Each version is announced once instead of at every check.
+
 ## [0.5.1] - 2026-11-10
 
 ### Changed
@@ -97,7 +103,8 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 - Dependency updates: Tauri plugins, iroh 1.3, rusqlite 0.40, base64 0.23, html-escape 0.3 and GitHub Actions.
 - Community, security and design documentation ([#32](https://github.com/LowBloat/LowNotes/issues/32), [#33](https://github.com/LowBloat/LowNotes/issues/33)).
 
-[Unreleased]: https://github.com/LowBloat/LowNotes/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/LowBloat/LowNotes/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/LowBloat/LowNotes/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/LowBloat/LowNotes/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/LowBloat/LowNotes/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/LowBloat/LowNotes/compare/v0.4.1...v0.4.2

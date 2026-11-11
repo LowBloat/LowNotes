@@ -18,10 +18,15 @@ class UpdateManifestTests(unittest.TestCase):
             }
             for filename in filenames.values():
                 (assets / filename).touch()
-            (assets / f"{filenames['appimage']}.sig").write_text("signature")
+            for signed_format in ["appimage", "deb", "rpm"]:
+                (assets / f"{filenames[signed_format]}.sig").write_text("signature")
             doc = build_manifest("0.2.7", "LowBloat/LowNotes", assets, "Notes")
-            self.assertEqual(list(doc["platforms"]), ["linux-x86_64-appimage"])
+            self.assertEqual(sorted(doc["platforms"]),
+                ["linux-x86_64-appimage", "linux-x86_64-deb", "linux-x86_64-rpm"])
             self.assertNotIn("linux-x86_64", doc["platforms"])
+            for signed_format in ["appimage", "deb", "rpm"]:
+                self.assertEqual(doc["platforms"][f"linux-x86_64-{signed_format}"]["url"],
+                    f"https://github.com/LowBloat/LowNotes/releases/download/v0.2.7/{filenames[signed_format]}")
             for package_format, filename in filenames.items():
                 self.assertEqual(doc["downloads"][f"linux-x86_64-{package_format}"],
                     f"https://github.com/LowBloat/LowNotes/releases/download/v0.2.7/{filename}")

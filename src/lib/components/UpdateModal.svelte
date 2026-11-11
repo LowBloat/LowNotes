@@ -101,6 +101,13 @@
     let received = 0;
     const total = installer.contentLength ?? 0;
     try {
+      if (update.downloaded) {
+        // Already downloaded and verified in the background.
+        phase = 'installing';
+        await installer.install();
+        await relaunch();
+        return;
+      }
       await installer.downloadAndInstall((event: DownloadEvent) => {
         if (event.event === 'Progress') {
           received += event.data.chunkLength;
@@ -148,6 +155,10 @@
       {#if !canInstall}
         <div class="px-6 py-4 border-t border-[var(--border)]">
           <p class="text-xs text-[var(--text-main)] leading-relaxed">{$t(updateInstructionKey(policy))}</p>
+        </div>
+      {:else if update.downloaded && phase === 'idle'}
+        <div class="px-6 py-4 border-t border-[var(--border)]">
+          <p class="text-xs text-[var(--text-main)] leading-relaxed">{$t('update.readyHint')}</p>
         </div>
       {/if}
 
@@ -212,7 +223,7 @@
                 disabled={phase === 'downloading' || phase === 'installing'}
                 class="px-4 py-1.5 bg-[var(--accent)] hover:bg-[var(--accent-hover)] disabled:opacity-50 text-[var(--accent-contrast)] text-xs font-semibold rounded-lg shadow-md transition"
               >
-                {$t('update.installNow')}
+                {$t(update.downloaded ? 'update.restartNow' : 'update.installNow')}
               </button>
             {:else if update.download_url}
               <button

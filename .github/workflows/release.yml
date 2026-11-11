@@ -184,6 +184,8 @@ jobs:
             dest_deb="LowNotes-${VERSION}-linux-x64.deb"
             cp "$deb_file" "dist/$dest_deb"
             (cd dist && sha256sum "$dest_deb" > "$dest_deb.sha256")
+            # Updater signature: .deb installs update themselves through dpkg.
+            cp "$deb_file.sig" "dist/$dest_deb.sig"
           fi
 
           # Coletar .rpm
@@ -192,6 +194,8 @@ jobs:
             dest_rpm="LowNotes-${VERSION}-linux-x64.rpm"
             cp "$rpm_file" "dist/$dest_rpm"
             (cd dist && sha256sum "$dest_rpm" > "$dest_rpm.sha256")
+            # Updater signature: .rpm installs update themselves through rpm.
+            cp "$rpm_file.sig" "dist/$dest_rpm.sig"
           fi
 
           # Coletar .AppImage

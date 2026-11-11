@@ -397,6 +397,8 @@ const esES: Dictionary = {
     later: 'Más tarde',
     autoCheck: 'Buscar actualizaciones automáticamente',
     installNow: 'Actualizar ahora',
+    restartNow: 'Reiniciar ahora',
+    readyHint: 'La actualización ya se descargó y verificó. Al reiniciar, se instala.',
     downloadMatching: 'Descargar actualización',
     archHint: 'Instalado como paquete Arch. Descarga el nuevo .pkg.tar.zst e instálalo con pacman -U. Si el paquete proviene de un repositorio o de AUR, actualízalo allí.',
     debHint: 'Instalado como paquete DEB. Descarga el nuevo .deb e instálalo con apt install ./archivo.deb. Si proviene de un repositorio, actualízalo mediante APT.',

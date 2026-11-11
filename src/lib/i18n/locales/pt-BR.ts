@@ -397,6 +397,8 @@ const ptBR: Dictionary = {
     later: 'Mais tarde',
     autoCheck: 'Buscar atualizações automaticamente',
     installNow: 'Atualizar agora',
+    restartNow: 'Reiniciar agora',
+    readyHint: 'A atualização já foi baixada e verificada. Ao reiniciar, ela é instalada.',
     downloadMatching: 'Baixar atualização',
     archHint: 'Instalado como pacote Arch. Baixe o novo .pkg.tar.zst e instale com pacman -U. Se o pacote vier de um repositório ou do AUR, atualize por ele.',
     debHint: 'Instalado como pacote DEB. Baixe o novo .deb e instale com apt install ./arquivo.deb. Se o pacote vier de um repositório, atualize pelo APT.',

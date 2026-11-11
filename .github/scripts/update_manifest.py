@@ -20,8 +20,11 @@ def build_manifest(version, repo, assets, notes):
     signed("windows-x86_64", f"LowNotes-{version}-windows-x64-setup.exe")
     signed("darwin-aarch64", f"LowNotes-{version}-macos-universal.app.tar.gz")
     signed("darwin-x86_64", f"LowNotes-{version}-macos-universal.app.tar.gz")
-    # Never publish a generic Linux target: native packages must not receive AppImages.
+    # One key per Linux format, never a generic one: a .deb install must get a
+    # .deb, an .rpm install an .rpm, and the Arch package nothing (pacman owns it).
     signed("linux-x86_64-appimage", f"LowNotes-{version}-linux-x64.AppImage")
+    signed("linux-x86_64-deb", f"LowNotes-{version}-linux-x64.deb")
+    signed("linux-x86_64-rpm", f"LowNotes-{version}-linux-x64.rpm")
     for package_format, asset in {
         "appimage": f"LowNotes-{version}-linux-x64.AppImage",
         "deb": f"LowNotes-{version}-linux-x64.deb",
