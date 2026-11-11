@@ -28,14 +28,25 @@ pub struct UpdatePolicy {
 }
 
 impl UpdatePolicy {
-    fn new(channel: UpdateChannel, appimage_writable: bool, arch: &str) -> Self {
-        let can_install = channel == UpdateChannel::Internal
-            || (channel == UpdateChannel::Appimage && appimage_writable);
+    /// `installable`: a writable AppImage, or a .deb/.rpm that dpkg/rpm really
+    /// owns and that was built as that package. Those install the signed update
+    /// themselves (the updater hands .deb/.rpm to dpkg/rpm through pkexec, which
+    /// asks for the administrator password). Arch, Flatpak, Snap and portable
+    /// copies are only told a new version exists.
+    fn new(channel: UpdateChannel, installable: bool, arch: &str) -> Self {
+        let format = match channel {
+            UpdateChannel::Appimage => Some("appimage"),
+            UpdateChannel::Deb => Some("deb"),
+            UpdateChannel::Rpm => Some("rpm"),
+            _ => None,
+        };
+        let can_install = channel == UpdateChannel::Internal || (format.is_some() && installable);
         Self {
             channel,
             can_install,
-            updater_target: (channel == UpdateChannel::Appimage && can_install)
-                .then(|| format!("linux-{arch}-appimage")),
+            updater_target: format
+                .filter(|_| can_install)
+                .map(|format| format!("linux-{arch}-{format}")),
         }
     }
 
@@ -123,11 +134,12 @@ fn detect_linux_policy() -> UpdatePolicy {
             }
         }
     }
+    let bundle = tauri::utils::platform::bundle_type();
     let channel = linux_channel(&LinuxInstallation {
         flatpak,
         snap,
         owner,
-        bundle: tauri::utils::platform::bundle_type(),
+        bundle: bundle.clone(),
         appimage: appimage.is_some(),
         system_path: executable.as_ref().is_some_and(|path| {
             ["/usr", "/opt", "/nix", "/app", "/snap", "/var/lib/flatpak"]
@@ -135,10 +147,10 @@ fn detect_linux_policy() -> UpdatePolicy {
                 .any(|prefix| path.starts_with(prefix))
         }),
     });
-    // Replacing an AppImage requires creating a backup in its parent directory.
-    // Probe this only for genuine unmanaged AppImages, never for native packages.
-    let writable = channel == UpdateChannel::Appimage
-        && executable
+    let installable = match channel {
+        // Replacing an AppImage requires creating a backup in its parent directory.
+        // Probe this only for genuine unmanaged AppImages, never for native packages.
+        UpdateChannel::Appimage => executable
             .as_ref()
             .and_then(|path| path.parent())
             .is_some_and(|parent| {
@@ -146,8 +158,32 @@ fn detect_linux_policy() -> UpdatePolicy {
                     .prefix(".lownotes-update-check-")
                     .tempfile_in(parent)
                     .is_ok()
-            });
-    UpdatePolicy::new(channel, writable, std::env::consts::ARCH)
+            }),
+        // The updater picks dpkg or rpm from the bundle type built into the
+        // binary, so it must agree with the package manager that owns it.
+        UpdateChannel::Deb | UpdateChannel::Rpm => {
+            native_package_updates_itself(channel, owner, bundle)
+        }
+        _ => false,
+    };
+    UpdatePolicy::new(channel, installable, std::env::consts::ARCH)
+}
+
+/// A .deb or .rpm install updates itself only when dpkg/rpm owns the binary and
+/// it was built as that same package (a binary copied elsewhere keeps its marker).
+#[cfg(any(target_os = "linux", test))]
+fn native_package_updates_itself(
+    channel: UpdateChannel,
+    owner: Option<UpdateChannel>,
+    bundle: Option<tauri::utils::config::BundleType>,
+) -> bool {
+    use tauri::utils::config::BundleType;
+    owner == Some(channel)
+        && matches!(
+            (channel, bundle),
+            (UpdateChannel::Deb, Some(BundleType::Deb))
+                | (UpdateChannel::Rpm, Some(BundleType::Rpm))
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -234,11 +270,50 @@ mod tests {
     use tauri::utils::config::BundleType;
 
     #[test]
-    fn native_packages_and_sandboxes_never_install_internally() {
+    fn deb_and_rpm_install_their_own_format_when_installable() {
+        for (channel, format) in [(UpdateChannel::Deb, "deb"), (UpdateChannel::Rpm, "rpm")] {
+            let policy = UpdatePolicy::new(channel, true, "x86_64");
+            assert!(policy.can_install);
+            assert_eq!(
+                policy.updater_target.as_deref(),
+                Some(format!("linux-x86_64-{format}").as_str())
+            );
+            let unowned = UpdatePolicy::new(channel, false, "x86_64");
+            assert!(!unowned.can_install);
+            assert!(unowned.updater_target.is_none());
+        }
+        assert!(native_package_updates_itself(
+            UpdateChannel::Deb,
+            Some(UpdateChannel::Deb),
+            Some(BundleType::Deb)
+        ));
+        assert!(native_package_updates_itself(
+            UpdateChannel::Rpm,
+            Some(UpdateChannel::Rpm),
+            Some(BundleType::Rpm)
+        ));
+        // Not owned by the package manager, or built as another format.
+        assert!(!native_package_updates_itself(
+            UpdateChannel::Deb,
+            None,
+            Some(BundleType::Deb)
+        ));
+        assert!(!native_package_updates_itself(
+            UpdateChannel::Deb,
+            Some(UpdateChannel::Deb),
+            Some(BundleType::Rpm)
+        ));
+        assert!(!native_package_updates_itself(
+            UpdateChannel::Rpm,
+            Some(UpdateChannel::Rpm),
+            None
+        ));
+    }
+
+    #[test]
+    fn other_packages_and_sandboxes_never_install_internally() {
         for channel in [
             UpdateChannel::Arch,
-            UpdateChannel::Deb,
-            UpdateChannel::Rpm,
             UpdateChannel::Flatpak,
             UpdateChannel::Snap,
             UpdateChannel::Portable,

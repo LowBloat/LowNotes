@@ -8,6 +8,8 @@ export interface AvailableUpdate {
   body?: string;
   download_url?: string | null;
   installer?: Update;
+  /** Downloaded and verified in the background: installing only restarts. */
+  downloaded?: boolean;
 }
 
 export async function checkAvailableUpdate(
