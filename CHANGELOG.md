@@ -8,6 +8,7 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 
 ### Fixed
 - **Folders open the way they were left.** The sidebar remembers which folders are collapsed in each vault, in the settings file, instead of opening every folder expanded at each start. Renaming a folder keeps it collapsed; folders deleted since are forgotten.
+- **New versions show up within a minute.** The app checks every minute instead of every 10, and again when the window comes back from the tray. A check that hung (after sleep or a network change) no longer blocks the later ones, and checks no longer keep their discarded results in memory. After its dialog closes, a found version stays on offer in the title bar (**Restart to update**), and a newer release replaces it as soon as it is published.
 
 ## [0.5.2] - 2026-11-11
 

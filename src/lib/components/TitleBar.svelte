@@ -7,12 +7,15 @@
   import type { createWindowFrame } from '$lib/state/window-frame.svelte';
   import MenuList from './MenuList.svelte';
 
-  let { menus, title, detail = '', frame } = $props<{
+  let { menus, title, detail = '', frame, update = null, onUpdate } = $props<{
     menus: AppMenu[];
     title: string;
     /** Shown dimmed after the title, such as the vault name. */
     detail?: string;
     frame: ReturnType<typeof createWindowFrame>;
+    /** A newer version waiting for the user; `downloaded` once a restart installs it. */
+    update?: { version: string; downloaded?: boolean } | null;
+    onUpdate?: () => void;
   }>();
 
   let buttons = $state<HTMLButtonElement[]>([]);
@@ -153,6 +156,13 @@
 
   <div class="flex-1" data-tauri-drag-region></div>
 
+  {#if update && onUpdate}
+    <button type="button" class="update-button" onclick={onUpdate} title={$t('update.body', { version: update.version })}>
+      <span class="update-dot" aria-hidden="true"></span>
+      {$t(update.downloaded ? 'titlebar.updateReady' : 'titlebar.updateAvailable')}
+    </button>
+  {/if}
+
   {#if !IS_MAC}
     <div class="flex items-stretch">
       <button type="button" class="window-button" onclick={frame.minimize} aria-label={$t('titlebar.minimize')} title={$t('titlebar.minimize')}>
@@ -183,6 +193,12 @@
   .titlebar { height: var(--titlebar-height); min-height: var(--titlebar-height); }
   /* Room for the native traffic lights drawn over the bar. */
   .titlebar.mac { padding-left: 78px; }
+  .update-button {
+    display: flex; align-items: center; gap: 6px; margin: 4px 6px; padding: 0 10px; border-radius: 6px;
+    color: var(--accent-light); font-weight: 600; outline: none; white-space: nowrap;
+  }
+  .update-button:hover, .update-button:focus-visible { background: var(--bg-hover); }
+  .update-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
   .window-button { width: 46px; display: grid; place-items: center; color: var(--text-muted); outline: none; }
   .window-button:hover, .window-button:focus-visible { background: var(--bg-hover); color: var(--text-main); }
   .window-button.close:hover, .window-button.close:focus-visible { background: #c42b1c; color: #fff; }

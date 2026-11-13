@@ -56,3 +56,17 @@ test('menu commands reach the editor and the sidebar', async ({ page }) => {
     expect(fixture.errors).toEqual([]);
   } finally { fixture.destroy(); }
 });
+
+test('a new version stays on offer in the title bar after its dialog closes', async ({ page }) => {
+  const fixture = await openVault(page, { update: { version: '9.9.9', body: 'Notes' } });
+  try {
+    const dialog = page.getByRole('dialog', { name: 'Update available' });
+    await expect(dialog.getByRole('button', { name: 'Restart now' })).toBeVisible();
+    await dialog.getByRole('button', { name: 'Later' }).click();
+    await expect(dialog).toBeHidden();
+    await page.locator('header.titlebar').getByRole('button', { name: 'Restart to update' }).click();
+    await expect(dialog.getByRole('button', { name: 'Restart now' })).toBeVisible();
+    expect(fixture.calls.filter(call => call.command === 'plugin:updater|check')[0]?.args).toMatchObject({ timeout: 30000 });
+    expect(fixture.errors).toEqual([]);
+  } finally { fixture.destroy(); }
+});

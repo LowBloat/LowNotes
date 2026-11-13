@@ -577,6 +577,7 @@ const enUS = {
     darkTheme: 'Dark theme', assistant: 'Assistant panel', zoomIn: 'Zoom in', zoomOut: 'Zoom out', actualSize: 'Actual size',
     documentation: 'Documentation', reportProblem: 'Report a problem', checkUpdates: 'Check for updates…', about: 'About LowNotes',
     upToDate: 'LowNotes is up to date.', updateCheckFailed: 'LowNotes could not check for updates. Try again later.',
+    updateAvailable: 'Update available', updateReady: 'Restart to update',
   },
   menu: {
     bold: 'Bold', italic: 'Italic',

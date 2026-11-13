@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import type { Update } from '@tauri-apps/plugin-updater';
-import { canInstallUpdate, checkAvailableUpdate, updateInstructionKey } from '../src/lib/updates';
+import { CHECK_TIMEOUT_MS, canInstallUpdate, checkAvailableUpdate, discardUpdate, updateInstructionKey } from '../src/lib/updates';
 import type { UpdateChannel, UpdatePolicy } from '../src/lib/types';
 
 function policy(channel: UpdateChannel, canInstall = false): UpdatePolicy {
@@ -43,6 +43,22 @@ test('Windows and macOS keep their default updater target', async () => {
     async (options) => { requestedTarget = options?.target; return null; });
   expect(requestedTarget).toBeUndefined();
   expect(update).toBeNull();
+});
+
+test('native checks give up instead of blocking the next ones', async () => {
+  let timeout: number | undefined;
+  await checkAvailableUpdate(policy('internal', true), async (options) => { timeout = options?.timeout; return null; });
+  expect(timeout).toBe(CHECK_TIMEOUT_MS);
+});
+
+test('discarded updates release their native resource', async () => {
+  let closed = 0;
+  const installer = { version: '0.2.7', close: async () => { closed++; } } as Update;
+  discardUpdate({ version: '0.2.7', installer });
+  discardUpdate({ version: '0.2.7', download_url: null });
+  discardUpdate(null);
+  await Promise.resolve();
+  expect(closed).toBe(1);
 });
 
 test('each Linux installation has matching update instructions', () => {
