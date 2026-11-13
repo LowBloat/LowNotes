@@ -6,6 +6,8 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-11-13
+
 ### Fixed
 - **Folders open the way they were left.** The sidebar remembers which folders are collapsed in each vault, in the settings file, instead of opening every folder expanded at each start. Renaming a folder keeps it collapsed; folders deleted since are forgotten.
 - **New versions show up within a minute.** The app checks every minute instead of every 10, and again when the window comes back from the tray. A check that hung (after sleep or a network change) no longer blocks the later ones, and checks no longer keep their discarded results in memory. After its dialog closes, a found version stays on offer in the title bar (**Restart to update**), and a newer release replaces it as soon as it is published.
@@ -107,7 +109,8 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 - Dependency updates: Tauri plugins, iroh 1.3, rusqlite 0.40, base64 0.23, html-escape 0.3 and GitHub Actions.
 - Community, security and design documentation ([#32](https://github.com/LowBloat/LowNotes/issues/32), [#33](https://github.com/LowBloat/LowNotes/issues/33)).
 
-[Unreleased]: https://github.com/LowBloat/LowNotes/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/LowBloat/LowNotes/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/LowBloat/LowNotes/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/LowBloat/LowNotes/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/LowBloat/LowNotes/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/LowBloat/LowNotes/compare/v0.4.2...v0.5.0
