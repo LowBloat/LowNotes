@@ -579,6 +579,7 @@ const ptBR: Dictionary = {
     darkTheme: 'Tema escuro', assistant: 'Painel do assistente', zoomIn: 'Aumentar zoom', zoomOut: 'Diminuir zoom', actualSize: 'Tamanho original',
     documentation: 'Documentação', reportProblem: 'Relatar um problema', checkUpdates: 'Procurar atualizações…', about: 'Sobre o LowNotes',
     upToDate: 'O LowNotes está atualizado.', updateCheckFailed: 'O LowNotes não conseguiu procurar atualizações. Tente mais tarde.',
+    updateAvailable: 'Atualização disponível', updateReady: 'Reiniciar para atualizar',
   },
   menu: {
     bold: 'Negrito', italic: 'Itálico',

@@ -335,6 +335,8 @@
   });
   const windowTitle = $derived(isSettingsOpen ? $t('settings.title')
     : selectedNotePath ? items.find((item) => item.path === selectedNotePath)?.title ?? selectedNotePath : 'LowNotes');
+  // After its dialog closes, a new version stays on offer in the title bar unless skipped.
+  const offeredUpdate = $derived(updates.state.pending?.version !== settings?.skipped_version ? updates.state.pending : null);
 
   $effect(() => {
     if (!IS_MAC) return;
@@ -413,7 +415,8 @@
 </script>
 
 <div class="flex flex-col h-screen w-screen overflow-hidden bg-[var(--bg-main)] text-[var(--text-main)]">
-<TitleBar menus={appMenus} title={windowTitle} detail={activeVault?.name ?? ''} {frame} />
+<TitleBar menus={appMenus} title={windowTitle} detail={activeVault?.name ?? ''} {frame}
+  update={offeredUpdate} onUpdate={() => (updates.state.open = true)} />
 <div class="relative flex flex-1 min-h-0 overflow-hidden">
   {#if settings?.credential_error && !isSettingsOpen}
     <div class="fixed top-[calc(var(--titlebar-height)+12px)] right-3 z-40 max-w-lg p-4 rounded-lg border border-[var(--danger)] bg-[var(--bg-card)] shadow-lg" role="alert">

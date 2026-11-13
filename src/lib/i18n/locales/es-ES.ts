@@ -579,6 +579,7 @@ const esES: Dictionary = {
     darkTheme: 'Tema oscuro', assistant: 'Panel del asistente', zoomIn: 'Acercar', zoomOut: 'Alejar', actualSize: 'Tamaño real',
     documentation: 'Documentación', reportProblem: 'Informar de un problema', checkUpdates: 'Buscar actualizaciones…', about: 'Acerca de LowNotes',
     upToDate: 'LowNotes está actualizado.', updateCheckFailed: 'LowNotes no pudo buscar actualizaciones. Inténtalo más tarde.',
+    updateAvailable: 'Actualización disponible', updateReady: 'Reiniciar para actualizar',
   },
   menu: {
     bold: 'Negrita', italic: 'Cursiva',
