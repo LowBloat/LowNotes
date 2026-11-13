@@ -71,6 +71,6 @@ tauri-plugin-single-instance = "2"
 
 [target.'cfg(windows)'.dependencies]
 # Already in the tree through hyper-util; writes the "Open with LowNotes" keys.
-windows-registry = "0.6"
+windows-registry = "0.100"
 # Already in the tree through tokio; restricts the MCP pipe to the current user.
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Pipes", "Win32_System_Threading"] }
