@@ -271,6 +271,31 @@ pub fn rename_item(root: &Path, old_relative: &str, new_relative: &str) -> anyho
     )
 }
 
+/// Most folders the sidebar remembers as collapsed in one vault.
+pub const MAX_COLLAPSED_FOLDERS: usize = 10_000;
+
+/// The collapsed folders worth remembering: valid vault-relative paths, once
+/// each, without folders that were renamed or deleted since. While the vault
+/// folder is unavailable nothing can be checked, so valid paths are all kept.
+pub fn collapsed_folders(root: &Path, folders: Vec<String>) -> Vec<String> {
+    let check_disk = root.is_dir();
+    folders
+        .into_iter()
+        .map(|folder| {
+            folder
+                .trim()
+                .replace('\\', "/")
+                .trim_matches('/')
+                .to_owned()
+        })
+        .filter(|folder| !folder.is_empty())
+        .filter(|folder| safe_join(root, folder).is_ok_and(|path| !check_disk || path.is_dir()))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .take(MAX_COLLAPSED_FOLDERS)
+        .collect()
+}
+
 /// Hashes of files by path, valid while size and modification time match.
 static FILE_HASHES: std::sync::OnceLock<
     parking_lot::Mutex<std::collections::HashMap<PathBuf, (u64, std::time::SystemTime, String)>>,
@@ -436,6 +461,38 @@ mod tests {
         assert!(safe_join(root, "../outside.md").is_err());
         assert!(safe_join(root, "notes/../../outside.md").is_err());
         assert!(safe_join(root, ".hidden/file.md").is_err());
+    }
+
+    #[test]
+    fn collapsed_folders_keep_existing_folders_once() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("Projects/Old")).unwrap();
+        fs::create_dir_all(dir.path().join("Journal")).unwrap();
+        fs::write(dir.path().join("note.md"), "# Note").unwrap();
+        let kept = collapsed_folders(
+            dir.path(),
+            [
+                "Projects/Old",
+                "Journal",
+                "Journal/",
+                "Projects\\Old",
+                "Removed",
+                "note.md",
+                "../outside",
+                ".hidden",
+                "",
+            ]
+            .map(String::from)
+            .to_vec(),
+        );
+        assert_eq!(kept, ["Journal", "Projects/Old"]);
+
+        // An unplugged drive must not erase the remembered folders.
+        let missing = dir.path().join("unplugged");
+        assert_eq!(
+            collapsed_folders(&missing, vec!["Journal".into(), "../outside".into()]),
+            ["Journal"]
+        );
     }
 
     #[test]

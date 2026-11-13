@@ -33,6 +33,8 @@ export interface VaultConfig {
   name: string;
   path: string;
   peers: PeerConfig[];
+  /** Sidebar folders shown collapsed; any other folder opens expanded. */
+  collapsed_folders?: string[];
   /** The folder no longer exists (computed when settings reach the interface). */
   missing?: boolean;
 }

@@ -342,6 +342,7 @@ pub fn run() {
             commands::select_vault,
             commands::create_vault,
             commands::forget_vault,
+            commands::save_collapsed_folders,
             commands::list_notes,
             commands::read_note,
             commands::save_note,

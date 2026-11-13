@@ -66,17 +66,15 @@ pub(crate) fn cutoff(now: u64, days: Option<u32>) -> Option<u64> {
     days.map(|days| now.saturating_sub(days as u64 * 86_400_000))
 }
 fn is_link(metadata: &fs::Metadata) -> bool {
-    if metadata.file_type().is_symlink() {
-        return true;
-    }
+    // Junctions are reparse points that Windows does not report as symlinks.
     #[cfg(windows)]
-    {
+    let reparse_point = {
         use std::os::windows::fs::MetadataExt;
-        if metadata.file_attributes() & 0x400 != 0 {
-            return true;
-        }
-    }
-    false
+        metadata.file_attributes() & 0x400 != 0
+    };
+    #[cfg(not(windows))]
+    let reparse_point = false;
+    metadata.file_type().is_symlink() || reparse_point
 }
 /// Never follow a link/junction or recursively delete beyond the chosen vault.
 pub(crate) fn owned_path(root: &Path, target: &Path, tree: bool) -> anyhow::Result<bool> {
