@@ -262,6 +262,45 @@ pub async fn forget_vault(
     .await
 }
 
+/// Remembers which sidebar folders are collapsed in a vault, so they open the
+/// same way next time. Folders that no longer exist are dropped.
+#[tauri::command]
+pub async fn save_collapsed_folders(
+    vault_id: String,
+    folders: Vec<String>,
+    app: AppHandle,
+) -> Result<(), String> {
+    on_worker(app, move |state, _app| {
+        let root = state
+            .settings
+            .read()
+            .vaults
+            .iter()
+            .find(|vault| vault.id == vault_id)
+            .map(|vault| vault.path.clone())
+            .ok_or("errors.vaultNotFound")?;
+        let folders = vault::collapsed_folders(&root, folders);
+        let mut settings = state.settings.write();
+        let vault = settings
+            .vaults
+            .iter_mut()
+            .find(|vault| vault.id == vault_id)
+            .ok_or("errors.vaultNotFound")?;
+        if vault.collapsed_folders == folders {
+            return Ok(());
+        }
+        let previous = std::mem::replace(&mut vault.collapsed_folders, folders);
+        if let Err(error) = settings.save() {
+            if let Some(vault) = settings.vaults.iter_mut().find(|v| v.id == vault_id) {
+                vault.collapsed_folders = previous;
+            }
+            return Err(error.to_string());
+        }
+        Ok(())
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn list_notes(app: AppHandle) -> Result<Vec<VaultItem>, String> {
     on_worker(app, move |state, _app| {

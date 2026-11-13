@@ -73,6 +73,11 @@ export async function forgetVault(vaultId: string): Promise<InitialStateResponse
   return await invoke('forget_vault', { vaultId });
 }
 
+/** Remembers the sidebar folders shown collapsed in a vault. */
+export async function saveCollapsedFolders(vaultId: string, folders: string[]): Promise<void> {
+  return await invoke('save_collapsed_folders', { vaultId, folders });
+}
+
 export async function createVault(path: string, name?: string): Promise<InitialStateResponse> {
   return await invoke('create_vault', { pathStr: path, name });
 }

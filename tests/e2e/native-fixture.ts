@@ -15,6 +15,8 @@ export async function openVault(page: Page, options: {
   notices?: Array<{ path: string; recovered: boolean }>;
   notePath?: string; otherNotes?: VaultItem[];
   extraVaults?: Array<{ id: string; name: string; path: string; peers: never[]; missing?: boolean }>;
+  /** Sidebar folders the settings file remembers as collapsed. */
+  collapsedFolders?: string[];
   history?: { versionContent?: string; comparison?: { path: string; content: string }; trashContent?: string; folderTrash?: boolean };
   /** An update offered by the native updater when the app starts. */
   update?: { version: string; body: string };
@@ -38,7 +40,7 @@ export async function openVault(page: Page, options: {
   let notices = options.notices ?? [];
   let openRequest: { vault_path: string; note_path: string | null; known_vault: boolean } | null = null;
   let history = { version: 1, activeConversationId: null, conversations: [], memory: '' };
-  const vault = { id: 'fixture', name: 'Test vault', path: 'fixture', peers: [] };
+  const vault = { id: 'fixture', name: 'Test vault', path: 'fixture', peers: [], collapsed_folders: options.collapsedFolders ?? [] };
   const notePath = options.notePath ?? 'Lista.md';
   const item = { path: notePath, name: 'Lista', title: 'Lista', is_dir: false, size: source.length, modified_ms: 1 };
   const items = [item, ...(options.otherNotes ?? [])];

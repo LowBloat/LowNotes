@@ -49,6 +49,10 @@ pub struct VaultConfig {
     pub credentials_locked: bool,
     #[serde(default)]
     pub peers: Vec<PeerConfig>,
+    /// Folders the sidebar shows collapsed, as vault-relative paths. Any other
+    /// folder opens expanded, as before this was remembered.
+    #[serde(default)]
+    pub collapsed_folders: Vec<String>,
     /// Only set on copies sent to the interface: the folder no longer exists.
     #[serde(
         default,
@@ -75,6 +79,7 @@ impl VaultConfig {
             secret_key: URL_SAFE_NO_PAD.encode(rand::rng().random::<[u8; 32]>()),
             pairing_token: new_pairing_token(),
             peers: Vec::new(),
+            collapsed_folders: Vec::new(),
             credentials_locked: false,
             missing: false,
         }
@@ -897,6 +902,7 @@ mod tests {
             pairing_token: "".to_string(),
             credentials_locked: false,
             peers: Vec::new(),
+            collapsed_folders: Vec::new(),
             missing: false,
         };
         assert!(vault.ensure_keys());

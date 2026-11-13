@@ -6,6 +6,9 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 
 ## [Unreleased]
 
+### Fixed
+- **Folders open the way they were left.** The sidebar remembers which folders are collapsed in each vault, in the settings file, instead of opening every folder expanded at each start. Renaming a folder keeps it collapsed; folders deleted since are forgotten.
+
 ## [0.5.2] - 2026-11-11
 
 ### Fixed

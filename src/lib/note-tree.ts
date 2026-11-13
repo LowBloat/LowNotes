@@ -44,3 +44,33 @@ export function visibleNoteRows(items: VaultItem[], collapsed: ReadonlySet<strin
   visit('', 0);
   return rows;
 }
+
+/** Collapsed folders after `oldPath` was renamed to `newPath`, subfolders included. */
+export function renameCollapsedFolders(collapsed: Iterable<string>, oldPath: string, newPath: string): string[] {
+  return [...collapsed].map((path) => path === oldPath ? newPath
+    : path.startsWith(`${oldPath}/`) ? `${newPath}${path.slice(oldPath.length)}` : path);
+}
+
+/** Saves the collapsed folders of each vault one call at a time; folders
+ * toggled while a save runs are saved next, and only their latest state. */
+export function collapsedFolderSaver(save: (vaultId: string, folders: string[]) => Promise<void>) {
+  const queued = new Map<string, string[]>();
+  let running: Promise<void> | null = null;
+  async function drain() {
+    for (let next = queued.entries().next(); !next.done; next = queued.entries().next()) {
+      const [vaultId, folders] = next.value;
+      queued.delete(vaultId);
+      try {
+        await save(vaultId, folders);
+      } catch (error) {
+        console.error('Failed to remember the collapsed folders:', error);
+      }
+    }
+    running = null;
+  }
+  return (vaultId: string, folders: Iterable<string>): Promise<void> => {
+    queued.set(vaultId, [...folders].sort());
+    running ??= drain();
+    return running;
+  };
+}

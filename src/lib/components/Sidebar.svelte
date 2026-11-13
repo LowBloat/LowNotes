@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { InitialStateResponse, VaultConfig, VaultItem } from '../types';
   import type { PresenceUser } from '$lib/presence';
-  import { visibleNoteRows } from '$lib/note-tree';
+  import { collapsedFolderSaver, renameCollapsedFolders, visibleNoteRows } from '$lib/note-tree';
   import { ChevronDown, ChevronRight, Clock3, CopyPlus, FilePlus2, FileText, Folder, FolderOpen, FolderPlus, FolderSearch, Link, NotebookPen, Pencil, RefreshCw, Settings2, Trash2, X } from 'lucide-svelte';
   import {
     createNote,
@@ -9,6 +9,7 @@
     deleteItem,
     duplicateNote,
     renameItem,
+    saveCollapsedFolders,
     pickVaultDirectory,
     selectVault,
     forgetVault,
@@ -75,14 +76,27 @@
   let newNoteName = $state('');
   let isCreatingFolder = $state(false);
   let newFolderName = $state('');
-  let collapsedFolders = $state<Set<string>>(new Set());
+  // Collapsed folders are remembered per vault in the settings file. The last
+  // toggle wins over the vault object, which may be older than a save in flight.
+  let toggled = $state<{ vaultId: string; folders: Set<string> } | null>(null);
+  let collapsedFolders = $derived(toggled && toggled.vaultId === activeVault?.id
+    ? toggled.folders
+    : new Set<string>(activeVault?.collapsed_folders ?? []));
   let visibleRows = $derived(visibleNoteRows(items, collapsedFolders, searchQuery));
+  const rememberCollapsed = collapsedFolderSaver(saveCollapsedFolders);
+
+  function setCollapsed(folders: Iterable<string>) {
+    const vaultId = activeVault?.id;
+    if (!vaultId) return;
+    toggled = { vaultId, folders: new Set(folders) };
+    void rememberCollapsed(vaultId, toggled.folders);
+  }
 
   function toggleFolder(path: string) {
     const next = new Set(collapsedFolders);
     if (next.has(path)) next.delete(path);
     else next.add(path);
-    collapsedFolders = next;
+    setCollapsed(next);
   }
 
   async function handleOpenFolder() {
@@ -162,6 +176,9 @@
     if (newName && newName !== oldPath) {
       try {
         await renameItem(oldPath, newName);
+        if ([...collapsedFolders].some((path) => path === oldPath || path.startsWith(`${oldPath}/`))) {
+          setCollapsed(renameCollapsedFolders(collapsedFolders, oldPath, newName));
+        }
         onRefreshItems();
         if (selectedPath === oldPath) {
           onSelectNote(newName);
