@@ -500,27 +500,64 @@ impl CrdtManager {
         vault_path: &Path,
         edit: &crate::assistant::NoteEdit,
     ) -> anyhow::Result<AppliedUpdate> {
-        crate::structural::exclusive(vault_path, self, || {
-            self.apply_note_edit_inner(vault_path, edit)
+        crate::assistant::validate_edit(edit)?;
+        self.change_note_text(vault_path, &edit.path, |current| {
+            crate::assistant::edit_range(current, edit)
         })
     }
 
-    fn apply_note_edit_inner(
+    /// Adds `text` at the end of an existing note, starting on a line of its own.
+    pub fn append_note_text(
         &self,
         vault_path: &Path,
-        edit: &crate::assistant::NoteEdit,
+        path: &str,
+        text: &str,
     ) -> anyhow::Result<AppliedUpdate> {
-        crate::assistant::validate_edit(edit)?;
-        // A proposal may only edit an existing note, never recreate a deleted one.
-        vault::read_note(vault_path, &edit.path)?;
+        if text.is_empty() || text.len() > crate::assistant::MAX_DRAFT_BYTES {
+            bail!("ai.invalidEdit");
+        }
+        self.change_note_text(vault_path, path, |current| {
+            let separator = if current.is_empty() || current.ends_with('\n') {
+                ""
+            } else {
+                "\n"
+            };
+            Ok((current.len(), current.len(), format!("{separator}{text}")))
+        })
+    }
+
+    /// Replaces the byte range `range` picks in the current text with its
+    /// insert, in one durable transaction. Concurrent text elsewhere stays.
+    fn change_note_text(
+        &self,
+        vault_path: &Path,
+        path: &str,
+        range: impl FnOnce(&str) -> anyhow::Result<(usize, usize, String)>,
+    ) -> anyhow::Result<AppliedUpdate> {
+        crate::structural::exclusive(vault_path, self, || {
+            self.change_note_text_inner(vault_path, path, range)
+        })
+    }
+
+    fn change_note_text_inner(
+        &self,
+        vault_path: &Path,
+        path: &str,
+        range: impl FnOnce(&str) -> anyhow::Result<(usize, usize, String)>,
+    ) -> anyhow::Result<AppliedUpdate> {
+        // A change may only edit an existing note, never recreate a deleted one.
+        vault::read_note(vault_path, path)?;
         let mut docs = self.docs.lock();
-        let target = vault::safe_join(vault_path, &edit.path)?;
-        let doc = Self::ensure_doc(&mut docs, vault_path, &edit.path)?;
+        let target = vault::safe_join(vault_path, path)?;
+        let doc = Self::ensure_doc(&mut docs, vault_path, path)?;
         let before = Self::encode_state(doc);
         let current = doc
             .get_or_insert_text("content")
             .get_string(&doc.transact());
-        let (from, to, insert) = crate::assistant::edit_range(&current, edit)?;
+        let (from, to, insert) = range(&current)?;
+        if (current.len() - (to - from) + insert.len()) as u64 > vault::MAX_NOTE_BYTES {
+            bail!("errors.noteTooLarge");
+        }
         // Native Yrs documents use byte offsets. The unchanged edges are trimmed at UTF-8 boundaries.
         let candidate = Doc::new();
         candidate
@@ -537,10 +574,10 @@ impl CrdtManager {
         drop(txn);
         let state = Self::encode_state(&candidate);
         let content = text.get_string(&candidate.transact());
-        crate::note_transaction::commit(vault_path, &edit.path, &content, &state)?;
+        crate::note_transaction::commit(vault_path, path, &content, &state)?;
         docs.insert(target, candidate);
-        if let Err(error) = links::reconcile_wikilinks(vault_path, &edit.path, &content) {
-            tracing::warn!("reconcile_wikilinks failed for {}: {error}", edit.path);
+        if let Err(error) = links::reconcile_wikilinks(vault_path, path, &content) {
+            tracing::warn!("reconcile_wikilinks failed for {path}: {error}");
         }
         Ok(AppliedUpdate {
             state,

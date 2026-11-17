@@ -118,6 +118,8 @@ export interface AppSettings {
 export interface McpSettings {
   enabled: boolean;
   vault_ids: string[];
+  /** AI apps may also create, edit, move and delete notes in the shared vaults. */
+  allow_changes: boolean;
 }
 
 /** Mirrors `McpStatus` in src-tauri/src/mcp.rs. */

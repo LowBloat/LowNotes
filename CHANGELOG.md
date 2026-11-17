@@ -6,6 +6,9 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 
 ## [Unreleased]
 
+### Added
+- **AI apps can change notes over MCP, if you allow it.** A new **Allow changes** switch in **Settings → MCP server**, off by default and confirmed when turned on, gives AI apps five more tools: `create_note`, `edit_note` (replaces one exact passage), `append_to_note`, `move_note` and `delete_note` (to the trash). Changes are saved like typing: the open editor and the sidebar update at once and paired devices receive them. Apps that support tool list updates see the tools appear and disappear without reconnecting. Changes are limited to 256 KiB per call and 60 a minute. See [docs/MCP.md](docs/MCP.md).
+
 ## [0.5.3] - 2026-11-13
 
 ### Fixed

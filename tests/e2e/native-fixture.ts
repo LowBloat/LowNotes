@@ -64,7 +64,7 @@ export async function openVault(page: Page, options: {
     skipped_version: '', active_vault_id: vault.id as string | null, vaults: [vault, ...(options.extraVaults ?? [])] as Array<Record<string, any>>, has_seen_welcome: true,
     ai: { active_provider_id: 'ollama', providers: [{ id: 'ollama', name: 'Ollama', base_url: 'http://localhost:11434/v1', selected_model: 'fixture', api_key: '', is_custom: false }], auto_link_notes: false },
     web_search: { sources: [] }, image_upload: { provider: 'local', imgur_client_id: '', local_default_applied: true },
-    mcp: { enabled: false, vault_ids: [] as string[] },
+    mcp: { enabled: false, vault_ids: [] as string[], allow_changes: false },
   };
   page.on('pageerror', error => errors.push(error.message));
   await page.exposeFunction('nativeInvokeMock', async (command: string, args: Record<string, any>) => {
@@ -84,7 +84,7 @@ export async function openVault(page: Page, options: {
       case 'save_context_menu': settings.context_menu = args.enabled; return null;
       case 'mcp_status': return { running: settings.mcp.enabled, requests: settings.mcp.enabled ? 2 : 0,
         bridge_path: String.raw`C:\Program Files\LowNotes\lownotes-mcp.exe`, bridge_path_temporary: false };
-      case 'save_mcp_settings': settings.mcp = { enabled: args.enabled, vault_ids: args.vaultIds }; return null;
+      case 'save_mcp_settings': settings.mcp = { enabled: args.enabled, vault_ids: args.vaultIds, allow_changes: args.allowChanges }; return null;
       case 'duplicate_note': {
         const created = /\.(?:md|markdown)$/.test(args.newPath) ? args.newPath : `${args.newPath}.md`;
         const copy = new Y.Doc(); copy.getText('content').insert(0, (documents.get(args.path) ?? doc).getText('content').toString());

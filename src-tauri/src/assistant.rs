@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::rag::ChatMessage;
 
-const MAX_DRAFT_BYTES: usize = 256 * 1024;
+/// Largest note text an AI may write in one draft, edit or append.
+pub(crate) const MAX_DRAFT_BYTES: usize = 256 * 1024;
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
@@ -280,14 +281,15 @@ pub fn extract_edits(
 }
 
 /// Only creates new Markdown files. Existing notes are never overwritten, including on retries.
-pub fn save_draft(root: &Path, draft: &NoteDraft) -> anyhow::Result<String> {
+/// `origin` labels the creation in the structural history, such as "assistant" or "mcp".
+pub fn save_draft(root: &Path, draft: &NoteDraft, origin: &str) -> anyhow::Result<String> {
     validate_draft(draft)?;
     crate::creation::create(
         root,
         &draft.path,
         Some(&draft.content),
         &crate::crdt::CrdtManager::new(),
-        "assistant",
+        origin,
     )
 }
 
@@ -502,11 +504,13 @@ mod tests {
         let root = std::env::temp_dir().join(format!("lownotes-drafts-{}", rand::random::<u64>()));
         fs::create_dir_all(&root).unwrap();
         let note = draft("Python/Plano.md");
-        assert_eq!(save_draft(&root, &note).unwrap(), note.path);
+        assert_eq!(save_draft(&root, &note, "assistant").unwrap(), note.path);
         let mut changed = note.clone();
         changed.content = "overwritten".into();
         assert_eq!(
-            save_draft(&root, &changed).unwrap_err().to_string(),
+            save_draft(&root, &changed, "assistant")
+                .unwrap_err()
+                .to_string(),
             "errors.noteExists"
         );
         assert_eq!(
@@ -585,7 +589,7 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("lownotes-provider-{}", rand::random::<u64>()));
         fs::create_dir_all(&root).unwrap();
-        save_draft(&root, &drafts[0]).unwrap();
+        save_draft(&root, &drafts[0], "assistant").unwrap();
         assert!(fs::read_to_string(root.join("Python/Plano.md"))
             .unwrap()
             .contains("Praticar funções"));

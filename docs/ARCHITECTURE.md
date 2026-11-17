@@ -53,7 +53,7 @@ The interface never reads the vault directly. Settings arrive through `AppSettin
 | "Open with LowNotes" entries and launch arguments | `context_menu.rs` |
 | Atomic storage and recovery notices | `storage.rs` |
 | Vault listing and paths | `vault.rs` |
-| Vault reads and assistant changes shared by commands and the MCP server | `vault_service.rs` |
+| Vault reads and changes shared by commands and the MCP server | `vault_service.rs` |
 | Stable note identities, deletes, moves | `catalog.rs`, `catalog_sync.rs`, `structural.rs`, `creation.rs` |
 | Collaborative state and durable saves | `crdt.rs`, `note_transaction.rs` |
 | History, trash, retention | `note_history.rs`, `retention.rs` |
@@ -70,7 +70,8 @@ The interface never reads the vault directly. Settings arrive through `AppSettin
 - Tauri runs synchronous commands on the main thread. IO-heavy commands are `async` and run their body on the blocking pool through `on_worker` in `commands.rs`.
 - The network service runs on its own thread with a two-worker Tokio runtime (`NetworkService::start`). Disk and CRDT phases inside network tasks go through `block_in_place`.
 - `structural::exclusive` serializes structural work per vault with a reentrant lock and runs pending recovery on the outermost entry.
-- The MCP server (`McpService`) runs on Tauri's async runtime: one task accepts connections on the per-user pipe or socket, and one task per client runs its session. Tool calls run on the blocking pool, like `on_worker`. A restart waits for the previous server to release the endpoint.
+- The MCP server (`McpService`) runs on Tauri's async runtime: one task accepts connections on the per-user pipe or socket, and one task per client runs its session. Tool calls run on the blocking pool, like `on_worker`. A restart waits for the previous server to release the endpoint. Changing **Allow changes** does not restart it: each session watches the setting and sends its client `notifications/tools/list_changed`.
+- Changes made by MCP clients go through `vault_service.rs`, which emits `p2p:crdt-update` for text and `vault:items-changed` for created, moved or deleted notes, so the open editor and the sidebar follow them.
 - `lownotes-mcp` is a separate console process with a single-threaded Tokio runtime. It only relays bytes between the client's stdio and the app; it never opens the vault, so every read goes through the app's locks and recovery.
 
 ### Durability
