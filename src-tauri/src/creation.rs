@@ -946,6 +946,7 @@ mod tests {
                         path: "folder/note.md".into(),
                         content: "# Durable 🙂\r\n- [ ] Task\r\n".into(),
                     },
+                    "assistant",
                 )
                 .unwrap();
             }

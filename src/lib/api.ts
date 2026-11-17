@@ -202,8 +202,8 @@ export async function mcpStatus(): Promise<McpStatus> {
   return await invoke('mcp_status');
 }
 
-export async function saveMcpSettings(enabled: boolean, vaultIds: string[]): Promise<void> {
-  return await invoke('save_mcp_settings', { enabled, vaultIds });
+export async function saveMcpSettings(enabled: boolean, vaultIds: string[], allowChanges: boolean): Promise<void> {
+  return await invoke('save_mcp_settings', { enabled, vaultIds, allowChanges });
 }
 
 /** Connected MCP clients are disconnected and must reconnect. */

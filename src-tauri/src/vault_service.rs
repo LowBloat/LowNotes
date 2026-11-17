@@ -15,6 +15,35 @@ use crate::{
     vault::{self, VaultItem},
 };
 
+/// Tells the interface about changes it did not make itself. The app handle
+/// emits events; tests record the calls.
+pub trait VaultEvents: Send + Sync {
+    /// `state` is the new collaborative state of `path`; an open editor merges it.
+    fn note_changed(&self, path: &str, state: &[u8]);
+    /// Notes of `vault_id` were created, moved or deleted.
+    fn items_changed(&self, vault_id: &str);
+}
+
+impl VaultEvents for AppHandle {
+    fn note_changed(&self, path: &str, state: &[u8]) {
+        // The open editor receives the same CRDT state as the paired devices.
+        let _ = self.emit(
+            "p2p:crdt-update",
+            NetworkEventPayload::RemoteCrdtUpdate {
+                note_path: path.into(),
+                update: state.to_vec(),
+            },
+        );
+    }
+
+    fn items_changed(&self, vault_id: &str) {
+        let _ = self.emit(
+            "vault:items-changed",
+            serde_json::json!({ "vault_id": vault_id }),
+        );
+    }
+}
+
 /// A note's Markdown, its collaborative state and its stable identity.
 pub struct NoteRead {
     pub content: String,
@@ -90,8 +119,17 @@ fn edges_to(edges: Vec<LinkEdge>, path: &str) -> Vec<LinkEdge> {
 
 /// Creates a note from an assistant draft. A draft never overwrites a note.
 pub fn save_draft(state: &AppState, vault_id: &str, draft: &NoteDraft) -> Result<String, String> {
+    create_from_draft(state, vault_id, draft, "assistant")
+}
+
+fn create_from_draft(
+    state: &AppState,
+    vault_id: &str,
+    draft: &NoteDraft,
+    origin: &str,
+) -> Result<String, String> {
     let vault = expected_vault(state, vault_id)?;
-    let path = assistant::save_draft(&vault.path, draft).map_err(|e| e.to_string())?;
+    let path = assistant::save_draft(&vault.path, draft, origin).map_err(|e| e.to_string())?;
     state
         .crdt
         .invalidate_path(&vault.path, &path)
@@ -105,11 +143,26 @@ pub fn save_draft(state: &AppState, vault_id: &str, draft: &NoteDraft) -> Result
     Ok(path)
 }
 
+/// Creates a note outside the interface, which then lists it. `origin`
+/// labels the change in the structural history, like `move_note` and
+/// `delete_note`.
+pub fn create_note(
+    state: &AppState,
+    events: &dyn VaultEvents,
+    vault_id: &str,
+    draft: &NoteDraft,
+    origin: &str,
+) -> Result<String, String> {
+    let path = create_from_draft(state, vault_id, draft, origin)?;
+    events.items_changed(vault_id);
+    Ok(path)
+}
+
 /// Applies an exact text edit through the collaborative state, so the open
 /// editor and the paired devices receive it like any other change.
 pub fn apply_edit(
     state: &AppState,
-    app: &AppHandle,
+    events: &dyn VaultEvents,
     vault_id: &str,
     edit: &NoteEdit,
 ) -> Result<String, String> {
@@ -118,19 +171,83 @@ pub fn apply_edit(
         .crdt
         .apply_note_edit(&vault.path, edit)
         .map_err(|e| e.to_string())?;
-    // The open editor receives the same CRDT state as the paired devices.
-    let _ = app.emit(
-        "p2p:crdt-update",
-        NetworkEventPayload::RemoteCrdtUpdate {
-            note_path: edit.path.clone(),
-            update: result.state.clone(),
-        },
-    );
+    publish_text(state, events, &edit.path, result.state);
+    Ok(edit.path.clone())
+}
+
+/// Adds `text` at the end of an existing note, like an edit.
+pub fn append(
+    state: &AppState,
+    events: &dyn VaultEvents,
+    vault_id: &str,
+    path: &str,
+    text: &str,
+) -> Result<String, String> {
+    let vault = expected_vault(state, vault_id)?;
+    let result = state
+        .crdt
+        .append_note_text(&vault.path, path, text)
+        .map_err(|e| e.to_string())?;
+    publish_text(state, events, path, result.state);
+    Ok(path.to_owned())
+}
+
+fn publish_text(state: &AppState, events: &dyn VaultEvents, path: &str, update: Vec<u8>) {
+    events.note_changed(path, &update);
     if let Some(net) = state.network.read().as_ref() {
-        net.broadcast_crdt_update(edit.path.clone(), result.state);
+        net.broadcast_crdt_update(path.to_owned(), update);
         net.sync_now();
     }
-    Ok(edit.path.clone())
+}
+
+/// Moves or renames a note, keeping its identity and history.
+pub fn move_note(
+    state: &AppState,
+    events: &dyn VaultEvents,
+    vault_id: &str,
+    path: &str,
+    new_path: &str,
+    origin: &str,
+) -> Result<String, String> {
+    let vault = expected_vault(state, vault_id)?;
+    existing_note(&vault, path)?;
+    crate::structural::rename(&vault.path, path, new_path, &state.crdt, origin)
+        .map_err(|e| e.to_string())?;
+    publish_items(state, events, &vault);
+    Ok(new_path.to_owned())
+}
+
+/// Moves a note to the vault's trash, where it can be restored.
+pub fn delete_note(
+    state: &AppState,
+    events: &dyn VaultEvents,
+    vault_id: &str,
+    path: &str,
+    origin: &str,
+) -> Result<String, String> {
+    let vault = expected_vault(state, vault_id)?;
+    existing_note(&vault, path)?;
+    crate::catalog_sync::delete(&vault.path, path, &state.crdt, origin)
+        .map_err(|e| e.to_string())?;
+    publish_items(state, events, &vault);
+    Ok(path.to_owned())
+}
+
+/// Refuses folders, so a note path cannot move or delete a whole folder.
+fn existing_note(vault: &VaultConfig, path: &str) -> Result<(), String> {
+    let target = vault::safe_join(&vault.path, path).map_err(|e| e.to_string())?;
+    if !target.is_file() {
+        return Err("errors.noteNotFound".into());
+    }
+    Ok(())
+}
+
+/// Sidebar refresh and sync after notes were created, moved or deleted.
+fn publish_items(state: &AppState, events: &dyn VaultEvents, vault: &VaultConfig) {
+    events.items_changed(&vault.id);
+    if let Some(net) = state.network.read().as_ref() {
+        net.sync_now();
+    }
 }
 
 #[cfg(test)]

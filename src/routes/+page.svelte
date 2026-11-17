@@ -384,6 +384,7 @@
   });
 
   let unlistenOpenRequest: UnlistenFn | undefined;
+  let unlistenItemsChanged: UnlistenFn | undefined;
   onMount(async () => {
     window.addEventListener('keydown', handleUndoDeletedItem, true);
     window.addEventListener('keydown', handleAppShortcuts);
@@ -393,6 +394,10 @@
       p2p.start(),
       presence.start(),
       listen('app:open-request', () => void handleOpenRequest()).then((unlisten) => (unlistenOpenRequest = unlisten)),
+      // An AI app connected over MCP created, moved or deleted notes.
+      listen<{ vault_id: string }>('vault:items-changed', (event) => {
+        if (event.payload.vault_id === activeVault?.id) void refreshItems();
+      }).then((unlisten) => (unlistenItemsChanged = unlisten)),
     ]);
     await loadInitialData();
     await tick();
@@ -407,6 +412,7 @@
     window.removeEventListener('keydown', handleUndoDeletedItem, true);
     window.removeEventListener('keydown', handleAppShortcuts);
     unlistenOpenRequest?.();
+    unlistenItemsChanged?.();
     recovery.stop();
     p2p.stop();
     presence.stop();

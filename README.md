@@ -38,7 +38,7 @@ LowNotes is an **open-source, local-first Markdown note-taking app** for Windows
 - **Connect your computers.** Pair devices for encrypted P2P sync and real-time collaborative editing.
 - **Build a knowledge base.** Use folders, search, wikilinks, a connection map and Mermaid diagrams.
 - **Choose your assistant.** Use local models through Ollama or LM Studio, or configure a remote provider. Remote requests send the prompt and selected context to that provider. The Research skill sends search terms (never notes) to the web search services you enable; only DuckDuckGo is on by default.
-- **Bring your own AI app.** Claude Desktop, Claude Code, Cursor and other MCP clients can search and read the open vault while LowNotes sits in the tray. It is read-only and off by default.
+- **Bring your own AI app.** Claude Desktop, Claude Code, Cursor and other MCP clients can search and read the open vault while LowNotes sits in the tray, and change notes if you allow it. It is off and read-only by default.
 - **Recover and share your work.** Review local history and trash, then export notes to Word or PDF.
 
 | Day to day | When you need more |
@@ -121,7 +121,7 @@ Under **Settings → Web search**, Firecrawl, Keenable, Exa, DuckDuckGo and a pu
 
 ### AI apps over MCP
 
-**Settings → MCP server** lets AI apps on this computer that speak the Model Context Protocol, such as Claude Desktop, Claude Code and Cursor, list, search and read the notes of the open vault and follow its links. They cannot change notes. Apps launch the `lownotes-mcp` program installed next to LowNotes, which authenticates with a token kept in the system credential store. Only vaults you share are served, and what an app reads goes to that app and its AI provider. See [docs/MCP.md](docs/MCP.md) for setup, the available tools and the safety notes.
+**Settings → MCP server** lets AI apps on this computer that speak the Model Context Protocol, such as Claude Desktop, Claude Code and Cursor, list, search and read the notes of the open vault and follow its links. With **Allow changes** on, they can also create, edit, move and delete notes; deleted notes go to the trash. Apps launch the `lownotes-mcp` program installed next to LowNotes, which authenticates with a token kept in the system credential store. Only vaults you share are served, and what an app reads goes to that app and its AI provider. See [docs/MCP.md](docs/MCP.md) for setup, the available tools and the safety notes.
 
 ## How it works
 

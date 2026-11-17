@@ -510,6 +510,9 @@ pub struct McpSettings {
     pub enabled: bool,
     /// Vaults MCP clients may read; only the active one is served.
     pub vault_ids: Vec<String>,
+    /// MCP clients may also create, edit, move and delete notes in the shared
+    /// vaults. Off by default: a client's model can be steered by note text.
+    pub allow_changes: bool,
     /// Authenticates the bridge that MCP clients launch. Kept in the OS
     /// credential store and never sent to the webview.
     pub token: String,

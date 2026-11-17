@@ -268,8 +268,7 @@ pub fn run() {
                 settings.clone(),
                 app.state::<AppState>().crdt.clone(),
             );
-            app.state::<mcp::McpService>()
-                .apply(&app.state::<AppState>());
+            app.state::<mcp::McpService>().apply(app.handle());
 
             let (open_label, quit_label) = tray_labels(&settings.read().language);
             let open = MenuItem::with_id(app, "open", open_label, true, None::<&str>)?;

@@ -56,6 +56,7 @@
   let copiedSnippet = $state('');
   const mcpEnabled = $derived(settings.mcp?.enabled ?? false);
   const sharedVaults = $derived<string[]>(settings.mcp?.vault_ids ?? []);
+  const mcpAllowChanges = $derived(settings.mcp?.allow_changes ?? false);
   const mcpSnippets = $derived(mcp?.bridge_path ? [
     { key: 'claudeDesktop', label: 'mcp.claudeDesktop', text: mcpServersConfig(mcp.bridge_path) },
     { key: 'claudeCode', label: 'mcp.claudeCode', text: claudeCodeCommand(mcp.bridge_path) },
@@ -142,8 +143,8 @@
   function refreshMcp() {
     mcpStatus().then((value) => mcp = value).catch(() => {});
   }
-  async function saveMcp(enabled: boolean, vaultIds: string[]) {
-    await persist(saveMcpSettings(enabled, vaultIds), { ...settings, mcp: { enabled, vault_ids: vaultIds } });
+  async function saveMcp(enabled: boolean, vaultIds: string[], allowChanges = mcpAllowChanges) {
+    await persist(saveMcpSettings(enabled, vaultIds, allowChanges), { ...settings, mcp: { enabled, vault_ids: vaultIds, allow_changes: allowChanges } });
     refreshMcp();
   }
   async function changeMcp(control: HTMLInputElement) {
@@ -152,6 +153,14 @@
     const vaultIds = enabled && !sharedVaults.length && settings.active_vault_id ? [settings.active_vault_id] : [...sharedVaults];
     await saveMcp(enabled, vaultIds);
     control.checked = settings.mcp?.enabled ?? false;
+  }
+  async function changeMcpAllowChanges(control: HTMLInputElement) {
+    const allow = control.checked;
+    // Allowing changes widens what a steered AI can do, so it takes a confirmation.
+    if (!allow || await appConfirm(ts('mcp.allowChangesConfirm'), { confirmLabel: ts('mcp.allowChanges') })) {
+      await saveMcp(mcpEnabled, [...sharedVaults], allow);
+    }
+    control.checked = settings.mcp?.allow_changes ?? false;
   }
   async function shareVault(id: string, control: HTMLInputElement) {
     const others = sharedVaults.filter((item) => item !== id);
@@ -481,6 +490,7 @@
           <section class="settings-section">
             <h2>{$t('mcp.title')}</h2><p>{$t('mcp.hint')}</p>
             <label class="setting-row setting-toggle"><div><strong>{$t('mcp.enable')}</strong><small>{$t('mcp.enableHint')}</small></div><input type="checkbox" checked={mcpEnabled} disabled={busy} onchange={(event) => void changeMcp(event.currentTarget)} /></label>
+            <label class="setting-row setting-toggle"><div><strong>{$t('mcp.allowChanges')}</strong><small>{$t('mcp.allowChangesHint')}</small></div><input type="checkbox" checked={mcpAllowChanges} disabled={busy || !mcpEnabled} onchange={(event) => void changeMcpAllowChanges(event.currentTarget)} /></label>
             {#if mcpEnabled && mcp}
               <div class="setting-row" role="status"><div><strong>{mcp.running ? $t('mcp.running') : $t('mcp.stopped')}</strong><small>{$t('mcp.requests', { count: mcp.requests })}</small></div></div>
             {/if}
