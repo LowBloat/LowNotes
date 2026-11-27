@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/brand/lownotes.svg" alt="LowNotes logo: the LowBloat L with a folded note" width="96">
+  <img src="assets/brand/lownotes.svg" alt="LowNotes logo: a folded note on a yellow tile" width="96">
 </p>
 
 <h1 align="center">LowNotes</h1>
