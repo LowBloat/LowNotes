@@ -6,6 +6,11 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-11-27
+
+### Changed
+- **New LowNotes logo.** The app, installer, tray and favicon icons use the new LowNotes mark from the LowBloat family: a yellow tile with a folded note.
+
 ## [0.5.3] - 2026-11-13
 
 ### Fixed
@@ -109,7 +114,8 @@ Releases up to 0.3.5 are described on the [GitHub releases page](https://github.
 - Dependency updates: Tauri plugins, iroh 1.3, rusqlite 0.40, base64 0.23, html-escape 0.3 and GitHub Actions.
 - Community, security and design documentation ([#32](https://github.com/LowBloat/LowNotes/issues/32), [#33](https://github.com/LowBloat/LowNotes/issues/33)).
 
-[Unreleased]: https://github.com/LowBloat/LowNotes/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/LowBloat/LowNotes/compare/v0.5.4...HEAD
+[0.5.4]: https://github.com/LowBloat/LowNotes/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/LowBloat/LowNotes/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/LowBloat/LowNotes/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/LowBloat/LowNotes/compare/v0.5.0...v0.5.1
